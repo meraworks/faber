@@ -1,0 +1,1033 @@
+//! Stdio tools call the same project operations as the CLI.
+
+use crate::input::Checked;
+use base64::Engine;
+use faber_core::{PartInfo, Project};
+use faber_model::{Edit, Feature, Geometry, Part, ProjectData, Scalar};
+use faber_ports::Body;
+use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+pub const GUIDE: &str = include_str!("../docs/modelling-guide.md");
+
+#[derive(Clone)]
+pub struct Faber {
+    project: Arc<Mutex<Option<OpenProject>>>,
+    tool_router: ToolRouter<Self>,
+}
+
+struct OpenProject {
+    path: PathBuf,
+    project: Project,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Open {
+    path: String,
+    #[serde(default)]
+    create: bool,
+    name: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PutPart {
+    #[serde(default)]
+    strict: bool,
+    id: String,
+    part: Part<Scalar>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportPart {
+    id: String,
+    name: String,
+    path: String,
+    #[serde(default)]
+    strict: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetPartInfo {
+    /// Part id.
+    id: String,
+    /// New name. Must not be blank.
+    name: Option<String>,
+    /// New colour [R,G,B], 0 to 255.
+    colour: Option<[u8; 3]>,
+    /// New group name.
+    group: Option<String>,
+    /// New note.
+    note: Option<String>,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PutParts {
+    #[serde(default)]
+    strict: bool,
+    parts: BTreeMap<String, Part<Scalar>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetParam {
+    #[serde(default)]
+    strict: bool,
+    name: String,
+    expression: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Checkpoint {
+    name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Interference {
+    proximity_mm: f64,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetContact {
+    /// First part id.
+    a: String,
+    /// Second part id.
+    b: String,
+    /// True declares the contact. False removes it.
+    allowed: bool,
+    /// Short reason for the contact. Up to 500 characters.
+    #[serde(default)]
+    note: String,
+    /// Deepest allowed overlap in millimetres. Zero allows touch only. Default 0.6.
+    #[serde(default)]
+    max_depth_mm: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetSection {
+    /// Section id. Up to 100 letters, digits, `_` or `-`.
+    id: String,
+    /// The section. It names a plane, a reference feature or a planar face.
+    section: faber_model::SectionAnalysis<Scalar>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SectionId {
+    /// Section id.
+    id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Measure {
+    a: String,
+    b: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MassProperties {
+    /// Part id.
+    id: String,
+    /// Density in g/cm3. Must be above zero.
+    density_g_cm3: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Batch {
+    #[schemars(with = "Vec<faber_core::Operation>")]
+    operations: Vec<Value>,
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    strict: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewBatch {
+    #[schemars(with = "Vec<faber_core::Operation>")]
+    operations: Vec<Value>,
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    strict: bool,
+    render: Option<Render>,
+}
+
+/// Batch tool names, in the order shown to clients.
+const BATCH_TOOLS: [&str; 10] = [
+    "set_section",
+    "remove_section",
+    "set_part_info",
+    "set_param",
+    "put_part",
+    "remove_part",
+    "add_feature",
+    "edit_feature",
+    "delete_feature",
+    "move_feature",
+];
+
+/// Reads the fields of a set_part_info item. Serde does not name
+/// the field in a type error, so each field is read here.
+fn part_info(fields: serde_json::Map<String, Value>) -> Result<PartInfo, String> {
+    let mut info = PartInfo::default();
+    let mut has_id = false;
+    for (key, value) in fields {
+        let read = |e: serde_json::Error| format!("field `{key}`: {e}");
+        match key.as_str() {
+            "id" => {
+                info.id = serde_json::from_value(value).map_err(read)?;
+                has_id = true;
+            }
+            "name" => info.name = serde_json::from_value(value).map_err(read)?,
+            "colour" => info.colour = serde_json::from_value(value).map_err(read)?,
+            "group" => info.group = serde_json::from_value(value).map_err(read)?,
+            "note" => info.note = serde_json::from_value(value).map_err(read)?,
+            _ => {
+                return Err(format!(
+                    "unknown field `{key}`, expected one of `id`, `name`, `colour`, `group`, `note`"
+                ));
+            }
+        }
+    }
+    if !has_id {
+        return Err("missing field `id`".into());
+    }
+    Ok(info)
+}
+
+/// Reads each batch item by its tool field. Errors name the item.
+fn batch_operations(items: Vec<Value>) -> Result<Vec<faber_core::Operation>, String> {
+    let accepted = BATCH_TOOLS.join(", ");
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let number = index + 1;
+            let Value::Object(mut fields) = item else {
+                return Err(format!(
+                    "Batch operation {number}: expected an object with a tool field. Accepted tools: {accepted}."
+                ));
+            };
+            let tool = match fields.get("tool") {
+                None => {
+                    return Err(format!(
+                        "Batch operation {number}: missing field `tool`. Accepted tools: {accepted}."
+                    ));
+                }
+                Some(Value::String(name)) => name.clone(),
+                Some(_) => {
+                    return Err(format!(
+                        "Batch operation {number}: field `tool` must be a text value. Accepted tools: {accepted}."
+                    ));
+                }
+            };
+            if tool == "set_part_info" {
+                fields.remove("tool");
+                let info = part_info(fields)
+                    .map_err(|e| format!("Batch operation {number} (tool `{tool}`): {e}"))?;
+                return Ok(faber_core::Operation::set_part_info(info));
+            }
+            if !BATCH_TOOLS.contains(&tool.as_str()) {
+                return Err(format!(
+                    "Batch operation {number}: unknown tool `{tool}`. Accepted tools: {accepted}."
+                ));
+            }
+            let edit = crate::input::read::<Edit>(
+                &Value::Object(fields),
+                &format!("operations[{index}]"),
+            )
+            .map_err(|e| format!("Batch operation {number} (tool `{tool}`): {e}"))?;
+            Ok(faber_core::Operation::from(edit))
+        })
+        .collect()
+}
+
+fn check_revision(project: &Project, expected: Option<u64>) -> Result<(), String> {
+    if let Some(expected) = expected
+        && expected != project.data.revision
+    {
+        return Err(format!(
+            "Project revision changed: expected {expected}, current {}",
+            project.data.revision
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddFeature {
+    #[serde(default)]
+    strict: bool,
+    part: String,
+    feature: Feature<Scalar>,
+    before: Option<String>,
+    #[serde(default)]
+    make_output: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditFeature {
+    #[serde(default)]
+    strict: bool,
+    part: String,
+    id: String,
+    geometry: Geometry<Scalar>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FeatureId {
+    #[serde(default)]
+    strict: bool,
+    part: String,
+    id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveFeature {
+    #[serde(default)]
+    strict: bool,
+    part: String,
+    id: String,
+    before: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Remove {
+    id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Topology {
+    id: String,
+    feature: Option<String>,
+    kind: Option<String>,
+    edge: Option<faber_model::EdgeSelector>,
+    face: Option<faber_model::FaceSelector>,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemovePart {
+    id: String,
+    #[serde(default)]
+    strict: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Export {
+    directory: String,
+    #[serde(default)]
+    force: bool,
+    #[serde(default = "default_format")]
+    format: String,
+}
+
+fn default_format() -> String {
+    "stl".into()
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Render {
+    path: String,
+    part: Option<String>,
+    #[serde(default)]
+    view: faber_scene::View,
+    section: Option<SectionArg>,
+    #[serde(default = "image_width")]
+    width: u32,
+    #[serde(default = "image_height")]
+    height: u32,
+}
+
+/// A section for render. It is a saved section id or an inline plane.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SectionArg {
+    /// Id of a saved section.
+    Saved(String),
+    /// A plane in world coordinates.
+    Plane(faber_scene::Section),
+}
+
+/// The section and the bodies to draw. A saved section with parts draws only those parts.
+fn render_input(
+    project: &Project,
+    render: &Render,
+) -> Result<(Option<faber_scene::Section>, Vec<Body>), String> {
+    let (section, parts) = match &render.section {
+        None => (None, Vec::new()),
+        Some(SectionArg::Plane(section)) => (Some(*section), Vec::new()),
+        Some(SectionArg::Saved(id)) => {
+            let saved = project.section(id)?;
+            let offset = (0..3).map(|i| saved.normal[i] * saved.origin[i]).sum();
+            let section = faber_scene::Section {
+                normal: saved.normal,
+                offset,
+                reverse: saved.reverse,
+            };
+            (Some(section), saved.parts)
+        }
+    };
+    let bodies = render
+        .bodies(&project.bodies)?
+        .iter()
+        .filter(|body| parts.is_empty() || parts.contains(&body.id))
+        .cloned()
+        .collect();
+    Ok((section, bodies))
+}
+
+impl Render {
+    fn bodies<'a>(&self, bodies: &'a [Body]) -> Result<&'a [Body], String> {
+        match &self.part {
+            None => Ok(bodies),
+            Some(id) => bodies
+                .iter()
+                .find(|body| body.id == *id)
+                .map(std::slice::from_ref)
+                .ok_or_else(|| format!("Unknown render part: {id}")),
+        }
+    }
+}
+fn image_width() -> u32 {
+    1200
+}
+fn image_height() -> u32 {
+    1000
+}
+
+pub fn report(data: &ProjectData, bodies: &[Body]) -> Value {
+    json!({"schema":1,"name":data.name,"revision":data.revision,"part_count":bodies.len(),"parts":bodies.iter().map(|b| json!({"id":b.id,"name":b.name,"group":b.group,"volume_mm3":b.volume,"bounds_mm":b.bounds,"triangles":b.mesh.triangles.len()})).collect::<Vec<_>>()})
+}
+
+/// Add the resolved absolute project path to the open reply.
+fn open_reply(data: &ProjectData, bodies: &[Body], path: &Path) -> Value {
+    let mut value = report(data, bodies);
+    value["path"] = json!(display_path(path));
+    value
+}
+
+/// Remove the Windows verbatim prefix from a resolved path.
+fn display_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        text
+    }
+}
+
+fn result(value: Result<Value, String>) -> CallToolResult {
+    match value {
+        Ok(value) => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),
+        Err(error) => CallToolResult::error(vec![ContentBlock::text(error)]),
+    }
+}
+
+impl Faber {
+    pub fn new() -> Self {
+        Self {
+            project: Arc::new(Mutex::new(None)),
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    fn with(&self, op: impl FnOnce(&mut Project) -> Result<Value, String>) -> CallToolResult {
+        let mut guard = self.project.lock().unwrap_or_else(|p| p.into_inner());
+        result((|| {
+            let project = &mut guard.as_mut().ok_or("Open a project first")?.project;
+            project.sync()?;
+            op(project)
+        })())
+    }
+}
+
+#[tool_router]
+impl Faber {
+    #[tool(
+        description = "Open a project. Use an absolute path. Set create to true to create a project if it does not exist."
+    )]
+    fn open(&self, Parameters(Checked(args)): Parameters<Checked<Open>>) -> CallToolResult {
+        let mut guard = self.project.lock().unwrap_or_else(|p| p.into_inner());
+        result((|| {
+            let requested = Path::new(&args.path);
+            if !requested.is_absolute() {
+                return Err("Use an absolute path, for example C:\\work\\part.".to_string());
+            }
+            if let Some(current) = guard.as_mut()
+                && std::fs::canonicalize(requested).ok().as_ref() == Some(&current.path)
+            {
+                current.project.sync()?;
+                return Ok(open_reply(
+                    &current.project.data,
+                    &current.project.bodies,
+                    &current.path,
+                ));
+            }
+            let project = faber_wiring::open(requested, args.create, args.name)?;
+            let path = std::fs::canonicalize(requested).map_err(|e| e.to_string())?;
+            let value = open_reply(&project.data, &project.bodies, &path);
+            *guard = Some(OpenProject { path, project });
+            Ok(value)
+        })())
+    }
+
+    #[tool(
+        description = "Measure minimum distance between two placed parts using their exact shapes. Return millimetres and one pair of closest points in world coordinates. Zero can mean contact or overlap; this is not penetration depth. The project stays unchanged."
+    )]
+    fn measure(&self, Parameters(Checked(args)): Parameters<Checked<Measure>>) -> CallToolResult {
+        self.with(|p| {
+            let measured = p.measure_distance(&args.a, &args.b)?;
+            Ok(
+                json!({"schema":1,"revision":p.data.revision,"a":args.a,"b":args.b,
+                "coordinates":"world","distance_mm":measured.distance_mm,
+                "point_a":measured.point_a,"point_b":measured.point_b}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Read the volume, surface area and centre of mass of a placed part in world coordinates. If density_g_cm3 is set, also read the mass and the inertia about the centre of mass. The project stays unchanged."
+    )]
+    fn mass_properties(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<MassProperties>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            let report = p.mass_properties(&args.id, args.density_g_cm3)?;
+            let mut value = json!({"schema":1,"revision":p.data.revision,"id":args.id,
+                "coordinates":"world","volume_mm3":report.volume_mm3,"area_mm2":report.area_mm2,
+                "centre_of_mass_mm":report.centre_of_mass_mm});
+            if let Some(mass_g) = report.mass_g {
+                value["mass_g"] = json!(mass_g);
+            }
+            if let Some(inertia) = report.inertia_kg_mm2 {
+                value["inertia_kg_mm2"] = json!(inertia);
+            }
+            Ok(value)
+        })
+    }
+
+    #[tool(description = "Read part bounds, volume and triangle counts.")]
+    fn status(&self) -> CallToolResult {
+        self.with(|p| Ok(report(&p.data, &p.bodies)))
+    }
+
+    #[tool(
+        description = "Check placed bodies for mesh interference and clearance. Depth is approximate. Pairs that touch are reported as contact and do not fail. Declared contacts give no violation. This read-only check does not change the design."
+    )]
+    fn interference(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<Interference>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            let report =
+                faber_wiring::interference(&p.bodies, args.proximity_mm, &p.data.contacts)?;
+            Ok(json!({"schema":1,"revision":p.data.revision,"report":report}))
+        })
+    }
+
+    #[tool(
+        description = "Apply ordered design edits as one transaction. Build the final state once. Any failure refuses the whole batch. Set expected_revision to refuse a stale edit. Each operation has a tool field and its arguments."
+    )]
+    fn batch(&self, Parameters(Checked(args)): Parameters<Checked<Batch>>) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            p.batch_operations(batch_operations(args.operations)?, args.strict)?;
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Build a candidate from ordered edits without saving or changing undo history. Return its bounds and volumes with the base revision. Optional render accepts path, width, height and section and returns a PNG image. To save the design, send the same operations to batch with expected_revision set to base_revision. Strict checks are optional."
+    )]
+    fn preview_batch(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<PreviewBatch>>,
+    ) -> CallToolResult {
+        let mut image = None;
+        let mut response = self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let base_revision = p.data.revision;
+            let (data, bodies) = p.preview_operations(batch_operations(args.operations)?, args.strict)?;
+            if let Some(render) = args.render {
+                let section = match &render.section {
+                    None => None,
+                    Some(SectionArg::Plane(section)) => Some(*section),
+                    Some(SectionArg::Saved(_)) => {
+                        return Err("Preview renders take an inline section. Save the section to render it by id.".into());
+                    }
+                };
+                faber_wiring::render_view(
+                    render.bodies(&bodies)?,
+                    Path::new(&render.path),
+                    section,
+                    render.width,
+                    render.height,
+                    render.view,
+                )?;
+                image = Some(std::fs::read(&render.path).map_err(|e| e.to_string())?);
+            }
+            Ok(json!({"schema":1,"saved":false,"base_revision":base_revision,"candidate":report(&data,&bodies)}))
+        });
+        if let Some(bytes) = image {
+            response.content.push(ContentBlock::image(
+                base64::prelude::BASE64_STANDARD.encode(bytes),
+                "image/png",
+            ));
+        }
+        response
+    }
+
+    #[tool(
+        description = "Save the current design under a unique name. Names are case insensitive."
+    )]
+    fn checkpoint(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<Checkpoint>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            p.checkpoint(&args.name)?;
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Import your own STEP solid as a new part. Use an absolute source path. Preserve the file in the project and verify its content on rebuild. This is not a purchased-part record."
+    )]
+    fn import_part(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<ImportPart>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            let path = Path::new(&args.path);
+            if !path.is_absolute() {
+                return Err("Import needs an absolute source path".into());
+            }
+            p.import_part(args.id, args.name, path, args.strict)?;
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Restore a named checkpoint. Build before save. Undo can reverse this change."
+    )]
+    fn restore(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<Checkpoint>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            p.restore(&args.name)?;
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Undo the last saved change. Refuse if the current file differs from its recorded state."
+    )]
+    fn undo(&self) -> CallToolResult {
+        self.with(|p| {
+            p.undo()?;
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(description = "Redo a saved change after undo. A new edit clears the redo branch.")]
+    fn redo(&self) -> CallToolResult {
+        self.with(|p| {
+            p.redo()?;
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Read exact edges and faces of a placed part in world coordinates. Set feature to a history feature id to query its cached shape in part coordinates before part placement. Use this source query to set feature selectors. Indices are valid only for the returned revision and shape. Set kind to edges or faces to return one list. Set edge or face to a selector that filters the lists; its expect is not checked. Set limit to cap each list. Filtered replies add total counts before the limit."
+    )]
+    fn topology(&self, Parameters(Checked(args)): Parameters<Checked<Topology>>) -> CallToolResult {
+        self.with(|p| {
+            let kind = args.kind.as_deref();
+            if !matches!(kind, None | Some("edges") | Some("faces")) {
+                return Err("Kind must be edges or faces".into());
+            }
+            if kind == Some("faces") && args.edge.is_some() {
+                return Err("Kind faces takes a face selector, not an edge selector".into());
+            }
+            if kind == Some("edges") && args.face.is_some() {
+                return Err("Kind edges takes an edge selector, not a face selector".into());
+            }
+            if args.limit == Some(0) {
+                return Err("Limit must be at least 1".into());
+            }
+            let filtered = kind.is_some()
+                || args.edge.is_some()
+                || args.face.is_some()
+                || args.limit.is_some();
+            let (mut edges, mut faces) = p.selected_topology(
+                &args.id,
+                args.feature.as_deref(),
+                args.edge.as_ref(),
+                args.face.as_ref(),
+            )?;
+            let total = json!({"edges":edges.len(),"faces":faces.len()});
+            if kind == Some("faces") {
+                edges.clear();
+            }
+            if kind == Some("edges") {
+                faces.clear();
+            }
+            if let Some(limit) = args.limit {
+                edges.truncate(limit);
+                faces.truncate(limit);
+            }
+            let coordinates = if args.feature.is_some() { "part" } else { "world" };
+            let mut reply = json!({"schema":1,"id":args.id,"feature":args.feature,"coordinates":coordinates,"revision":p.data.revision,"edges":edges,"faces":faces});
+            if filtered {
+                reply["total"] = total;
+            }
+            Ok(reply)
+        })
+    }
+
+    #[tool(description = "Read a part recipe, ordered features, placement, bounds and volume.")]
+    fn part_info(&self, Parameters(Checked(args)): Parameters<Checked<Remove>>) -> CallToolResult {
+        self.with(|p| {
+            let recipe = p.data.parts.get(&args.id).ok_or_else(|| format!("Unknown part: {}", args.id))?;
+            let body = p.bodies.iter().find(|b| b.id == args.id).ok_or("Part has no built body")?;
+            Ok(json!({"schema":1,"id":args.id,"recipe":recipe,"bounds_mm":body.bounds,"volume_mm3":body.volume,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(description = "Read shared parameter expressions and calculated values.")]
+    fn params(&self) -> CallToolResult {
+        self.with(|p| Ok(json!({"schema":1,"expressions":p.data.params,"values":p.params()?})))
+    }
+
+    #[tool(
+        description = "Insert a feature before an id, or append it. Set make_output to use its solid as the part output."
+    )]
+    fn add_feature(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<AddFeature>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            if args.strict {
+                p.batch_strict(vec![faber_model::Edit::AddFeature {
+                    part: args.part,
+                    feature: args.feature,
+                    before: args.before,
+                    make_output: args.make_output,
+                }])?;
+            } else {
+                p.add_feature(
+                    &args.part,
+                    args.feature,
+                    args.before.as_deref(),
+                    args.make_output,
+                )?;
+            }
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Replace a feature operation and rebuild its dependent results before save."
+    )]
+    fn edit_feature(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<EditFeature>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            if args.strict {
+                p.batch_strict(vec![faber_model::Edit::EditFeature {
+                    part: args.part,
+                    id: args.id,
+                    geometry: args.geometry,
+                }])?;
+            } else {
+                p.edit_feature(&args.part, &args.id, args.geometry)?;
+            }
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Delete a feature. Refuse deletion if a later operation or the output still needs it."
+    )]
+    fn delete_feature(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<FeatureId>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            if args.strict {
+                p.batch_strict(vec![faber_model::Edit::DeleteFeature {
+                    part: args.part,
+                    id: args.id,
+                }])?;
+            } else {
+                p.delete_feature(&args.part, &args.id)?;
+            }
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Move a feature before an id, or to the end. Refuse an order with invalid dependencies."
+    )]
+    fn move_feature(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<MoveFeature>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            if args.strict {
+                p.batch_strict(vec![faber_model::Edit::MoveFeature {
+                    part: args.part,
+                    id: args.id,
+                    before: args.before,
+                }])?;
+            } else {
+                p.move_feature(&args.part, &args.id, args.before.as_deref())?;
+            }
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(description = "Set a shared parameter expression. Rebuild affected solids before save.")]
+    fn set_param(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SetParam>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            if args.strict { p.batch_strict(vec![faber_model::Edit::SetParam { name: args.name, expression: args.expression }])?; } else { p.set_params(BTreeMap::from([(args.name, args.expression)]))?; }
+            Ok(json!({"schema":1,"expressions":p.data.params,"values":p.params()?,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(description = "Add or replace a part. Build the solid before saving the project.")]
+    fn put_part(&self, Parameters(Checked(args)): Parameters<Checked<PutPart>>) -> CallToolResult {
+        self.with(|p| {
+            if args.strict {
+                p.batch_strict(vec![faber_model::Edit::PutPart {
+                    id: args.id,
+                    part: args.part,
+                }])?;
+            } else {
+                p.put_part(args.id, args.part)?;
+            }
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Change the name, colour, group or note of a part. Set at least one field. The geometry, placement and volume do not change. Each change makes one undo step."
+    )]
+    fn set_part_info(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SetPartInfo>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            p.set_part_info(PartInfo {
+                id: args.id,
+                name: args.name,
+                colour: args.colour,
+                group: args.group,
+                note: args.note,
+            })?;
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Add or replace several parts as one change. Refuse the whole change if any solid fails."
+    )]
+    fn put_parts(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<PutParts>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            if args.strict {
+                p.batch_strict(
+                    args.parts
+                        .into_iter()
+                        .map(|(id, part)| faber_model::Edit::PutPart { id, part })
+                        .collect(),
+                )?;
+            } else {
+                p.put_parts(args.parts)?;
+            }
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(description = "Remove a part by its id.")]
+    fn remove_part(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<RemovePart>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            if args.strict {
+                p.batch_strict(vec![faber_model::Edit::RemovePart { id: args.id }])?;
+            } else {
+                p.remove_part(&args.id)?;
+            }
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Declare or remove an intended contact of two parts. An allowed pair can touch or press up to max_depth_mm. A deeper overlap is a violation. Set allowed to false to remove the contact."
+    )]
+    fn set_contact(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SetContact>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            p.batch_operations(
+                vec![faber_core::Operation::from(faber_model::Edit::SetContact {
+                    a: args.a,
+                    b: args.b,
+                    allowed: args.allowed,
+                    note: args.note,
+                    max_depth_mm: args.max_depth_mm,
+                })],
+                false,
+            )?;
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Add or replace a saved section analysis. The plane can be a plane, a reference feature or a planar face. Set visible to false to hide it in views. A section never changes a solid. Each change makes one undo step."
+    )]
+    fn set_section(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SetSection>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            p.batch_operations(
+                vec![faber_core::Operation::from(faber_model::Edit::SetSection {
+                    id: args.id.clone(),
+                    section: args.section,
+                })],
+                false,
+            )?;
+            Ok(json!({"schema":1,"revision":p.data.revision,"id":args.id}))
+        })
+    }
+
+    #[tool(
+        description = "Remove a saved section analysis by its id. The solids do not change. Undo can reverse this change."
+    )]
+    fn remove_section(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SectionId>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            p.batch_operations(
+                vec![faber_core::Operation::from(
+                    faber_model::Edit::RemoveSection {
+                        id: args.id.clone(),
+                    },
+                )],
+                false,
+            )?;
+            Ok(json!({"schema":1,"revision":p.data.revision,"id":args.id}))
+        })
+    }
+
+    #[tool(
+        description = "Read the exact cut of each cut part by a saved section. Read the plane origin and normal in world coordinates. Read the cut area, perimeter, 2D bounds, regions and holes in plane axes. min_wall_mm is approximate. The project stays unchanged."
+    )]
+    fn section_info(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SectionId>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            let info = p.section_info(&args.id)?;
+            Ok(json!({"schema":1,"id":args.id,"revision":p.data.revision,"coordinates":"world",
+                "origin_mm":info.origin_mm,"normal":info.normal,"axes":info.axes,"parts":info.parts}))
+        })
+    }
+
+    #[tool(
+        description = "Write one file per part. Choose stl for meshes or step for exact solids. Units are millimetres. A refused export lists each finding."
+    )]
+    fn export(&self, Parameters(Checked(args)): Parameters<Checked<Export>>) -> CallToolResult {
+        self.with(|p| {
+            let files = faber_wiring::export_checked(
+                &p.bodies,
+                &p.data.contacts,
+                Path::new(&args.directory),
+                &args.format,
+                args.force,
+            )?;
+            Ok(json!({"schema":1,"files":files}))
+        })
+    }
+
+    #[tool(description = "Read the modelling guide.")]
+    fn guide(&self) -> CallToolResult {
+        result(Ok(json!({"guide":GUIDE})))
+    }
+
+    #[tool(
+        description = "Render the model without a window. Set part to frame only that part. Set view to iso, front, back, left, right, top or bottom. An optional section cuts the view and fills the cut faces. Set section to a saved section id or to an inline plane. A saved section with parts draws only those parts. Source geometry stays unchanged."
+    )]
+    fn render(&self, Parameters(Checked(args)): Parameters<Checked<Render>>) -> CallToolResult {
+        let mut response=self.with(|p| {
+            let (section, bodies) = render_input(p, &args)?;
+            faber_wiring::render_view(&bodies,Path::new(&args.path),section,args.width,args.height,args.view)?;
+            Ok(json!({"schema":1,"path":args.path,"width":args.width,"height":args.height,"view":args.view,"part":args.part,"revision":p.data.revision}))
+        });
+        if response.is_error != Some(true) {
+            match std::fs::read(&args.path) {
+                Ok(bytes) => response.content.push(ContentBlock::image(
+                    base64::prelude::BASE64_STANDARD.encode(bytes),
+                    "image/png",
+                )),
+                Err(e) => return result(Err(e.to_string())),
+            }
+        }
+        response
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for Faber {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("faber", env!("CARGO_PKG_VERSION")))
+            .with_instructions(GUIDE)
+    }
+}

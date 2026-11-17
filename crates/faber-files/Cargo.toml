@@ -1,0 +1,14 @@
+[package]
+name = "faber-files"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde.workspace = true
+faber-model = { path = "../faber-model" }
+faber-ports = { path = "../faber-ports" }
+serde_json.workspace = true
+tempfile.workspace = true
+glam.workspace = true
+sha2 = "0.11.1"

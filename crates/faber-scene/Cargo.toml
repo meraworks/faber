@@ -1,0 +1,16 @@
+[package]
+name = "faber-scene"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+faber-ports = { path = "../faber-ports" }
+glam.workspace = true
+earcutr.workspace = true
+serde.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+faber-model = { path = "../faber-model" }
+faber-geometry = { path = "../faber-geometry" }

@@ -1,0 +1,14 @@
+[package]
+name = "faber-render"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+faber-ports = { path = "../faber-ports" }
+faber-scene = { path = "../faber-scene" }
+glam.workspace = true
+wgpu = "30"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }

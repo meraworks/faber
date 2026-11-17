@@ -1,0 +1,21 @@
+[package]
+name = "faber-wiring"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+faber-clash = { path = "../faber-clash" }
+parry3d-f64 = "0.31.1"
+faber-core = { path = "../faber-core" }
+faber-model = { path = "../faber-model" }
+faber-ports = { path = "../faber-ports" }
+faber-files = { path = "../faber-files" }
+faber-geometry = { path = "../faber-geometry" }
+faber-kernel-occt = { path = "../faber-kernel-occt" }
+faber-render = { path = "../faber-render" }
+faber-scene = { path = "../faber-scene" }
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true

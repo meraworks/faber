@@ -1,0 +1,885 @@
+{
+  "schema": 1,
+  "revision": 11,
+  "name": "Hexagonal trash bin",
+  "parts": {
+    "bin": {
+      "name": "Hexagonal trash bin",
+      "geometry": {
+        "op": "history",
+        "features": [
+          {
+            "id": "outer_bot",
+            "geometry": {
+              "op": "sketch",
+              "profile": {
+                "outer": {
+                  "kind": "regular_polygon",
+                  "centre": [
+                    0.0,
+                    0.0
+                  ],
+                  "radius": "bottom_r",
+                  "sides": 6,
+                  "rotation": 0.0
+                },
+                "holes": []
+              },
+              "placement": {
+                "translation": [
+                  0.0,
+                  0.0,
+                  "foot_h"
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "outer_top",
+            "geometry": {
+              "op": "sketch",
+              "profile": {
+                "outer": {
+                  "kind": "regular_polygon",
+                  "centre": [
+                    0.0,
+                    0.0
+                  ],
+                  "radius": "top_r",
+                  "sides": 6,
+                  "rotation": 0.0
+                },
+                "holes": []
+              },
+              "placement": {
+                "translation": [
+                  0.0,
+                  0.0,
+                  "top_z"
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "outer",
+            "geometry": {
+              "op": "loft_sketches",
+              "sources": [
+                "outer_bot",
+                "outer_top"
+              ],
+              "ruled": true
+            }
+          },
+          {
+            "id": "shell_in",
+            "geometry": {
+              "op": "shell",
+              "source": "outer",
+              "faces": {
+                "created_by": null,
+                "normal": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "near_centre": null,
+                "in_box": null,
+                "area": null,
+                "tolerance": 1e-6,
+                "expect": 1
+              },
+              "thickness": "wall",
+              "thickness_overrides": [
+                {
+                  "faces": {
+                    "created_by": null,
+                    "normal": [
+                      0.0,
+                      0.0,
+                      -1.0
+                    ],
+                    "near_centre": null,
+                    "in_box": null,
+                    "area": null,
+                    "tolerance": 1e-6,
+                    "expect": 1
+                  },
+                  "thickness": "floor_t"
+                }
+              ]
+            }
+          },
+          {
+            "id": "inner_r",
+            "geometry": {
+              "op": "fillet",
+              "source": "shell_in",
+              "edges": {
+                "between": [
+                  {
+                    "created_by": "shell_in",
+                    "normal": null,
+                    "near_centre": null,
+                    "in_box": [
+                      [
+                        -500.0,
+                        -500.0,
+                        "floor_z + 1"
+                      ],
+                      [
+                        500.0,
+                        500.0,
+                        500.0
+                      ]
+                    ],
+                    "area": null,
+                    "tolerance": 1e-6,
+                    "expect": 6
+                  },
+                  {
+                    "created_by": "shell_in",
+                    "normal": null,
+                    "near_centre": null,
+                    "in_box": [
+                      [
+                        -500.0,
+                        -500.0,
+                        "floor_z + 1"
+                      ],
+                      [
+                        500.0,
+                        500.0,
+                        500.0
+                      ]
+                    ],
+                    "area": null,
+                    "tolerance": 1e-6,
+                    "expect": 6
+                  }
+                ],
+                "of_face": null,
+                "parallel": null,
+                "near_centre": null,
+                "in_box": null,
+                "length": null,
+                "radius": null,
+                "tolerance": 1e-6,
+                "expect": 6
+              },
+              "radius": "inner_corner_r"
+            }
+          },
+          {
+            "id": "outer_r2",
+            "geometry": {
+              "op": "fillet",
+              "source": "inner_r",
+              "edges": {
+                "between": [
+                  {
+                    "created_by": "outer",
+                    "normal": null,
+                    "near_centre": null,
+                    "in_box": null,
+                    "area": "(bottom_r + top_r) / 2 * sqrt(height^2 + ((top_r - bottom_r) * cos(30))^2)",
+                    "tolerance": 1.0,
+                    "expect": 6
+                  },
+                  {
+                    "created_by": "outer",
+                    "normal": null,
+                    "near_centre": null,
+                    "in_box": null,
+                    "area": "(bottom_r + top_r) / 2 * sqrt(height^2 + ((top_r - bottom_r) * cos(30))^2)",
+                    "tolerance": 1.0,
+                    "expect": 6
+                  }
+                ],
+                "of_face": null,
+                "parallel": null,
+                "near_centre": null,
+                "in_box": null,
+                "length": null,
+                "radius": null,
+                "tolerance": 1.0,
+                "expect": 6
+              },
+              "radius": "corner_r"
+            }
+          },
+          {
+            "id": "floor_f",
+            "geometry": {
+              "op": "fillet",
+              "source": "outer_r2",
+              "edges": {
+                "between": null,
+                "of_face": {
+                  "created_by": null,
+                  "normal": [
+                    0.0,
+                    0.0,
+                    1.0
+                  ],
+                  "near_centre": null,
+                  "in_box": [
+                    [
+                      -500.0,
+                      -500.0,
+                      "floor_z - 0.5"
+                    ],
+                    [
+                      500.0,
+                      500.0,
+                      "floor_z + 0.5"
+                    ]
+                  ],
+                  "area": null,
+                  "tolerance": 1e-6,
+                  "expect": 1
+                },
+                "parallel": null,
+                "near_centre": null,
+                "in_box": null,
+                "length": null,
+                "radius": null,
+                "tolerance": 1e-6,
+                "expect": 12
+              },
+              "radius": "floor_r"
+            }
+          },
+          {
+            "id": "lip_sk",
+            "geometry": {
+              "op": "sketch",
+              "profile": {
+                "outer": {
+                  "kind": "regular_polygon",
+                  "centre": [
+                    0.0,
+                    0.0
+                  ],
+                  "radius": "lip_r",
+                  "sides": 6,
+                  "rotation": 0.0
+                },
+                "holes": []
+              },
+              "placement": {
+                "translation": [
+                  0.0,
+                  0.0,
+                  "lip_z"
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "lip_solid",
+            "geometry": {
+              "op": "extrude_sketch",
+              "source": "lip_sk",
+              "vector": [
+                0.0,
+                0.0,
+                "lip_h"
+              ]
+            }
+          },
+          {
+            "id": "lip_rf",
+            "geometry": {
+              "op": "fillet",
+              "source": "lip_solid",
+              "edges": {
+                "between": null,
+                "of_face": null,
+                "parallel": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "near_centre": null,
+                "in_box": null,
+                "length": null,
+                "radius": null,
+                "tolerance": 0.001,
+                "expect": 6
+              },
+              "radius": "corner_r + lip_out"
+            }
+          },
+          {
+            "id": "lip_in_sk",
+            "geometry": {
+              "op": "sketch",
+              "profile": {
+                "outer": {
+                  "kind": "regular_polygon",
+                  "centre": [
+                    0.0,
+                    0.0
+                  ],
+                  "radius": "in_r",
+                  "sides": 6,
+                  "rotation": 0.0
+                },
+                "holes": []
+              },
+              "placement": {
+                "translation": [
+                  0.0,
+                  0.0,
+                  "lip_z - 1"
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "lip_cut",
+            "geometry": {
+              "op": "extrude_sketch",
+              "source": "lip_in_sk",
+              "vector": [
+                0.0,
+                0.0,
+                "lip_h + 2"
+              ]
+            }
+          },
+          {
+            "id": "lip_ring",
+            "geometry": {
+              "op": "difference",
+              "left": "lip_rf",
+              "right": "lip_cut"
+            }
+          },
+          {
+            "id": "body_lip",
+            "geometry": {
+              "op": "union",
+              "left": "floor_f",
+              "right": "lip_ring"
+            }
+          },
+          {
+            "id": "grip_sk",
+            "geometry": {
+              "op": "sketch",
+              "profile": {
+                "outer": {
+                  "kind": "slot",
+                  "centre": [
+                    0.0,
+                    0.0
+                  ],
+                  "length": "grip_w",
+                  "width": "grip_h",
+                  "rotation": 0.0
+                },
+                "holes": []
+              },
+              "placement": {
+                "translation": [
+                  0.0,
+                  200.0,
+                  "grip_z"
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "grip_cut",
+            "geometry": {
+              "op": "extrude_sketch",
+              "source": "grip_sk",
+              "vector": [
+                0.0,
+                -400.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "id": "body_grip",
+            "geometry": {
+              "op": "difference",
+              "left": "body_lip",
+              "right": "grip_cut"
+            }
+          },
+          {
+            "id": "cell_sk",
+            "geometry": {
+              "op": "sketch",
+              "profile": {
+                "outer": {
+                  "kind": "rectangle",
+                  "origin": [
+                    "-clip_half",
+                    "field_mid - cell_box_h / 2"
+                  ],
+                  "size": [
+                    "2 * clip_half",
+                    "cell_box_h"
+                  ]
+                },
+                "holes": [
+                  {
+                    "kind": "grid",
+                    "item": {
+                      "kind": "regular_polygon",
+                      "centre": [
+                        "-pitch_x",
+                        "field_mid - 4 * pitch_z"
+                      ],
+                      "radius": "cell_r",
+                      "sides": 6,
+                      "rotation": 30.0
+                    },
+                    "count": [
+                      3,
+                      5
+                    ],
+                    "step": [
+                      [
+                        "pitch_x",
+                        0.0
+                      ],
+                      [
+                        0.0,
+                        "2 * pitch_z"
+                      ]
+                    ]
+                  },
+                  {
+                    "kind": "grid",
+                    "item": {
+                      "kind": "regular_polygon",
+                      "centre": [
+                        "-pitch_x / 2",
+                        "field_mid - 3 * pitch_z"
+                      ],
+                      "radius": "cell_r",
+                      "sides": 6,
+                      "rotation": 30.0
+                    },
+                    "count": [
+                      2,
+                      4
+                    ],
+                    "step": [
+                      [
+                        "pitch_x",
+                        0.0
+                      ],
+                      [
+                        0.0,
+                        "2 * pitch_z"
+                      ]
+                    ]
+                  }
+                ]
+              },
+              "placement": {
+                "translation": [
+                  0.0,
+                  -100.0,
+                  0.0
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "cell_plate",
+            "geometry": {
+              "op": "extrude_sketch",
+              "source": "cell_sk",
+              "vector": [
+                0.0,
+                -40.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "id": "cell_box_sk",
+            "geometry": {
+              "op": "sketch",
+              "profile": {
+                "outer": {
+                  "kind": "rectangle",
+                  "origin": [
+                    "-clip_half",
+                    "field_mid - cell_box_h / 2"
+                  ],
+                  "size": [
+                    "2 * clip_half",
+                    "cell_box_h"
+                  ]
+                },
+                "holes": []
+              },
+              "placement": {
+                "translation": [
+                  0.0,
+                  -100.0,
+                  0.0
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "cell_box",
+            "geometry": {
+              "op": "extrude_sketch",
+              "source": "cell_box_sk",
+              "vector": [
+                0.0,
+                -40.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "id": "cell_one",
+            "geometry": {
+              "op": "difference",
+              "left": "cell_box",
+              "right": "cell_plate"
+            }
+          },
+          {
+            "id": "band_sk",
+            "geometry": {
+              "op": "sketch",
+              "profile": {
+                "outer": {
+                  "kind": "rectangle",
+                  "origin": [
+                    "-clip_half",
+                    "field_bot"
+                  ],
+                  "size": [
+                    "2 * clip_half",
+                    "field_h"
+                  ]
+                },
+                "holes": []
+              },
+              "placement": {
+                "translation": [
+                  0.0,
+                  -100.0,
+                  0.0
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "band_box",
+            "geometry": {
+              "op": "extrude_sketch",
+              "source": "band_sk",
+              "vector": [
+                0.0,
+                -40.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "id": "cell_band",
+            "geometry": {
+              "op": "intersection",
+              "left": "cell_one",
+              "right": "band_box"
+            }
+          },
+          {
+            "id": "cell_all",
+            "geometry": {
+              "op": "circular_pattern",
+              "source": "cell_band",
+              "count": 6.0,
+              "origin": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "axis": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "angle": 360.0
+            }
+          },
+          {
+            "id": "body_cells",
+            "geometry": {
+              "op": "difference",
+              "left": "body_grip",
+              "right": "cell_all"
+            }
+          },
+          {
+            "id": "bin_vent",
+            "geometry": {
+              "op": "hole",
+              "source": "body_cells",
+              "diameter": "vent_d",
+              "depth": 30.0,
+              "placement": {
+                "translation": [
+                  0.0,
+                  "top_r * cos(30)",
+                  "vent_z"
+                ],
+                "rotation": [
+                  90.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              "head": null
+            }
+          },
+          {
+            "id": "foot_c",
+            "geometry": {
+              "op": "cylinder",
+              "radius": "foot_r",
+              "height": "foot_h"
+            }
+          },
+          {
+            "id": "foot_at",
+            "geometry": {
+              "op": "transform",
+              "source": "foot_c",
+              "placement": {
+                "translation": [
+                  "foot_pos",
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              }
+            }
+          },
+          {
+            "id": "feet",
+            "geometry": {
+              "op": "circular_pattern",
+              "source": "foot_at",
+              "count": 6.0,
+              "origin": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "axis": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "angle": 360.0
+            }
+          },
+          {
+            "id": "bin_final",
+            "geometry": {
+              "op": "union",
+              "left": "bin_vent",
+              "right": "feet"
+            }
+          }
+        ],
+        "output": "bin_final"
+      },
+      "placement": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "colour": [
+        151,
+        172,
+        176
+      ],
+      "group": "Body",
+      "note": "Hexagonal trash bin. Honeycomb openings in all six walls. Cell size 22 mm across flats, web 5 mm. Cells lie between 54 mm and 270 mm high. Vent kept in the bottom band."
+    }
+  },
+  "params": {
+    "band_bot": "45",
+    "band_top": "75",
+    "bottom_r": "top_r - height * tan(draft_deg) / cos(30)",
+    "cell_box_h": "8 * pitch_z + 2 * cell_r + 4",
+    "cell_margin": "18",
+    "cell_r": "cell_size / sqrt(3)",
+    "cell_size": "22",
+    "clip_half": "flat_half - cell_margin",
+    "corner_r": "12",
+    "draft_deg": "3",
+    "field_bot": "floor_z + band_bot",
+    "field_h": "field_top - field_bot",
+    "field_mid": "(field_bot + field_top) / 2",
+    "field_top": "top_z - band_top",
+    "flat_half": "bottom_r / 2 - wall / (2 * cos(30)) - inner_corner_r * tan(30)",
+    "floor_r": "8",
+    "floor_t": "4",
+    "floor_z": "foot_h + floor_t",
+    "foot_d": "10",
+    "foot_h": "5",
+    "foot_pos": "100",
+    "foot_r": "foot_d / 2",
+    "grip_drop": "40",
+    "grip_h": "25",
+    "grip_w": "90",
+    "grip_z": "top_z - grip_drop",
+    "height": "340",
+    "in_r": "top_r - wall / cos(30)",
+    "inner_corner_r": "10",
+    "lip_h": "8",
+    "lip_out": "6",
+    "lip_r": "top_r + lip_out / cos(30)",
+    "lip_z": "top_z - lip_h",
+    "pitch_x": "cell_size + web",
+    "pitch_z": "pitch_x * sqrt(3) / 2",
+    "top_r": "150",
+    "top_z": "foot_h + height",
+    "vent_d": "8",
+    "vent_z": "foot_h + 30",
+    "wall": "2.4",
+    "web": "5"
+  },
+  "sections": {
+    "cells": {
+      "plane": {
+        "kind": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          162.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "reverse": false,
+      "visible": true,
+      "note": "Middle of the honeycomb, z 162"
+    },
+    "centre": {
+      "plane": {
+        "kind": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      "reverse": false,
+      "visible": true,
+      "note": "Plane x = 0. Cuts both grip slots and the vent wall."
+    },
+    "floor": {
+      "plane": {
+        "kind": "face",
+        "part": "bin",
+        "feature": null,
+        "face": {
+          "created_by": null,
+          "normal": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "near_centre": null,
+          "in_box": [
+            [
+              -500.0,
+              -500.0,
+              "floor_z - 0.5"
+            ],
+            [
+              500.0,
+              500.0,
+              "floor_z + 0.5"
+            ]
+          ],
+          "area": null,
+          "tolerance": 1e-6,
+          "expect": 1
+        },
+        "offset": 20.0
+      },
+      "reverse": false,
+      "visible": true,
+      "note": "Horizontal, 20 mm above the inner floor."
+    }
+  }
+}

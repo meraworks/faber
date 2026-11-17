@@ -1,0 +1,235 @@
+{
+  "arch": "x86_64",
+  "debug_assertions": true,
+  "fixture": {
+    "name": "Hexagonal bin",
+    "params": {
+      "floor": "4",
+      "height": "340",
+      "inner": "radius - wall / cos(30)",
+      "radius": "150",
+      "wall": "2.4"
+    },
+    "parts": {
+      "bin": {
+        "colour": [
+          151,
+          172,
+          176
+        ],
+        "geometry": {
+          "features": [
+            {
+              "geometry": {
+                "op": "sketch",
+                "placement": {
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "translation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "profile": {
+                  "holes": [],
+                  "outer": {
+                    "centre": [
+                      0.0,
+                      0.0
+                    ],
+                    "kind": "regular_polygon",
+                    "radius": "radius",
+                    "rotation": 0.0,
+                    "sides": 6
+                  }
+                }
+              },
+              "id": "outer_sketch"
+            },
+            {
+              "geometry": {
+                "op": "extrude_sketch",
+                "source": "outer_sketch",
+                "vector": [
+                  0.0,
+                  0.0,
+                  "height"
+                ]
+              },
+              "id": "outer"
+            },
+            {
+              "geometry": {
+                "op": "sketch",
+                "placement": {
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "translation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "profile": {
+                  "holes": [],
+                  "outer": {
+                    "centre": [
+                      0.0,
+                      0.0
+                    ],
+                    "kind": "regular_polygon",
+                    "radius": "inner",
+                    "rotation": 0.0,
+                    "sides": 6
+                  }
+                }
+              },
+              "id": "cavity_sketch"
+            },
+            {
+              "geometry": {
+                "op": "extrude_sketch",
+                "source": "cavity_sketch",
+                "vector": [
+                  0.0,
+                  0.0,
+                  "height - floor"
+                ]
+              },
+              "id": "cavity"
+            },
+            {
+              "geometry": {
+                "op": "transform",
+                "placement": {
+                  "rotation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "translation": [
+                    0.0,
+                    0.0,
+                    "floor"
+                  ]
+                },
+                "source": "cavity"
+              },
+              "id": "raised_cavity"
+            },
+            {
+              "geometry": {
+                "left": "outer",
+                "op": "difference",
+                "right": "raised_cavity"
+              },
+              "id": "hollow"
+            }
+          ],
+          "op": "history",
+          "output": "hollow"
+        },
+        "group": "Body",
+        "name": "Hexagonal bin",
+        "note": "Open top. Wall: 2.4 mm. Base: 4 mm.",
+        "placement": {
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "translation": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    "revision": 38,
+    "schema": 1
+  },
+  "initial_batch_ms": 31.116600000000002,
+  "new_process_open": {
+    "count": 5,
+    "max_ms": 25.0024,
+    "median_ms": 24.0343,
+    "min_ms": 22.6425,
+    "samples_ms": [
+      23.5233,
+      25.0024,
+      24.6937,
+      22.6425,
+      24.0343
+    ]
+  },
+  "os": "windows",
+  "parameter_edit": {
+    "count": 10,
+    "max_ms": 55.7483,
+    "median_ms": 26.61075,
+    "min_ms": 25.1976,
+    "samples_ms": [
+      27.302599999999998,
+      28.2699,
+      26.3341,
+      25.881999999999998,
+      55.7483,
+      25.1976,
+      27.7118,
+      25.2271,
+      26.8874,
+      25.5013
+    ]
+  },
+  "schema": 1,
+  "scope": "Stdio round trip including JSON, transcript writes and timing output. Render includes GPU setup when required, PNG file and base64 reply. Process startup and protocol initialisation are excluded from reopen. OS caches are not cleared. No window is opened.",
+  "section_render_640x480": {
+    "count": 5,
+    "max_ms": 521.3046999999999,
+    "median_ms": 374.26599999999996,
+    "min_ms": 346.2394,
+    "samples_ms": [
+      521.3046999999999,
+      365.88599999999997,
+      385.9602,
+      374.26599999999996,
+      346.2394
+    ]
+  },
+  "status": {
+    "count": 20,
+    "max_ms": 1.5062,
+    "median_ms": 0.83945,
+    "min_ms": 0.7181000000000001,
+    "samples_ms": [
+      0.9332,
+      0.8371000000000001,
+      0.7389,
+      0.7265,
+      0.9890999999999999,
+      1.1839000000000002,
+      0.8434,
+      0.8418,
+      0.7181000000000001,
+      0.8179,
+      0.7519,
+      0.7454000000000001,
+      0.9432,
+      1.5062,
+      0.8341000000000001,
+      0.8318000000000001,
+      1.4519,
+      1.1322999999999999,
+      0.8437,
+      0.8191
+    ]
+  }
+}

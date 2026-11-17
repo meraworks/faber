@@ -1,0 +1,13 @@
+/target
+/.deps/
+/.cargo/*
+!/.cargo/config.toml
+/.claude/
+.faber/
+.impeccable/
+CLAUDE.md
+AGENTS.md
+PRODUCT.md
+DESIGN.md
+*.mesh
+*.tmp

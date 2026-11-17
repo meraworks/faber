@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1.2"
+glam = "0.33"
+earcutr = "0.5"
+tempfile = "3"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[package]
+name = "faber"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+faber-clash = { path = "crates/faber-clash" }
+faber-core = { path = "crates/faber-core" }
+faber-model = { path = "crates/faber-model" }
+faber-ports = { path = "crates/faber-ports" }
+faber-scene = { path = "crates/faber-scene" }
+faber-wiring = { path = "crates/faber-wiring" }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+base64 = "0.23"
+rmcp = { version = "3.8", features = ["server", "transport-io"] }
+tokio = { version = "1.54", features = ["macros", "rt", "io-std"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0.12"

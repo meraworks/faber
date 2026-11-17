@@ -1,0 +1,19 @@
+[package]
+name = "faber-kernel-occt"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+faber-model = { path = "../faber-model" }
+faber-ports = { path = "../faber-ports" }
+faber-geometry = { path = "../faber-geometry" }
+glam.workspace = true
+tempfile.workspace = true
+
+[build-dependencies]
+cc = "1"
+sha2 = "0.11.1"
+
+[dev-dependencies]
+tempfile.workspace = true
