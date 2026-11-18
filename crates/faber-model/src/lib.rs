@@ -1,5 +1,7 @@
 //! Project recipes. Lengths are in millimetres and angles are in degrees.
 
+pub mod motion;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -7,6 +9,9 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Edit {
+    SetMotion {
+        study: motion::MotionStudy,
+    },
     SetParam {
         name: String,
         expression: String,
@@ -39,6 +44,15 @@ pub enum Edit {
         id: String,
         before: Option<String>,
     },
+    /// Suppresses or unsuppresses a feature. A suppressed feature is skipped in the build.
+    /// With cascade, suppressing also suppresses the features that depend on it.
+    SetSuppressed {
+        part: String,
+        id: String,
+        suppressed: bool,
+        #[serde(default)]
+        cascade: bool,
+    },
     /// Declares, or with allowed false removes, an intended contact of two parts.
     SetContact {
         a: String,
@@ -70,12 +84,24 @@ pub struct Profile<N = f64> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Purchased {
+    pub source: String,
+    pub licence: String,
+    pub designation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mass_g: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 #[serde(bound(deserialize = "N: Deserialize<'de> + Default"))]
 #[schemars(bound = "N: JsonSchema + Default")]
 pub enum Geometry<N = f64> {
     Imported {
         asset: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        purchased: Option<Box<Purchased>>,
     },
     Mirror {
         source: String,
@@ -96,6 +122,18 @@ pub enum Geometry<N = f64> {
         count: N,
         step: [N; 3],
     },
+    /// Copies of a solid along a path. Copy 0 is the source.
+    PathPattern {
+        source: String,
+        path: PathInput<N>,
+        count: N,
+        /// Distance between copies along the path. Absent spaces the copies evenly over the whole path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        spacing: Option<N>,
+        /// Turn each copy to follow the path tangent.
+        #[serde(default)]
+        orient: bool,
+    },
     Curve {
         path: CurvePath<N>,
     },
@@ -107,6 +145,8 @@ pub enum Geometry<N = f64> {
         placement: Placement<N>,
     },
     SweepSketch {
+        #[serde(default)]
+        frenet: bool,
         source: String,
         path: String,
     },
@@ -141,6 +181,36 @@ pub enum Geometry<N = f64> {
     Point {
         position: [N; 3],
     },
+    /// A plane through a reference axis. It turns `angle` degrees about the axis from `from`.
+    PlaneAtAngle {
+        axis: String,
+        from: AngleFrom,
+        angle: N,
+    },
+    /// The plane halfway between two parallel reference planes.
+    Midplane {
+        first: String,
+        second: String,
+    },
+    /// The plane through three points. Each point is a point feature or coordinates.
+    PlaneThroughPoints {
+        points: [PointInput<N>; 3],
+    },
+    /// The axis of a cylindrical face selected on the source.
+    AxisFromCylinder {
+        source: String,
+        face: FaceSelector<N>,
+    },
+    /// The line where two reference planes cross.
+    AxisFromPlanes {
+        first: String,
+        second: String,
+    },
+    /// The centre of a full circular edge selected on the source.
+    PointAtCentre {
+        source: String,
+        edge: EdgeSelector<N>,
+    },
     RevolveAround {
         source: String,
         axis: String,
@@ -171,6 +241,16 @@ pub enum Geometry<N = f64> {
     Offset {
         source: String,
         distance: N,
+    },
+    Thread {
+        source: String,
+        face: FaceSelector<N>,
+        size: String,
+        length: N,
+        #[serde(default)]
+        offset: N,
+        #[serde(default)]
+        left_handed: bool,
     },
     Hole {
         source: String,
@@ -204,17 +284,36 @@ pub enum Geometry<N = f64> {
         source: String,
         edges: EdgeSelector<N>,
         radius: N,
+        /// Radius at the end of each edge. The radius changes linearly from `radius`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius_end: Option<N>,
     },
     Chamfer {
         source: String,
         edges: EdgeSelector<N>,
         distance: N,
+        /// Second distance. Cannot be set with `angle_deg`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        distance2: Option<N>,
+        /// Angle in degrees from the face. Cannot be set with `distance2`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        angle_deg: Option<N>,
+        /// Face where `distance` is measured. Default: the first face of each edge.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        face: Option<FaceSelector<N>>,
     },
     Sweep {
         profile: Profile<N>,
         #[serde(default)]
         placement: Placement<N>,
         path: Vec<[N; 3]>,
+    },
+    /// A round bar along a path. A wall makes a tube.
+    Pipe {
+        path: PathInput<N>,
+        diameter: N,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wall: Option<N>,
     },
     Loft {
         sections: Vec<LoftSection<N>>,
@@ -249,6 +348,12 @@ pub enum Geometry<N = f64> {
     Transform {
         source: String,
         placement: Placement<N>,
+    },
+    /// Scales a solid about a point in part coordinates.
+    Scale {
+        source: String,
+        factor: ScaleFactor<N>,
+        about: [N; 3],
     },
     Union {
         left: String,
@@ -286,6 +391,13 @@ pub enum Geometry<N = f64> {
 pub struct Feature<N = f64> {
     pub id: String,
     pub geometry: Geometry<N>,
+    /// A suppressed feature is skipped in the build. It stays in the recipe.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub suppressed: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -314,6 +426,10 @@ pub struct EdgeSelector<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FaceSelector<N = f64> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cylinder_radius: Option<N>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub internal: Option<bool>,
     pub created_by: Option<String>,
     pub normal: Option<[N; 3]>,
     pub near_centre: Option<[N; 3]>,
@@ -432,6 +548,32 @@ pub enum SketchLoop<N = f64> {
         #[serde(skip_serializing_if = "Option::is_none")]
         corner_radius: Option<N>,
     },
+    /// One line of text. Only the outer boundary of a sketch can be text.
+    /// `height` is the cap height. `at` is the baseline start, or the centre
+    /// when `align` is centre. `angle_deg` turns the text about `at`.
+    Text {
+        text: String,
+        height: N,
+        at: [N; 2],
+        #[serde(default)]
+        align: TextAlign,
+        /// Turn about `at` in degrees. Absent means zero.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        angle_deg: Option<N>,
+        /// Built-in font name. Absent uses `ubuntu-light`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        font: Option<String>,
+    },
+}
+
+/// Horizontal text alignment about the `at` point.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Centre,
+    Right,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -487,6 +629,80 @@ pub enum CurveSegment<N = f64> {
         control2: [N; 3],
         end: [N; 3],
     },
+}
+
+/// One factor for all axes, or one factor for each axis.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(untagged)]
+#[schemars(bound = "N: JsonSchema + Default")]
+pub enum ScaleFactor<N = f64> {
+    Uniform(N),
+    Axes([N; 3]),
+}
+
+impl<N> ScaleFactor<N> {
+    pub fn map_numbers<T>(
+        &self,
+        map: &mut impl FnMut(&N) -> Result<T, String>,
+    ) -> Result<ScaleFactor<T>, String> {
+        Ok(match self {
+            Self::Uniform(value) => ScaleFactor::Uniform(map(value)?),
+            Self::Axes([x, y, z]) => ScaleFactor::Axes([map(x)?, map(y)?, map(z)?]),
+        })
+    }
+}
+
+/// A path for `pipe` and `path_pattern`. A feature id names a `curve` or `helix`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(untagged)]
+#[schemars(bound = "N: JsonSchema + Default")]
+pub enum PathInput<N = f64> {
+    Feature(String),
+    Curve(CurvePath<N>),
+}
+
+/// The reference plane for `plane_at_angle`. The base planes are XY, XZ and YZ.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AngleFrom {
+    Xy,
+    Xz,
+    Yz,
+    /// A plane feature id. The axis must lie in this plane.
+    Plane(String),
+}
+
+/// A point for `plane_through_points`: a point feature id or coordinates.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(untagged)]
+#[schemars(bound = "N: JsonSchema + Default")]
+pub enum PointInput<N = f64> {
+    Feature(String),
+    Position([N; 3]),
+}
+
+impl<N> PointInput<N> {
+    pub fn map_numbers<T>(
+        &self,
+        map: &mut impl FnMut(&N) -> Result<T, String>,
+    ) -> Result<PointInput<T>, String> {
+        Ok(match self {
+            Self::Feature(name) => PointInput::Feature(name.clone()),
+            Self::Position([x, y, z]) => PointInput::Position([map(x)?, map(y)?, map(z)?]),
+        })
+    }
+}
+
+impl<N> PathInput<N> {
+    pub fn map_numbers<T>(
+        &self,
+        map: &mut impl FnMut(&N) -> Result<T, String>,
+    ) -> Result<PathInput<T>, String> {
+        Ok(match self {
+            Self::Feature(name) => PathInput::Feature(name.clone()),
+            Self::Curve(path) => PathInput::Curve(path.map_numbers(map)?),
+        })
+    }
 }
 
 impl<N> CurvePath<N> {
@@ -681,6 +897,21 @@ impl<N> SketchLoop<N> {
                     .collect::<Result<_, String>>()?,
                 corner_radius: corner_radius.as_ref().map(&mut *map).transpose()?,
             },
+            Self::Text {
+                text,
+                height,
+                at: [x, y],
+                align,
+                angle_deg,
+                font,
+            } => SketchLoop::Text {
+                text: text.clone(),
+                height: map(height)?,
+                at: [map(x)?, map(y)?],
+                align: *align,
+                angle_deg: angle_deg.as_ref().map(&mut *map).transpose()?,
+                font: font.clone(),
+            },
         })
     }
 }
@@ -720,6 +951,8 @@ impl<N> FaceSelector<N> {
         map: &mut impl FnMut(&N) -> Result<T, String>,
     ) -> Result<FaceSelector<T>, String> {
         Ok(FaceSelector {
+            cylinder_radius: self.cylinder_radius.as_ref().map(&mut *map).transpose()?,
+            internal: self.internal,
             created_by: self.created_by.clone(),
             normal: self
                 .normal
@@ -805,6 +1038,8 @@ pub struct Part<N = f64> {
 pub struct ProjectData {
     pub schema: u32,
     pub revision: u64,
+    #[serde(default, skip_serializing_if = "motion_empty")]
+    pub motion: motion::MotionStudy,
     pub name: String,
     pub parts: BTreeMap<String, Part<Scalar>>,
     #[serde(default)]
@@ -815,6 +1050,10 @@ pub struct ProjectData {
     /// Saved section analyses, keyed by id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sections: BTreeMap<String, SectionAnalysis<Scalar>>,
+}
+
+fn motion_empty(study: &motion::MotionStudy) -> bool {
+    study.joints.is_empty() && study.gears.is_empty() && study.linkages.is_empty()
 }
 
 /// A pair of parts that can touch or press on purpose. Parts a and b are sorted.
@@ -1050,6 +1289,34 @@ impl<N> Geometry<N> {
             Geometry::Point { position } => Geometry::Point {
                 position: [map(&position[0])?, map(&position[1])?, map(&position[2])?],
             },
+            Geometry::PlaneAtAngle { axis, from, angle } => Geometry::PlaneAtAngle {
+                axis: axis.clone(),
+                from: from.clone(),
+                angle: map(angle)?,
+            },
+            Geometry::Midplane { first, second } => Geometry::Midplane {
+                first: first.clone(),
+                second: second.clone(),
+            },
+            Geometry::PlaneThroughPoints { points } => Geometry::PlaneThroughPoints {
+                points: [
+                    points[0].map_numbers(map)?,
+                    points[1].map_numbers(map)?,
+                    points[2].map_numbers(map)?,
+                ],
+            },
+            Geometry::AxisFromCylinder { source, face } => Geometry::AxisFromCylinder {
+                source: source.clone(),
+                face: face.map_numbers(map)?,
+            },
+            Geometry::AxisFromPlanes { first, second } => Geometry::AxisFromPlanes {
+                first: first.clone(),
+                second: second.clone(),
+            },
+            Geometry::PointAtCentre { source, edge } => Geometry::PointAtCentre {
+                source: source.clone(),
+                edge: edge.map_numbers(map)?,
+            },
             Geometry::RevolveAround {
                 source,
                 axis,
@@ -1087,7 +1354,12 @@ impl<N> Geometry<N> {
             Geometry::Curve { path } => Geometry::Curve {
                 path: path.map_numbers(map)?,
             },
-            Geometry::SweepSketch { source, path } => Geometry::SweepSketch {
+            Geometry::SweepSketch {
+                source,
+                path,
+                frenet,
+            } => Geometry::SweepSketch {
+                frenet: *frenet,
                 source: source.clone(),
                 path: path.clone(),
             },
@@ -1144,6 +1416,21 @@ impl<N> Geometry<N> {
                     .map(|face| face.map_numbers(map))
                     .transpose()?,
             },
+            Geometry::Thread {
+                source,
+                face,
+                size,
+                length,
+                offset,
+                left_handed,
+            } => Geometry::Thread {
+                source: source.clone(),
+                face: face.map_numbers(map)?,
+                size: size.clone(),
+                length: map(length)?,
+                offset: map(offset)?,
+                left_handed: *left_handed,
+            },
             Geometry::Hole {
                 source,
                 diameter,
@@ -1182,19 +1469,30 @@ impl<N> Geometry<N> {
                 source,
                 edges,
                 radius,
+                radius_end,
             } => Geometry::Fillet {
                 source: source.clone(),
                 edges: edges.map_numbers(map)?,
                 radius: map(radius)?,
+                radius_end: radius_end.as_ref().map(&mut *map).transpose()?,
             },
             Geometry::Chamfer {
                 source,
                 edges,
                 distance,
+                distance2,
+                angle_deg,
+                face,
             } => Geometry::Chamfer {
                 source: source.clone(),
                 edges: edges.map_numbers(map)?,
                 distance: map(distance)?,
+                distance2: distance2.as_ref().map(&mut *map).transpose()?,
+                angle_deg: angle_deg.as_ref().map(&mut *map).transpose()?,
+                face: face
+                    .as_ref()
+                    .map(|value| value.map_numbers(map))
+                    .transpose()?,
             },
             Geometry::Sweep {
                 profile,
@@ -1257,7 +1555,8 @@ impl<N> Geometry<N> {
                 radius: map(radius)?,
                 height: map(height)?,
             },
-            Geometry::Imported { asset } => Geometry::Imported {
+            Geometry::Imported { asset, purchased } => Geometry::Imported {
+                purchased: purchased.clone(),
                 asset: asset.clone(),
             },
             Geometry::Mirror {
@@ -1297,6 +1596,37 @@ impl<N> Geometry<N> {
                 source: source.clone(),
                 placement: placement.map_numbers(map)?,
             },
+            Geometry::Scale {
+                source,
+                factor,
+                about: [x, y, z],
+            } => Geometry::Scale {
+                source: source.clone(),
+                factor: factor.map_numbers(map)?,
+                about: [map(x)?, map(y)?, map(z)?],
+            },
+            Geometry::Pipe {
+                path,
+                diameter,
+                wall,
+            } => Geometry::Pipe {
+                path: path.map_numbers(map)?,
+                diameter: map(diameter)?,
+                wall: wall.as_ref().map(&mut *map).transpose()?,
+            },
+            Geometry::PathPattern {
+                source,
+                path,
+                count,
+                spacing,
+                orient,
+            } => Geometry::PathPattern {
+                source: source.clone(),
+                path: path.map_numbers(map)?,
+                count: map(count)?,
+                spacing: spacing.as_ref().map(&mut *map).transpose()?,
+                orient: *orient,
+            },
             Geometry::Union { left, right } => Geometry::Union {
                 left: left.clone(),
                 right: right.clone(),
@@ -1316,6 +1646,7 @@ impl<N> Geometry<N> {
                         Ok(Feature {
                             id: feature.id.clone(),
                             geometry: feature.geometry.map_numbers(map)?,
+                            suppressed: feature.suppressed,
                         })
                     })
                     .collect::<Result<_, String>>()?,
