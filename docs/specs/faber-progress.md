@@ -1346,3 +1346,41 @@ installed. See `kernel-windows-research.md`.
 - Format, workspace Clippy and all-target tests pass, with tests run in sequence.
   Logs: `.cargo/face-plane-clippy.txt` and `.cargo/face-plane-tests.txt`.
   Model type changes remain separate for a future commit. No commit was made.
+
+## Review, speed and modular files (version 0.2.0)
+
+Plan: `docs/specs/2026-11-18-review-speed-modular-plan.md`. Commits 0d106cd,
+653064d, e46b5f6 and 8730562.
+
+- The project is split into `faber.json`, `parts/<id>.json`, `placement.json`,
+  `assembly.json` and `analysis.json` (schema 2). A design source
+  `design.jsonnet` can generate the parts.
+- A move keeps the unplaced body, so it does not tessellate again.
+- Reads are cached for each revision. `topology` returns pages.
+- The MCP tool list is smaller, and the `schema` tool gives the full schema.
+  Batch tools `move_part`, `align_parts` and `suppress_feature` take several
+  ids.
+- The viewer selects several parts with Ctrl, Shift and a rectangle, and moves
+  them as one group in one revision.
+- The final fix wave keeps the text marker in cached sketches. It refuses a
+  design source that replaces hand-made or purchased parts. It rolls back a
+  failed save and completes an interrupted save at open.
+
+Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
+`FABER_TIMING=1`, medians in ms):
+
+| Call | Before (f9a5602) | After (8730562) |
+| --- | --- | --- |
+| cold open | 17028 | 16691 |
+| warm open (n=4) | 2987 | 2094 |
+| `move_part`, 1 mm (n=10) | 3574 | 778 |
+| `set_param` (n=10) | 3732 | 2693 |
+| `suppress_feature` (n=10) | 3376 | 2512 |
+
+- One move costs `transform` about 360 ms (shape copy in the kernel) and
+  `sections_total` about 390 ms. The `floor` section reads a face of the placed
+  part, so a move must compute it again. A move with only plane sections takes
+  about 460 ms.
+- A warm open still computes the unplaced properties (about 1.6 s). Storing
+  volume and bounds with the mesh cache entry is open work.
+- 569 tests pass. Format and workspace Clippy pass.
