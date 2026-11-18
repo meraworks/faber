@@ -485,3 +485,29 @@ fn study_and_section_share_the_analysis_file() {
     assert!(file["sections"].get("mid").is_some());
     assert_eq!(layout::read(dir.path()).unwrap(), data);
 }
+
+#[test]
+fn drawing_files_round_trip_and_removed_drawing_file_is_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut data = fixture();
+    layout::write(dir.path(), &data).unwrap();
+    let before = layout::fingerprint(dir.path()).unwrap();
+    let drawing =
+        serde_json::from_value(serde_json::json!({"title":"Drawing, revision A"})).unwrap();
+    data.drawings.insert("overview".into(), drawing);
+    layout::write(dir.path(), &data).unwrap();
+    let file = dir.path().join("drawings/overview.json");
+    let raw: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(raw["schema"], 1);
+    assert_eq!(raw["title"], "Drawing, revision A");
+    assert_ne!(layout::fingerprint(dir.path()).unwrap(), before);
+    assert_eq!(layout::read(dir.path()).unwrap(), data);
+    let mut invalid = raw;
+    invalid["schema"] = 2.into();
+    fs::write(&file, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    assert!(layout::read(dir.path()).is_err());
+    data.drawings.clear();
+    layout::write(dir.path(), &data).unwrap();
+    assert!(!file.exists());
+    assert_eq!(layout::read(dir.path()).unwrap(), data);
+}

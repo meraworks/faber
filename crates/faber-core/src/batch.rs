@@ -154,6 +154,18 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             data.contacts.retain(|_, c| c.a != id && c.b != id);
             crate::section::detach_part(data, &id)?;
         }
+        Edit::SetDrawing { id, drawing } => {
+            if !crate::valid_id(&id) {
+                return Err(format!("Invalid drawing id: {id}"));
+            }
+            drawing.validate()?;
+            data.drawings.insert(id, drawing);
+        }
+        Edit::RemoveDrawing { id } => {
+            data.drawings
+                .remove(&id)
+                .ok_or_else(|| format!("Unknown drawing: {id}"))?;
+        }
         Edit::SetStudy { id, study } => {
             data.studies.insert(id, study);
         }

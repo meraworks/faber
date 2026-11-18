@@ -282,6 +282,7 @@ fn empty_project(root: &Path) -> ProjectData {
         .unwrap_or_else(|| "Untitled".into());
     ProjectData {
         printer: None,
+        drawings: Default::default(),
         studies: Default::default(),
         materials: Default::default(),
         schema: 1,

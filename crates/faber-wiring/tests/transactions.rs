@@ -45,6 +45,7 @@ fn part(height: f64) -> Part {
 fn build_before_save_and_keep_failed_changes_out() {
     let store = Arc::new(Store(Mutex::new(ProjectData {
         printer: None,
+        drawings: Default::default(),
         studies: Default::default(),
         materials: Default::default(),
         schema: 1,
@@ -70,6 +71,7 @@ fn build_before_save_and_keep_failed_changes_out() {
 fn unsupported_schema_is_refused() {
     let store = Arc::new(Store(Mutex::new(ProjectData {
         printer: None,
+        drawings: Default::default(),
         studies: Default::default(),
         materials: Default::default(),
         schema: 999,
@@ -88,6 +90,7 @@ fn unsupported_schema_is_refused() {
 fn part_ids_remain_safe_on_case_insensitive_file_systems() {
     let store = Arc::new(Store(Mutex::new(ProjectData {
         printer: None,
+        drawings: Default::default(),
         studies: Default::default(),
         materials: Default::default(),
         schema: 1,
@@ -151,6 +154,7 @@ fn parameter_changes_rebuild_parts_and_failed_changes_leave_saved_data_intact() 
 fn parameter_edits_reuse_parts_with_unchanged_dimensions() {
     let store = Arc::new(Store(Mutex::new(ProjectData {
         printer: None,
+        drawings: Default::default(),
         studies: Default::default(),
         materials: Default::default(),
         schema: 1,

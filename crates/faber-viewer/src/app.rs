@@ -353,6 +353,7 @@ impl Shell {
     pub fn welcome(cc: &eframe::CreationContext<'_>) -> Self {
         let data = ProjectData {
             printer: None,
+            drawings: Default::default(),
             studies: Default::default(),
             materials: Default::default(),
             schema: 1,

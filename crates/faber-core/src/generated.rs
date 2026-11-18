@@ -219,7 +219,9 @@ impl Project {
     fn changes_generated(&self, operation: &Operation) -> bool {
         match operation {
             Operation::Edit(edit) => match &**edit {
-                Edit::SetPrinter { .. }
+                Edit::SetDrawing { .. }
+                | Edit::RemoveDrawing { .. }
+                | Edit::SetPrinter { .. }
                 | Edit::SetStudy { .. }
                 | Edit::RemoveStudy { .. }
                 | Edit::SetMotion { .. }

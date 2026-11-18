@@ -6,6 +6,7 @@ mod printer;
 use plastic::map_lines;
 pub use plastic::{BossRibs, LipLoop, LipSide, RibSide};
 pub use printer::{Clearance, Printer};
+pub mod drawing;
 pub mod motion;
 pub mod study;
 pub use material::{MaterialClass, MaterialData};
@@ -17,6 +18,13 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Edit {
+    SetDrawing {
+        id: String,
+        drawing: drawing::Drawing,
+    },
+    RemoveDrawing {
+        id: String,
+    },
     SetPrinter {
         printer: Printer,
     },
@@ -1128,6 +1136,8 @@ pub struct Part<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectData {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub drawings: BTreeMap<String, drawing::Drawing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub printer: Option<Printer>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

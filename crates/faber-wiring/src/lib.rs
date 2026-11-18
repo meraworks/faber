@@ -348,6 +348,7 @@ fn open_with_store(
     if (create || generated) && !path.join("faber.json").exists() {
         let data = ProjectData {
             printer: None,
+            drawings: Default::default(),
             studies: Default::default(),
             materials: Default::default(),
             schema: 1,
@@ -425,6 +426,7 @@ pub fn create(path: &Path, name: String) -> Result<Project> {
     }
     let data = ProjectData {
         printer: None,
+        drawings: Default::default(),
         studies: Default::default(),
         materials: Default::default(),
         schema: 1,

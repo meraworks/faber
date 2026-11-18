@@ -10,6 +10,7 @@
 //! A schema 1 `faber.json` holds the whole project in one file. It still opens.
 
 use super::atomic_write;
+use faber_model::drawing::Drawing;
 use faber_model::motion::MotionStudy;
 use faber_model::{Contact, Geometry, Part, Placement, ProjectData, Scalar, SectionAnalysis};
 use faber_ports::Result;
@@ -32,6 +33,13 @@ const OPTIONAL_FILES: [&str; 4] = [
 #[derive(Deserialize)]
 struct Probe {
     schema: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DrawingFile {
+    schema: u32,
+    #[serde(flatten)]
+    drawing: Drawing,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -123,7 +131,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         None => BTreeMap::new(),
     };
     let mut parts = BTreeMap::new();
-    for id in part_ids(root)? {
+    for id in file_ids(root, "parts")? {
         if !faber_ports::valid_id(&id) {
             return Err(format!("Invalid part file name: parts/{id}.json"));
         }
@@ -168,7 +176,16 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         }
         None => None,
     };
+    let mut drawings = BTreeMap::new();
+    for id in file_ids(root, "drawings")? {
+        let name = format!("drawings/{id}.json");
+        let file: DrawingFile = read_json(root, &name)?;
+        check_schema(&file.schema, &name)?;
+        drawings.insert(id, file.drawing);
+    }
+    check_drawings(&drawings)?;
     Ok(ProjectData {
+        drawings,
         printer,
         materials: manifest.materials,
         studies,
@@ -192,7 +209,24 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
     if let Some(id) = data.parts.keys().find(|id| !faber_ports::valid_id(id)) {
         return Err(format!("Invalid part name for a file: {id}"));
     }
+    check_drawings(&data.drawings)?;
     let mut changed = Vec::new();
+    for (id, drawing) in &data.drawings {
+        let file = DrawingFile {
+            schema: FILE_SCHEMA,
+            drawing: drawing.clone(),
+        };
+        put(root, &format!("drawings/{id}.json"), &file, &mut changed)?;
+    }
+    for id in file_ids(root, "drawings")? {
+        if !data
+            .drawings
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case(&id))
+        {
+            remove(root.join(format!("drawings/{id}.json")), &mut changed)?;
+        }
+    }
     for (id, part) in &data.parts {
         let file = PartFile {
             material: part.material.clone(),
@@ -245,7 +279,7 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
     }
     // Last, after the placement. A part file without a placement entry reads with
     // the identity placement, so a stop before this point still reads.
-    for id in part_ids(root)? {
+    for id in file_ids(root, "parts")? {
         // On a case-insensitive file system a stale name can be the live file of another id.
         let live = data.parts.keys().any(|key| key.eq_ignore_ascii_case(&id));
         if !live {
@@ -274,8 +308,11 @@ pub fn fingerprint(root: &Path) -> Result<(SystemTime, u64)> {
             .map(|name| root.join(name))
             .filter(|path| path.exists()),
     );
-    for id in part_ids(root)? {
+    for id in file_ids(root, "parts")? {
         files.push(root.join(format!("parts/{id}.json")));
+    }
+    for id in file_ids(root, "drawings")? {
+        files.push(root.join(format!("drawings/{id}.json")));
     }
     for path in files {
         let metadata =
@@ -287,12 +324,12 @@ pub fn fingerprint(root: &Path) -> Result<(SystemTime, u64)> {
     Ok((newest, total))
 }
 
-/// The ids of the `.json` files in `parts/`, sorted.
-fn part_ids(root: &Path) -> Result<Vec<String>> {
-    let entries = match std::fs::read_dir(root.join("parts")) {
+/// The ids of the data files in a folder, sorted.
+fn file_ids(root: &Path, folder: &str) -> Result<Vec<String>> {
+    let entries = match std::fs::read_dir(root.join(folder)) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("Cannot read parts: {e}")),
+        Err(e) => return Err(format!("Cannot read {folder}: {e}")),
     };
     let mut ids = Vec::new();
     for entry in entries {
@@ -305,6 +342,17 @@ fn part_ids(root: &Path) -> Result<Vec<String>> {
     }
     ids.sort();
     Ok(ids)
+}
+
+fn check_drawings(drawings: &BTreeMap<String, Drawing>) -> Result<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    for (id, drawing) in drawings {
+        if !faber_ports::valid_id(id) || !seen.insert(id.to_ascii_lowercase()) {
+            return Err(format!("Invalid or duplicate drawing name: {id}"));
+        }
+        drawing.validate()?;
+    }
+    Ok(())
 }
 
 fn check_schema(schema: &u32, name: &str) -> Result<()> {
