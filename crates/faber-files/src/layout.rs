@@ -53,6 +53,13 @@ struct ManufactureFile {
 #[serde(deny_unknown_fields)]
 struct Manifest {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    configurations: BTreeMap<String, faber_model::Configuration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_configuration: Option<String>,
+    /// Features that this configuration suppressed when it became active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    configuration_suppressions: Vec<faber_model::SuppressRef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     materials: BTreeMap<String, faber_model::MaterialData>,
     schema: u32,
     revision: u64,
@@ -202,6 +209,10 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         name: manifest.name,
         parts,
         params: manifest.params,
+        configurations: manifest.configurations,
+        active_configuration: manifest.active_configuration,
+        configuration_suppressions: manifest.configuration_suppressions,
+
         contacts,
         sections,
     })
@@ -304,6 +315,9 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
         revision: data.revision,
         name: data.name.clone(),
         params: data.params.clone(),
+        configurations: data.configurations.clone(),
+        active_configuration: data.active_configuration.clone(),
+        configuration_suppressions: data.configuration_suppressions.clone(),
     };
     put(root, "faber.json", &manifest, &mut changed)?;
     Ok(changed)

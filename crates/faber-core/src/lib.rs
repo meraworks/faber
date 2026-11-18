@@ -3,6 +3,8 @@
 mod assets;
 mod batch;
 mod body_cache;
+mod configurations;
+pub use configurations::apply_configuration;
 mod components;
 mod construction;
 mod dress_variant;
@@ -753,6 +755,7 @@ pub fn valid_id(id: &str) -> bool {
 
 fn validate_data(data: &ProjectData) -> Result<()> {
     components::frames(data)?;
+    configurations::validate(data)?;
     if data.schema != 1 {
         return Err(format!("Unsupported schema: {}", data.schema));
     }

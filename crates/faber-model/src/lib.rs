@@ -22,6 +22,16 @@ use std::collections::BTreeMap;
     reason = "The batch stores each edit in a box."
 )]
 pub enum Edit {
+    SetConfiguration {
+        name: String,
+        configuration: Configuration,
+    },
+    UseConfiguration {
+        name: String,
+    },
+    RemoveConfiguration {
+        name: String,
+    },
     SetComponent {
         id: String,
         component: Component,
@@ -1132,6 +1142,23 @@ pub struct Placement<N = f64> {
     pub rotation: [N; 3],
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Configuration {
+    #[serde(default)]
+    pub params: BTreeMap<String, String>,
+    #[serde(default)]
+    pub suppressed: Vec<SuppressRef>,
+    #[serde(default)]
+    pub note: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct SuppressRef {
+    pub part: String,
+    pub feature: String,
+}
+
 /// A placed node in the assembly tree.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1167,6 +1194,13 @@ pub struct Part<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectData {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub configurations: BTreeMap<String, Configuration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_configuration: Option<String>,
+    /// Features that this configuration suppressed when it became active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configuration_suppressions: Vec<SuppressRef>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub components: BTreeMap<String, Component>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

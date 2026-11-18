@@ -219,6 +219,11 @@ impl Project {
     fn changes_generated(&self, operation: &Operation) -> bool {
         match operation {
             Operation::Edit(edit) => match &**edit {
+                Edit::SetConfiguration { name, .. } => {
+                    self.data.active_configuration.as_ref() == Some(name)
+                }
+                Edit::RemoveConfiguration { .. } => false,
+                Edit::UseConfiguration { .. } => true,
                 Edit::SetComponent { .. } | Edit::RemoveComponent { .. } => true,
                 Edit::SetDrawing { .. }
                 | Edit::RemoveDrawing { .. }

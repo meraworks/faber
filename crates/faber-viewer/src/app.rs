@@ -357,6 +357,9 @@ impl Shell {
     pub fn welcome(cc: &eframe::CreationContext<'_>) -> Self {
         let data = ProjectData {
             printer: None,
+            configurations: Default::default(),
+            active_configuration: None,
+            configuration_suppressions: Vec::new(),
             components: Default::default(),
             drawings: Default::default(),
             studies: Default::default(),

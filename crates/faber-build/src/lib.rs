@@ -310,6 +310,9 @@ fn empty_project(root: &Path) -> ProjectData {
         .unwrap_or_else(|| "Untitled".into());
     ProjectData {
         printer: None,
+        configurations: Default::default(),
+        active_configuration: None,
+        configuration_suppressions: Vec::new(),
         components: Default::default(),
         drawings: Default::default(),
         studies: Default::default(),

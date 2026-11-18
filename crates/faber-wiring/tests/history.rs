@@ -195,6 +195,9 @@ fn undo_across_a_revision_only_step_moves_the_history() {
     // Histories written before the no-op guard can hold a step that differs only by revision.
     let current = ProjectData {
         printer: None,
+        configurations: Default::default(),
+        active_configuration: None,
+        configuration_suppressions: Vec::new(),
         components: Default::default(),
         drawings: Default::default(),
         studies: Default::default(),

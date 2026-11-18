@@ -48,6 +48,9 @@ fn restore_journal(journal: &std::path::Path, previous: Option<Vec<u8>>) {
 fn continues(disk: &ProjectData, old: &ProjectData, new: &ProjectData) -> bool {
     if disk.revision != old.revision
         || disk.name != old.name
+        || disk.configurations != old.configurations
+        || disk.active_configuration != old.active_configuration
+        || disk.configuration_suppressions != old.configuration_suppressions
         || disk.params != old.params
         || disk.schema != old.schema
         || disk.materials != old.materials

@@ -125,6 +125,12 @@ fn history<'a>(
 
 fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
     match edit {
+        Edit::SetConfiguration {
+            name,
+            configuration,
+        } => crate::configurations::set(data, name, configuration)?,
+        Edit::UseConfiguration { name } => crate::apply_configuration(data, &name)?,
+        Edit::RemoveConfiguration { name } => crate::configurations::remove(data, &name)?,
         Edit::SetComponent { id, component } => {
             crate::components::set_component(data, id, component)?
         }
