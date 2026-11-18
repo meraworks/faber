@@ -42,3 +42,32 @@ fn drawing_refs_round_trip_for_all_view_and_dimension_kinds() {
     invalid["views"]["front"]["unexpected"] = json!(5);
     assert!(serde_json::from_value::<Drawing>(invalid).is_err());
 }
+
+#[test]
+fn overall_dimensions_and_diameter_groups_keep_live_references() {
+    let axis = serde_json::json!({"kind":"cylinder_axis","part":"base","face":{"cylinder_radius":5,"tolerance":0.02,"expect":1}});
+    let mut input = serde_json::json!({"title":"Plate","views":{"front":{"kind":"base","direction":"front","at":[20,30]}},
+        "dimensions":{"width":{"view":"front","offset":-6,"kind":"overall","along":"horizontal"},
+                      "holes":{"view":"front","offset":6,"kind":"diameter_group","edges":[axis,axis]}}});
+    let drawing: Drawing = serde_json::from_value(input.clone()).unwrap();
+    drawing.validate().unwrap();
+    assert_eq!(
+        serde_json::from_value::<Drawing>(serde_json::to_value(&drawing).unwrap()).unwrap(),
+        drawing
+    );
+    input["dimensions"]["width"]["along"] = serde_json::json!("aligned");
+    assert!(
+        serde_json::from_value::<Drawing>(input.clone())
+            .unwrap()
+            .validate()
+            .is_err()
+    );
+    input["dimensions"].as_object_mut().unwrap().remove("width");
+    input["dimensions"]["holes"]["edges"] = serde_json::json!([axis]);
+    assert!(
+        serde_json::from_value::<Drawing>(input)
+            .unwrap()
+            .validate()
+            .is_err()
+    );
+}

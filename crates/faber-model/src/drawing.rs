@@ -159,10 +159,29 @@ pub enum Along {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DimensionKind {
-    Linear { a: Anchor, b: Anchor, along: Along },
-    Diameter { edge: Anchor },
-    Radius { edge: Anchor },
-    Angle { a: Anchor, b: Anchor },
+    /// The span of the current view in one sheet direction.
+    Overall {
+        along: Along,
+    },
+    /// Every circle in this group must still have the same diameter.
+    DiameterGroup {
+        edges: Vec<Anchor>,
+    },
+    Linear {
+        a: Anchor,
+        b: Anchor,
+        along: Along,
+    },
+    Diameter {
+        edge: Anchor,
+    },
+    Radius {
+        edge: Anchor,
+    },
+    Angle {
+        a: Anchor,
+        b: Anchor,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -254,6 +273,21 @@ impl Drawing {
             checked.extend(path);
         }
         for (id, d) in &self.dimensions {
+            match &d.kind {
+                DimensionKind::Overall {
+                    along: Along::Aligned,
+                } => {
+                    return Err(format!(
+                        "Select horizontal or vertical for overall dimension {id}."
+                    ));
+                }
+                DimensionKind::DiameterGroup { edges } if edges.len() < 2 => {
+                    return Err(format!(
+                        "Diameter group {id} needs at least two references."
+                    ));
+                }
+                _ => {}
+            }
             if !self.views.contains_key(&d.view) || !d.offset.is_finite() {
                 return Err(format!("Check the view and offset of dimension {id}."));
             }
