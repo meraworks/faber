@@ -1508,3 +1508,30 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   The release build and silent install passed. The installed CLI repaired,
   split and converted the example. The installed viewer rendered 19 local
   example projects without a window.
+
+## Fusion parity 06: Drawings
+
+- A drawing has its own project file. Its views and dimensions refer to the
+  design. First-angle and third-angle sheets support projected views, hidden
+  edges, details, section hatching, a title block and a parts list.
+- Automatic overall dimensions use the current silhouette. The saved width
+  changed from 40 to 50 and then 100 mm with the part. A group of equal
+  diameters reports a broken reference if one bore changes or is removed.
+- The four views of the trash bin fit on A4 at 1:5. The 308.29, 271.81 and
+  345 mm dimensions sit outside their profiles. The six-hole callout clears
+  every visible edge. The kernel marks visible and hidden edges on exact
+  shapes. A mesh supplies its projected outline.
+- The preview reads the last committed design while an editor holds the
+  project open. A sheet keeps its zoom and pan during reload. An old worker
+  cannot publish a superseded sheet. A same-revision edit to a part file
+  updates the drawing. Export writes the displayed revision.
+- Recovery keeps independent changes to a drawing after an interrupted
+  save. A read-only preview reuses saved features and does not write to the
+  feature cache.
+- The PNG writer uses tiny-skia 0.12.0 (BSD-3-Clause). PDF uses Helvetica
+  for WinAnsi text and the built-in font outline for other supported letters.
+- All 927 workspace tests passed. Workspace Clippy passed with warnings denied.
+- The release build and silent installation passed. The installed CLI wrote
+  SVG, PDF, DXF and PNG. The installed viewer opened 19 example projects and
+  rendered four section positions on a copy of the 232-body assembly. The
+  viewport pixels were identical on return to the same offset.

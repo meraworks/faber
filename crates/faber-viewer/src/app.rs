@@ -7,6 +7,9 @@ mod command_search;
 #[cfg(test)]
 mod controls_fixture;
 mod dialogs;
+mod drawing;
+#[cfg(test)]
+mod drawing_tests;
 #[cfg(test)]
 mod edge_pick_tests;
 mod face_pick;
@@ -244,6 +247,7 @@ fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
 }
 
 pub struct Shell {
+    sheets: drawing::Sheets,
     mesh_tool: Option<mesh_tools::Panel>,
     printing: print_check::PrintPanel,
     study: study::StudyPanel,
@@ -386,6 +390,7 @@ impl Shell {
         let modified = faber_wiring::project_fingerprint(&root).ok();
         Self {
             project_loaded: true,
+            sheets: Default::default(),
             mesh_tool: None,
             printing: Default::default(),
             study: Default::default(),
@@ -1835,6 +1840,7 @@ impl Shell {
                         self.clear_entity_picks();
                         self.pick_info = Default::default();
                     }
+                    self.sheets.project_loaded();
                     self.data = data;
                     self.bodies = bodies.into();
                     self.list = None;
@@ -2200,6 +2206,7 @@ impl Shell {
         ui.add_space(20.);
         ui.separator();
         ui.add_space(12.);
+        self.drawing_list(ui);
         ui.label(RichText::new("BODIES").size(11.).color(MUTED));
         ui.add_space(10.);
         let chosen = self.selection();
@@ -3317,6 +3324,10 @@ impl eframe::App for Shell {
         self.poll_print(&ctx);
         self.poll_mesh_panel();
         self.poll_press();
+        self.poll_drawings(&ctx);
+        if self.drawing_workspace(ui, frame) {
+            return;
+        }
         self.shortcut(&ctx);
         if !self.project_loaded {
             egui::CentralPanel::default().show(ui, |ui| {

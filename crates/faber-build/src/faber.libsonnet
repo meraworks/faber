@@ -17,6 +17,13 @@
       geometry: { op: 'history', features: features, output: output },
     } + (if material == null then {} else { material: material }),
 
+  // A sheet with model references. Positions and offsets are in millimetres.
+  drawing(title, views={}, dimensions={}, sheet={size:'a4',orientation:'landscape'},
+          projection='third', scale=1, notes=[], title_block={}, parts_list=null)::
+    { title: title, views: views, dimensions: dimensions, sheet: sheet,
+      projection: projection, scale: scale, notes: notes, title_block: title_block }
+    + (if parts_list == null then {} else {parts_list: parts_list}),
+
   // A static study of one part. A face selector uses part coordinates.
   study(part, fixtures, loads, material=null, resolution_mm=null)::
     { part: part, fixtures: fixtures, loads: loads }

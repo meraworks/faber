@@ -344,3 +344,32 @@ local face(n)={normal:n,tolerance:0.001,expect:1};
     source().ensure_built(root).unwrap().unwrap();
     assert_eq!(faber_files::read(root).unwrap().studies, saved);
 }
+
+#[test]
+fn jsonnet_drawing_helper_preserves_sheet_and_model_references() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"
+local f=import 'faber.libsonnet';
+{parts:{block:f.part('Block',[f.box('base',[30,20,10])],'base')},
+ drawings:{front:f.drawing('Block',views={front:{kind:'base',direction:'front',parts:['block'],at:[80,100]}},
+ dimensions={width:{kind:'linear',view:'front',offset:8,along:'horizontal',
+   a:{kind:'vertex',part:'block',near:[0,0,0]},b:{kind:'vertex',part:'block',near:[30,0,0]}}})}}
+"#,
+    );
+    source().build(dir.path()).unwrap();
+    let d: serde_json::Value =
+        serde_json::from_slice(&read_file(dir.path(), "drawings/front.json")).unwrap();
+    assert_eq!(d["title"], "Block");
+    assert_eq!(d["dimensions"]["width"]["b"]["part"], "block");
+    let manual = dir.path().join("drawings/manual.json");
+    std::fs::copy(dir.path().join("drawings/front.json"), &manual).unwrap();
+    write(dir.path(), "design.jsonnet", "{parts:{}} ");
+    source().build(dir.path()).unwrap();
+    let after = faber_files::read(dir.path()).unwrap();
+    assert_eq!(after.drawings.keys().collect::<Vec<_>>(), ["manual"]);
+    assert!(manual.is_file());
+    assert!(!dir.path().join("drawings/front.json").exists());
+}

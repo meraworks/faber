@@ -9,6 +9,7 @@ use std::{
 pub(super) enum Choice {
     Folder(Option<PathBuf>),
     Project(Option<(PathBuf, PathBuf, bool)>),
+    Drawing(PathBuf, String, Option<PathBuf>),
     Invalid,
 }
 
@@ -56,6 +57,7 @@ impl Shell {
             Choice::Project(Some((source, target, archive))) => {
                 self.start_project_load(ctx, source, target, None, archive);
             }
+            Choice::Drawing(root, id, Some(path)) => self.sheets.file_chosen(&root, &id, path),
             Choice::Invalid => self.error = Some("Select faber.json in the project folder.".into()),
             _ => {}
         }
@@ -108,4 +110,25 @@ pub(super) fn open(frame: &eframe::Frame, root: &std::path::Path) -> PendingDial
             project_choice(path)
         }
     })
+}
+
+#[cfg(not(test))]
+pub(super) fn drawing_file(frame: &eframe::Frame, root: PathBuf, id: String) -> PendingDialog {
+    let picker = rfd::AsyncFileDialog::new()
+        .set_parent(frame)
+        .set_title("Export drawing")
+        .set_directory(&root)
+        .set_file_name(format!("{id}.pdf"))
+        .add_filter("Drawing", &["pdf", "svg", "dxf", "png"]);
+    PendingDialog::new(async move {
+        Choice::Drawing(
+            root,
+            id,
+            picker.save_file().await.map(|f| f.path().to_owned()),
+        )
+    })
+}
+#[cfg(test)]
+pub(super) fn drawing_file(_frame: &eframe::Frame, root: PathBuf, id: String) -> PendingDialog {
+    PendingDialog::new(async move { Choice::Drawing(root, id, None) })
 }

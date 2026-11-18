@@ -511,3 +511,62 @@ fn drawing_files_round_trip_and_removed_drawing_file_is_deleted() {
     assert!(!file.exists());
     assert_eq!(layout::read(dir.path()).unwrap(), data);
 }
+
+#[test]
+fn interrupted_save_preserves_manual_drawing_edits_and_recovers_mixed_sheets() {
+    for manual in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut old = fixture();
+        for id in ["front", "top"] {
+            old.drawings.insert(
+                id.into(),
+                serde_json::from_value(serde_json::json!({"title":id})).unwrap(),
+            );
+        }
+        let store = FileStore::open(dir.path()).unwrap();
+        store.save(None, &old).unwrap();
+        let old_manifest = fs::read(dir.path().join("faber.json")).unwrap();
+        let front = dir.path().join("drawings/front.json");
+        let old_front = fs::read(&front).unwrap();
+        let mut next = old.clone();
+        next.revision += 1;
+        for drawing in next.drawings.values_mut() {
+            drawing.title.push_str(" enlarged");
+        }
+        store.save_checked(&old, &next).unwrap();
+        drop(store);
+        fs::write(dir.path().join("faber.json"), old_manifest).unwrap();
+        fs::write(&front, old_front).unwrap();
+        if manual {
+            edit_json(&front, |file| file["title"] = "Keep my drawing".into());
+        }
+        let opened = FileStore::open(dir.path()).unwrap().load().unwrap();
+        if manual {
+            assert_eq!(opened.drawings["front"].title, "Keep my drawing");
+            assert_eq!(opened.revision, old.revision);
+        } else {
+            assert_eq!(opened, next);
+        }
+    }
+}
+
+#[test]
+fn interrupted_save_recovers_part_recipe_and_placement_from_different_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = fixture();
+    let store = FileStore::open(dir.path()).unwrap();
+    store.save(None, &old).unwrap();
+    let manifest = fs::read(dir.path().join("faber.json")).unwrap();
+    let placement = fs::read(dir.path().join("placement.json")).unwrap();
+    let mut next = old.clone();
+    next.revision += 1;
+    let part = next.parts.get_mut("pin").unwrap();
+    part.name = "Long pin".into();
+    part.placement.translation[0] = Scalar::Number(8.);
+    store.save_checked(&old, &next).unwrap();
+    drop(store);
+    fs::write(dir.path().join("faber.json"), manifest).unwrap();
+    fs::write(dir.path().join("placement.json"), placement).unwrap();
+    let opened = FileStore::open(dir.path()).unwrap().load().unwrap();
+    assert_eq!(opened, next);
+}

@@ -1,4 +1,5 @@
 //! Exact solid adapter.
+mod projection;
 
 use faber_model::{Geometry, Placement};
 pub use faber_ports::SOLID_TRIANGLE_LIMIT;
@@ -737,6 +738,17 @@ impl OcctKernel {
 }
 
 impl Kernel for OcctKernel {
+    fn project_edges(
+        &self,
+        shapes: &[Shape],
+        frame: &faber_ports::drawing::ViewFrame,
+        hidden: bool,
+    ) -> Result<faber_ports::drawing::Projection2> {
+        projection::project(shapes, frame, hidden)
+    }
+    fn section_face(&self, shape: &Shape, origin: [f64; 3], normal: [f64; 3]) -> Result<Shape> {
+        projection::section(shape, origin, normal)
+    }
     fn solid_from_mesh(&self, mesh: &Mesh, merge_planar: bool) -> Result<Shape> {
         let count = mesh.triangles.len();
         if count > SOLID_TRIANGLE_LIMIT {

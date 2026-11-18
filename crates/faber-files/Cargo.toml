@@ -17,3 +17,6 @@ zip = { version = "2.4", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
 
 quick-xml = "0.41"
+tiny-skia = "0.12"
+skrifa = "0.44"
+epaint_default_fonts = "0.37"

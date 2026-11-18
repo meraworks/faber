@@ -1,9 +1,11 @@
 //! Stdio tools call the same project operations as the CLI.
 
+mod drawing_tools;
 mod mesh_tools;
 use crate::input::Checked;
 use crate::schema_tool;
 use base64::Engine;
+use drawing_tools::{AutoDrawing, DeleteDrawing, ExportDrawing, SetDrawing};
 use faber_core::{PartInfo, Project, Reading};
 use faber_model::{Edit, Feature, Geometry, Part, ProjectData, Scalar};
 use faber_ports::Body;
@@ -1128,6 +1130,49 @@ impl Faber {
 
 #[tool_router]
 impl Faber {
+    #[tool(description = "List the saved drawing sheets.")]
+    fn drawings(&self) -> CallToolResult {
+        self.with(|p|Ok(json!({"revision":p.data.revision,
+        "drawings":p.data.drawings.iter().map(|(id,d)|json!({"id":id,"title":d.title})).collect::<Vec<_>>() })))
+    }
+    #[tool(description = "Save a drawing. See schema kind drawing.")]
+    fn set_drawing(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<SetDrawing>>,
+    ) -> CallToolResult {
+        self.with(|p| drawing_tools::set(p, a))
+    }
+    #[tool(description = "Remove a saved drawing.")]
+    fn remove_drawing(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<DeleteDrawing>>,
+    ) -> CallToolResult {
+        self.with(|p| drawing_tools::remove(p, a))
+    }
+    #[tool(description = "Create and save a dimensioned drawing for the placed parts.")]
+    fn auto_drawing(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<AutoDrawing>>,
+    ) -> CallToolResult {
+        self.with(|p| drawing_tools::auto(p, a))
+    }
+    #[tool(description = "Export a drawing to SVG, PDF, DXF or PNG. Inline is optional for PNG.")]
+    fn export_drawing(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<ExportDrawing>>,
+    ) -> CallToolResult {
+        let mut response = self.with(|p| drawing_tools::export(p, &a));
+        if a.inline && response.is_error != Some(true) {
+            match std::fs::read(&a.path) {
+                Ok(bytes) => response.content.push(ContentBlock::image(
+                    base64::prelude::BASE64_STANDARD.encode(bytes),
+                    "image/png",
+                )),
+                Err(e) => return result(Err(e.to_string())),
+            }
+        }
+        response
+    }
     #[tool(description = "Inspect a mesh. Report defects and size in part coordinates.")]
     fn mesh_report(&self, Parameters(Checked(a)): Parameters<Checked<MeshRead>>) -> CallToolResult {
         self.with(|p| Ok(json!(faber_wiring::mesh_edit::report(p, &a.part)?)))

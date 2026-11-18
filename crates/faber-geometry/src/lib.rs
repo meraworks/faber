@@ -292,3 +292,5 @@ fn extrude(profile: &Profile, height: f64, floor: f64) -> Result<Mesh> {
     }
     Ok(mesh)
 }
+
+pub mod projected_lines;

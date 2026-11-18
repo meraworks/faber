@@ -1082,3 +1082,65 @@ of the cube and stores the upper half as `top`.
 ```json
 {"part":"cube","expected_revision":2,"plane":{"origin":[0,0,5],"normal":[0,0,1]},"keep":"both","cap":true,"copy_as":"top"}
 ```
+
+## Drawings
+
+Use `auto_drawing` to make a sheet from the placed parts. Read the revision
+with `status` first. For a project at revision 7, this call saves a
+landscape A4 sheet for the part `block`.
+
+```json
+{"id":"overview","parts":["block"],"sheet":{"size":"a4","orientation":"landscape"},"title":"Block assembly","expected_revision":7}
+```
+
+Use `drawings` to list saved sheets. In the viewer, select the sheet title
+under **Drawings**. Drag the sheet to pan. Scroll to zoom about the pointer.
+**Fit sheet** restores the full paper view. The sheet updates when a model
+change reaches the viewer. **Back to model** returns to the solid.
+
+Drawings are in `drawings/<id>.json`. They store views and references to the
+model in millimetres. To set a dimension by hand, add its definition to the
+`dimensions` map and save the complete drawing with `set_drawing`. This
+entry measures the horizontal distance between two part-local vertices of
+a 40 mm block in the front view.
+
+```json
+{
+  "width": {
+    "kind": "linear", "view": "front", "along": "horizontal", "offset": 8,
+    "a": {"kind": "vertex", "part": "block", "near": [0, 0, 0]},
+    "b": {"kind": "vertex", "part": "block", "near": [40, 0, 0]}
+  }
+}
+```
+
+For the full width of a view, use `"kind": "overall"` with
+`"along": "horizontal"`. The value follows the current outline when a part
+grows or moves. An automatic diameter group checks each referenced circle.
+If a circle disappears or its diameter changes relative to the group, the
+sheet marks the dimension with a question mark.
+
+
+The renderer resolves the references on each model revision. A lost
+reference gives a red question mark and an entry in `problems`. Mesh-only
+parts give a projected outline. The export reports this in `limits`.
+First-angle and third-angle projection place the projected views on
+opposite sides of their parent. A parts list groups equal resolved
+geometry and shows its quantity, name, material and mass.
+
+To save a sheet from the viewer, select **Browse…** or enter the export
+path, then select **Export**. SVG, PDF, DXF and PNG are available. For MCP,
+call `export_drawing` with an id and path. For PNG, set `width_px` to the
+required pixel width and `inline` to true to receive the image. To export
+the [trash bin overview](../examples/trash-bin/drawings/overview.json) on
+the command line, run the following command.
+
+```console
+faber drawing examples/trash-bin overview overview.pdf
+```
+
+Use `schema` with `kind: "drawing"` for the full drawing definition.
+`set_drawing`, `remove_drawing` and `auto_drawing` require
+`expected_revision`. A Jsonnet source can provide a `drawings` map with
+`faber.drawing(title, views, dimensions)`. The build updates the sheets
+owned by the source and preserves sheets added separately.

@@ -46,7 +46,12 @@ fn restore_journal(journal: &std::path::Path, previous: Option<Vec<u8>>) {
 /// The manifest is written last, so it holds the old name, params and revision.
 /// Each part and each optional file must equal its old or its new value.
 fn continues(disk: &ProjectData, old: &ProjectData, new: &ProjectData) -> bool {
-    if disk.revision != old.revision || disk.name != old.name || disk.params != old.params {
+    if disk.revision != old.revision
+        || disk.name != old.name
+        || disk.params != old.params
+        || disk.schema != old.schema
+        || disk.materials != old.materials
+    {
         return false;
     }
     let parts_ok = old
@@ -56,12 +61,108 @@ fn continues(disk: &ProjectData, old: &ProjectData, new: &ProjectData) -> bool {
         .chain(disk.parts.keys())
         .all(|id| {
             let on_disk = disk.parts.get(id);
-            on_disk == old.parts.get(id) || on_disk == new.parts.get(id)
+            [old.parts.get(id), new.parts.get(id)]
+                .into_iter()
+                .any(|saved| {
+                    if saved == on_disk {
+                        return true;
+                    }
+                    let (Some(saved), Some(actual)) = (saved, on_disk) else {
+                        return false;
+                    };
+                    // Part files contain the recipe. Placement is a separate file.
+                    let mut recipe = saved.clone();
+                    recipe.placement = actual.placement.clone();
+                    &recipe == actual
+                })
         });
+    // Each drawing has its own file. Other groups share one atomic file.
+    let drawings_ok = disk
+        .drawings
+        .keys()
+        .chain(old.drawings.keys())
+        .chain(new.drawings.keys())
+        .all(|id| {
+            disk.drawings.get(id) == old.drawings.get(id)
+                || disk.drawings.get(id) == new.drawings.get(id)
+        });
+    let placements_ok = [old, new].into_iter().any(|source| {
+        disk.parts.iter().all(|(id, part)| {
+            source.parts.get(id).map_or_else(
+                || part.placement == Default::default(),
+                |p| p.placement == part.placement,
+            )
+        })
+    });
     parts_ok
-        && (disk.motion == old.motion || disk.motion == new.motion)
-        && (disk.contacts == old.contacts || disk.contacts == new.contacts)
-        && (disk.sections == old.sections || disk.sections == new.sections)
+        && placements_ok
+        && drawings_ok
+        && (disk.printer == old.printer || disk.printer == new.printer)
+        && ((disk.motion == old.motion && disk.contacts == old.contacts)
+            || (disk.motion == new.motion && disk.contacts == new.contacts))
+        && ((disk.sections == old.sections && disk.studies == old.studies)
+            || (disk.sections == new.sections && disk.studies == new.studies))
+}
+
+fn read_snapshot(root: &std::path::Path, name: &str) -> Result<ProjectData> {
+    if !name.starts_with("state-")
+        || !name.ends_with(".json")
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+    {
+        return Err("Invalid history snapshot name".into());
+    }
+    let bytes = std::fs::read(root.join(".faber/history/states").join(name))
+        .map_err(|e| format!("Cannot read history snapshot: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
+
+/// Read one committed revision while an editor can replace several project files.
+pub fn read_committed(root: &std::path::Path) -> Result<ProjectData> {
+    let manifest =
+        std::fs::read(root.join("faber.json")).map_err(|e| format!("Cannot read project: {e}"))?;
+    let Revision { revision } =
+        serde_json::from_slice(&manifest).map_err(|e| format!("Cannot read faber.json: {e}"))?;
+    let disk = super::layout::read(root);
+    let Some(next) = revision.checked_add(1) else {
+        return disk;
+    };
+    let journal = root.join(".faber/history");
+    let next_path = journal.join(format!("{next}.json"));
+    if !next_path.try_exists().map_err(|e| e.to_string())? {
+        return disk;
+    }
+    if disk.as_ref().is_ok_and(|d| d.revision != revision) {
+        return Err("The project changed while it was loading.".into());
+    }
+    let pending = read_journal(&next_path)?;
+    if pending.current.revision != next {
+        return Err("The pending save has the wrong revision.".into());
+    }
+    let valid_old = |old: &ProjectData| {
+        old.revision == revision
+            && disk
+                .as_ref()
+                .map_or(true, |d| continues(d, old, &pending.current))
+    };
+    // Normal edits and history moves save their exact starting state. This can include authored changes.
+    for name in [pending.undo.last(), pending.redo.last()]
+        .into_iter()
+        .flatten()
+    {
+        let old = read_snapshot(root, name)?;
+        if valid_old(&old) {
+            return Ok(old);
+        }
+    }
+    // A rebuild can retain the undo stacks. Its prior revision stays in the journal.
+    if let Ok(old) = read_journal(&journal.join(format!("{revision}.json")))
+        && valid_old(&old.current)
+    {
+        return Ok(old.current);
+    }
+    Err("The project files do not match the pending save.".into())
 }
 
 impl FileStore {
@@ -173,20 +274,6 @@ impl FileStore {
             .into_owned())
     }
 
-    fn read_snapshot(&self, name: &str) -> Result<ProjectData> {
-        if !name.starts_with("state-")
-            || !name.ends_with(".json")
-            || !name
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
-        {
-            return Err("Invalid history snapshot name".into());
-        }
-        let bytes = std::fs::read(self.root.join(".faber/history/states").join(name))
-            .map_err(|e| format!("Cannot read history snapshot: {e}"))?;
-        serde_json::from_slice(&bytes).map_err(|e| e.to_string())
-    }
-
     pub(super) fn target(&self, action: HistoryMove) -> Result<ProjectData> {
         let current = self.load()?;
         let record = self
@@ -196,7 +283,10 @@ impl FileStore {
             HistoryMove::Undo => &record.undo,
             HistoryMove::Redo => &record.redo,
         };
-        self.read_snapshot(stack.last().ok_or("No history step is available")?)
+        read_snapshot(
+            &self.root,
+            stack.last().ok_or("No history step is available")?,
+        )
     }
 
     /// Writes regenerated parts as the current state. The undo and redo stacks stay unchanged.
@@ -262,7 +352,7 @@ impl FileStore {
                         HistoryMove::Redo => record.redo.pop(),
                     }
                     .ok_or("No history step is available")?;
-                    let mut target = self.read_snapshot(&name)?;
+                    let mut target = read_snapshot(&self.root, &name)?;
                     target.revision = data.revision;
                     if target != *data {
                         return Err("History target changed before save".into());

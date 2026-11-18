@@ -721,6 +721,9 @@ fn load_persisted(store: &dyn FeatureCache, key: &str, kernel: &dyn Kernel) -> O
 }
 
 fn store_built(store: &dyn FeatureCache, key: &str, kernel: &dyn Kernel, shape: &Shape) {
+    if !store.writable() {
+        return;
+    }
     let (Ok(bytes), Ok(faces)) = (kernel.encode_shape(shape), kernel.face_count(shape)) else {
         return;
     };

@@ -6,6 +6,7 @@ use std::any::Any;
 use std::path::Path;
 use std::sync::Arc;
 
+pub mod drawing;
 pub mod source;
 pub mod vector;
 
@@ -172,6 +173,17 @@ pub struct PathSamples {
 pub const SOLID_TRIANGLE_LIMIT: usize = 200_000;
 
 pub trait Kernel: Send + Sync {
+    fn project_edges(
+        &self,
+        _shapes: &[Shape],
+        _frame: &drawing::ViewFrame,
+        _hidden: bool,
+    ) -> Result<drawing::Projection2> {
+        Err("Drawing projection is not available.".into())
+    }
+    fn section_face(&self, _shape: &Shape, _origin: [f64; 3], _normal: [f64; 3]) -> Result<Shape> {
+        Err("Section faces are not available.".into())
+    }
     /// Make a solid from closed, consistently wound triangles. Optionally merge coplanar faces.
     fn solid_from_mesh(&self, _mesh: &Mesh, _merge_planar: bool) -> Result<Shape> {
         Err("Mesh to solid conversion is not available.".into())
@@ -428,6 +440,10 @@ pub trait Kernel: Send + Sync {
 
 /// Stores the opaque bytes of built features. A missing or invalid entry returns None.
 pub trait FeatureCache: Send + Sync {
+    fn writable(&self) -> bool {
+        true
+    }
+
     fn get(&self, key: &str) -> Option<Vec<u8>>;
     fn put(&self, key: &str, bytes: &[u8]) -> Result<()>;
 }

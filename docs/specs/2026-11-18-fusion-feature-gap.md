@@ -43,6 +43,13 @@ Faber inspects, repairs, reduces and cuts imported triangle meshes. A closed
 mesh can become an exact solid with editable features. Coplanar faces can
 merge during conversion. A curved mesh surface keeps its flat facets.
 
+## Drawings
+
+A drawing stores references to the design. A change to a part updates its
+views and dimensions. The sheet can show hidden edges, section hatching, a
+detail, a parts list and a title block. Mesh parts supply their projected
+outline. The viewer shows the sheet and writes SVG, PDF, DXF or PNG.
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under

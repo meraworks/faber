@@ -1945,3 +1945,78 @@ fn mesh_report_is_small() {
     );
     s.finish();
 }
+
+#[test]
+fn export_drawing_reports_problems() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    let changed = s.ok(
+        "put_part",
+        json!({"id":"block","part":box_part("Block",[40.,20.,10.],[0.,0.,0.])}),
+    );
+    let rev = changed["revision"].as_u64().unwrap();
+    let auto = s.ok(
+        "auto_drawing",
+        json!({"id":"overview","title":"Block detail","parts":["block"],"expected_revision":rev}),
+    );
+    assert_eq!(auto["revision"], rev + 1);
+    let list = s.ok("drawings", json!({}));
+    assert_eq!(list["drawings"][0]["id"], "overview");
+    assert_eq!(list["drawings"][0]["title"], "Block detail");
+    assert!(list["drawings"][0].get("views").is_none());
+    let schema = s.ok("schema", json!({"kind":"drawing"}));
+    assert!(schema.to_string().contains("dimensions"));
+    let svg = dir.path().join("sheet.svg");
+    let export = s.ok("export_drawing", json!({"id":"overview","path":svg}));
+    assert_eq!(export["problems"], json!([]));
+    assert!(
+        std::fs::read_to_string(&svg)
+            .unwrap()
+            .contains("Block detail")
+    );
+    let png = dir.path().join("sheet.png");
+    let raw = s.rpc(
+        "tools/call",
+        json!({"name":"export_drawing","arguments":{"id":"overview","path":png,"width_px":320}}),
+    );
+    assert_eq!(raw["content"].as_array().unwrap().len(), 1);
+    let inline=s.rpc("tools/call",json!({"name":"export_drawing","arguments":{"id":"overview","path":png,"width_px":320,"inline":true}}));
+    assert_eq!(inline["content"][1]["mimeType"], "image/png");
+    assert_eq!(image::image_dimensions(&png).unwrap().0, 320);
+    let stale = s.refused(
+        "remove_drawing",
+        json!({"id":"overview","expected_revision":rev}),
+    );
+    assert!(stale.contains("revision"));
+    let mut d: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("drawings/overview.json")).unwrap())
+            .unwrap();
+    d.as_object_mut().unwrap().remove("schema");
+    d["dimensions"] = json!({"lost":{"kind":"linear","view":"front","offset":5,"along":"aligned",
+        "a":{"kind":"vertex","part":"removed","near":[0,0,0]},"b":{"kind":"vertex","part":"block","near":[0,0,0]}}});
+    s.ok(
+        "set_drawing",
+        json!({"id":"broken","drawing":d,"expected_revision":rev+1}),
+    );
+    let output = s.ok("export_drawing", json!({"id":"broken","path":svg}));
+    assert!(!output["problems"].as_array().unwrap().is_empty());
+    s.ok(
+        "remove_drawing",
+        json!({"id":"broken","expected_revision":rev+2}),
+    );
+    let target = dir.path().join("cli.pdf");
+    let cli = Command::new(env!("CARGO_BIN_EXE_faber"))
+        .arg("drawing")
+        .arg(dir.path())
+        .arg("overview")
+        .arg(&target)
+        .output()
+        .unwrap();
+    assert!(
+        cli.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cli.stderr)
+    );
+    assert!(std::fs::read(target).unwrap().starts_with(b"%PDF-1.4"));
+    s.finish();
+}

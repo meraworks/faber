@@ -1,6 +1,7 @@
 //! Adapter composition.
 
 pub mod archive;
+pub mod drawing;
 pub mod mesh_edit;
 pub mod study;
 pub mod study_image;
@@ -379,6 +380,14 @@ fn open_with_store(
 
 /// Opens an editable design snapshot for a preview without a file lock.
 pub fn preview_project(path: &Path, data: ProjectData) -> Result<Project> {
+    preview_with_cache(path, data, None)
+}
+
+fn preview_with_cache(
+    path: &Path,
+    data: ProjectData,
+    cache: Option<Arc<dyn faber_ports::FeatureCache>>,
+) -> Result<Project> {
     struct Snapshot(ProjectData);
     impl ProjectStore for Snapshot {
         fn load(&self) -> Result<ProjectData> {
@@ -393,7 +402,7 @@ pub fn preview_project(path: &Path, data: ProjectData) -> Result<Project> {
         Arc::new(Snapshot(data)),
         Arc::new(OcctKernel),
         Some(Arc::new(faber_files::FileAssets::new(path))),
-        None,
+        cache,
     )?;
     project.set_source(
         source

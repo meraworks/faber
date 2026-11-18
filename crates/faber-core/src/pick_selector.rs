@@ -10,6 +10,41 @@ const EDGE_ERROR: &str = "The picked edges cannot be described by one selector. 
 const FACE_ERROR: &str = "The picked faces cannot be described by one selector. Pick fewer faces.";
 
 impl Project {
+    /// Resolved recipe and solid in part coordinates before placement.
+    pub fn local_geometry(
+        &self,
+        part: &str,
+    ) -> Result<(&faber_model::Geometry, Option<&faber_ports::Shape>)> {
+        let local = self
+            .locals
+            .get(part)
+            .ok_or_else(|| format!("Unknown part: {part}"))?;
+        Ok((&local.geometry, local.shape.as_ref()))
+    }
+    pub fn selected_local_edge(&self, part: &str, edge: &EdgeSelector) -> Result<u32> {
+        let (_, shape) = self.local_geometry(part)?;
+        let selected = crate::select::edges(
+            self.kernel.as_ref(),
+            shape.ok_or("Part has no exact shape.")?,
+            edge,
+        )?;
+        match selected.as_slice() {
+            [index] => Ok(*index),
+            _ => Err("Select exactly one edge.".into()),
+        }
+    }
+    pub fn selected_local_face(&self, part: &str, face: &FaceSelector) -> Result<u32> {
+        let (_, shape) = self.local_geometry(part)?;
+        let selected = crate::select::faces(
+            self.kernel.as_ref(),
+            shape.ok_or("Part has no exact shape.")?,
+            face,
+        )?;
+        match selected.as_slice() {
+            [index] => Ok(*index),
+            _ => Err("Select exactly one face.".into()),
+        }
+    }
     pub fn unplaced_topology(&self, part: &str) -> Result<(Vec<EdgeInfo>, Vec<FaceInfo>)> {
         let local = self
             .locals

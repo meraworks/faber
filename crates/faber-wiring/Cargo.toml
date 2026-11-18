@@ -11,6 +11,8 @@ serde.workspace = true
 faber-clash = { path = "../faber-clash" }
 parry3d-f64 = "0.31.1"
 faber-core = { path = "../faber-core" }
+faber-drawing = { path = "../faber-drawing" }
+i_overlay = "4.5.2"
 faber-model = { path = "../faber-model" }
 faber-meshtools = { path = "../faber-meshtools" }
 faber-ports = { path = "../faber-ports" }

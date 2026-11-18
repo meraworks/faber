@@ -21,6 +21,7 @@ const KEEP_PERCENT: u64 = 80;
 
 pub struct FileFeatureCache {
     root: PathBuf,
+    read_only: bool,
     limit: u64,
     /// Entries that this instance wrote. Pruning never removes them.
     written: Mutex<HashSet<PathBuf>>,
@@ -35,8 +36,17 @@ impl FileFeatureCache {
         Self::with_limit(root, LIMIT)
     }
 
+    pub fn read_only(root: &Path) -> Self {
+        Self::open(root, LIMIT, true)
+    }
+
     pub fn with_limit(root: &Path, limit: u64) -> Self {
+        Self::open(root, limit, false)
+    }
+
+    fn open(root: &Path, limit: u64, read_only: bool) -> Self {
         let cache = Self {
+            read_only,
             root: root.into(),
             limit,
             written: Mutex::new(HashSet::new()),
@@ -44,6 +54,9 @@ impl FileFeatureCache {
             #[cfg(test)]
             listings: AtomicUsize::new(0),
         };
+        if read_only {
+            return cache;
+        }
         let total: u64 = cache.scan().iter().map(|file| file.1).sum();
         if let Ok(mut current) = cache.total.lock() {
             *current = total;
@@ -128,6 +141,10 @@ impl FileFeatureCache {
 }
 
 impl FeatureCache for FileFeatureCache {
+    fn writable(&self) -> bool {
+        !self.read_only
+    }
+
     fn get(&self, key: &str) -> Option<Vec<u8>> {
         let bytes = std::fs::read(self.path(key)?).ok()?;
         if bytes.len() < HEADER || &bytes[..4] != MAGIC {
@@ -143,6 +160,9 @@ impl FeatureCache for FileFeatureCache {
     }
 
     fn put(&self, key: &str, bytes: &[u8]) -> Result<()> {
+        if self.read_only {
+            return Err("The preview can only read saved features.".into());
+        }
         let path = self.path(key).ok_or("Invalid cache key")?;
         let parent = path.parent().ok_or("Cache entry has no folder")?;
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -185,6 +205,20 @@ mod tests {
 
     fn entry_path(root: &Path, key: &str) -> PathBuf {
         root.join(".faber").join("cache").join(format!("{key}.bin"))
+    }
+
+    #[test]
+    fn a_preview_reads_saved_features_without_writing_cache_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let editor = FileFeatureCache::new(dir.path());
+        editor.put("existing", b"shape").unwrap();
+        let preview = FileFeatureCache::read_only(dir.path());
+        assert_eq!(
+            preview.get("existing").as_deref(),
+            Some(b"shape".as_slice())
+        );
+        assert!(preview.put("missing", b"other").is_err());
+        assert!(editor.get("missing").is_none());
     }
 
     #[test]

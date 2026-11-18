@@ -48,6 +48,8 @@ struct BuildRecord {
     schema: u32,
     engine: String,
     inputs: Vec<Input>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    drawings: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,11 +66,13 @@ struct Design {
     #[serde(default)]
     params: BTreeMap<String, String>,
     parts: BTreeMap<String, Value>,
+    drawings: Option<BTreeMap<String, faber_model::drawing::Drawing>>,
     studies: Option<BTreeMap<String, faber_model::study::Study<Scalar>>>,
 }
 
 /// The project that the source gives. Nothing is written yet.
 pub struct Candidate {
+    drawings: Vec<String>,
     pub data: ProjectData,
     /// Files that the evaluation read.
     pub inputs: Vec<PathBuf>,
@@ -139,7 +143,19 @@ pub fn evaluate(root: &Path, current: &ProjectData) -> Result<Candidate> {
     if let Some(studies) = design.studies {
         data.studies = studies;
     }
-    Ok(Candidate { data, inputs })
+    let drawings = design.drawings.unwrap_or_default();
+    if let Some(previous) = record(root) {
+        for id in previous.drawings {
+            data.drawings.remove(&id);
+        }
+    }
+    let ids = drawings.keys().cloned().collect();
+    data.drawings.extend(drawings);
+    Ok(Candidate {
+        data,
+        inputs,
+        drawings: ids,
+    })
 }
 
 /// Builds the project folder with its own store. Use it when no project is open.
@@ -180,7 +196,7 @@ pub fn build_project(root: &Path, project: &mut Project) -> Result<Report> {
     let candidate = evaluate(root, &project.data)?;
     let report = report_of(root, &project.data, &candidate);
     project.save_generated(candidate.data)?;
-    write_record(root, &candidate.inputs)?;
+    write_record(root, &candidate.inputs, candidate.drawings)?;
     Ok(report)
 }
 
@@ -197,7 +213,7 @@ pub fn forget_build(root: &Path) -> Result<()> {
 /// holds the state that the source gives.
 pub fn record_build(root: &Path, current: &ProjectData) -> Result<()> {
     let candidate = evaluate(root, current)?;
-    write_record(root, &candidate.inputs)
+    write_record(root, &candidate.inputs, candidate.drawings)
 }
 
 fn report_of(root: &Path, before: &ProjectData, candidate: &Candidate) -> Report {
@@ -255,6 +271,18 @@ fn written_files(before: &ProjectData, after: &ProjectData) -> Vec<String> {
     if placements(before) != placements(after) {
         files.push("placement.json".into());
     }
+    for (id, d) in &after.drawings {
+        if before.drawings.get(id) != Some(d) {
+            files.push(format!("drawings/{id}.json"));
+        }
+    }
+    for id in before
+        .drawings
+        .keys()
+        .filter(|id| !after.drawings.contains_key(*id))
+    {
+        files.push(format!("drawings/{id}.json"));
+    }
     if before.studies != after.studies {
         files.push("analysis.json".into());
     }
@@ -296,10 +324,11 @@ fn empty_project(root: &Path) -> ProjectData {
     }
 }
 
-fn write_record(root: &Path, inputs: &[PathBuf]) -> Result<()> {
+fn write_record(root: &Path, inputs: &[PathBuf], drawings: Vec<String>) -> Result<()> {
     let record = BuildRecord {
         schema: RECORD_SCHEMA,
         engine: ENGINE.into(),
+        drawings,
         inputs: inputs
             .iter()
             .map(|path| Input {

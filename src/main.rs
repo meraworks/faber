@@ -18,6 +18,7 @@ async fn main() {
         Some("guide") => { println!("{}",server::GUIDE); Ok(()) }
         Some("schema") if args.len() == 1 => serde_json::to_string_pretty(&schemars::schema_for!(faber_model::ProjectData))
             .map(|schema| println!("{schema}")).map_err(|error| error.to_string()),
+        Some("drawing") if args.len() == 4 => drawing(Path::new(&args[1]), &args[2], Path::new(&args[3])),
         Some("render") if args.len() == 3 => faber_wiring::read(Path::new(&args[1])).and_then(|(_,bodies)|faber_wiring::render(&bodies,Path::new(&args[2]),None,1200,1000)),
         Some("status") if args.len() == 2 => faber_wiring::read(Path::new(&args[1])).map(|(data,bodies)| {
             println!("{}",server::report(&data,&bodies));
@@ -26,12 +27,23 @@ async fn main() {
         Some("migrate") if args.len() == 2 => migrate(Path::new(&args[1])),
         Some("build") if args.len() == 2 => build(Path::new(&args[1])),
         Some("export") if args.len() >= 3 => export(&args),
-        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | export PROJECT DIRECTORY [--format stl|step|3mf] [--tolerance MM] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
+        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | export PROJECT DIRECTORY [--format stl|step|3mf] [--tolerance MM] [--force] | render PROJECT IMAGE | drawing PROJECT ID FILE | schema | guide | faber scan PACKAGE".into()),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
         std::process::exit(2);
     }
+}
+
+fn drawing(root: &Path, id: &str, path: &Path) -> Result<(), String> {
+    let project = faber_wiring::drawing::open_snapshot(root)?;
+    let rendered = faber_wiring::drawing::export(&project, id, path, None)?;
+    println!(
+        "{}",
+        serde_json::json!({"path":path,"revision":project.data.revision,
+        "problems":rendered.problems,"limits":rendered.limits})
+    );
+    Ok(())
 }
 
 /// Writes a project in the split layout and prints each file that changed.

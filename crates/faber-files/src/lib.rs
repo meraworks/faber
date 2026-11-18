@@ -3,6 +3,7 @@
 mod assets;
 mod feature_cache;
 mod history;
+pub use history::read_committed;
 mod indexed_mesh;
 pub use indexed_mesh::write_indexed_mesh;
 pub mod layout;

@@ -1,6 +1,9 @@
 //! Sheet output in millimetres.
 
 mod dxf;
+mod paper;
+mod pdf;
+mod png;
 mod svg;
 
 use crate::atomic_write;
@@ -13,14 +16,28 @@ pub struct VectorWriter;
 
 impl VectorExport for VectorWriter {
     fn write(&self, doc: &VectorDoc, path: &Path) -> Result<()> {
+        self.write_with_width(doc, path, None)
+    }
+}
+
+impl VectorWriter {
+    /// Writes the sheet. The optional pixel width applies to a raster preview.
+    pub fn write_with_width(
+        &self,
+        doc: &VectorDoc,
+        path: &Path,
+        width_px: Option<u32>,
+    ) -> Result<()> {
         let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-        let render = match extension.to_ascii_lowercase().as_str() {
-            "svg" => svg::render,
-            "dxf" => dxf::render,
-            _ => return Err("Use .svg or .dxf for a vector document.".into()),
-        };
         validate(doc)?;
-        atomic_write(path, render(doc)?.as_bytes())
+        let bytes = match extension.to_ascii_lowercase().as_str() {
+            "svg" => svg::render(doc)?.into_bytes(),
+            "dxf" => dxf::render(doc)?.into_bytes(),
+            "pdf" => pdf::render(doc)?,
+            "png" => png::render(doc, width_px.unwrap_or(1600))?,
+            _ => return Err("Use .svg, .pdf, .dxf or .png for a drawing.".into()),
+        };
+        atomic_write(path, &bytes)
     }
 }
 

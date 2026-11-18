@@ -263,3 +263,63 @@ fn dxf_protects_text_that_matches_control_codes() {
         r"angle %%%%%%d / C^ 2 / literal \U+005CU+0041"
     );
 }
+
+#[test]
+fn pdf_has_a4_size_strokes_and_text_with_special_letters() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sheet.pdf");
+    let mut doc = sheet();
+    doc.texts[0].text = "Bracket <A&B> 10 µm (A)".into();
+    VectorWriter.write(&doc, &path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes.starts_with(b"%PDF-1.4"));
+    let file = String::from_utf8_lossy(&bytes);
+    assert!(file.contains("/MediaBox [0 0 841.89 595.28]"));
+    assert!(file.contains("/WinAnsiEncoding"));
+    assert!(file.contains("Bracket <A&B>"));
+    assert_eq!(file.lines().filter(|l| *l == "S").count(), 3);
+    let xref = file
+        .split("startxref\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    assert!(bytes[xref..].starts_with(b"xref"));
+}
+
+#[test]
+fn png_has_requested_size_and_rejects_excessive_allocation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sheet.png");
+    VectorWriter
+        .write_with_width(&sheet(), &path, Some(594))
+        .unwrap();
+    let original = std::fs::read(&path).unwrap();
+    assert_eq!(&original[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(&original[16..20], &594u32.to_be_bytes());
+    assert_eq!(&original[20..24], &420u32.to_be_bytes());
+    for width in [0, u32::MAX] {
+        assert!(
+            VectorWriter
+                .write_with_width(&sheet(), &path, Some(width))
+                .is_err()
+        );
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn pdf_keeps_the_text_of_letters_drawn_as_outlines() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("note.pdf");
+    let mut doc = sheet();
+    doc.texts[0].text = "İç".into();
+    VectorWriter.write(&doc, &path).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(text.contains("/ActualText <FEFF013000E7>"));
+    assert!(text.contains("3 Tr 30.00000 40.00000 Td"));
+    assert!(text.contains("f\nEMC"));
+}

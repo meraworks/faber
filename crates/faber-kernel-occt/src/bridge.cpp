@@ -145,6 +145,8 @@ static void publish(const TopoDS_Shape& shape,void** result) {
     *result=new FaberShape{shape};
 }
 
+#include "drawing_bridge.inc"
+
 template<class Operation> static void publish_tracked(Operation& operation,std::initializer_list<TopoDS_Shape> inputs,void** result,bool retain_generated=false,const TopoDS_Shape* final_shape=nullptr) {
     void* raw=nullptr;
     publish(final_shape ? *final_shape : operation.Shape(),&raw);

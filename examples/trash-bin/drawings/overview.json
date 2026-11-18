@@ -1,0 +1,193 @@
+{
+  "schema": 1,
+  "title": "Trash bin",
+  "sheet": {
+    "size": "a4",
+    "orientation": "landscape"
+  },
+  "projection": "third",
+  "scale": 0.2,
+  "views": {
+    "front": {
+      "at": [
+        123.29907738328893,
+        64.46953851445821
+      ],
+      "hidden_lines": true,
+      "kind": "base",
+      "parts": [
+        "bin"
+      ],
+      "direction": "front"
+    },
+    "iso": {
+      "at": [
+        194.02871870788982,
+        152.50000000000006
+      ],
+      "hidden_lines": false,
+      "kind": "base",
+      "parts": [
+        "bin"
+      ],
+      "direction": "iso"
+    },
+    "right": {
+      "at": [
+        194.02871870788982,
+        64.46953851445821
+      ],
+      "hidden_lines": true,
+      "kind": "projected",
+      "from": "front",
+      "side": "right"
+    },
+    "top": {
+      "at": [
+        123.29907738328893,
+        152.50000000000006
+      ],
+      "hidden_lines": true,
+      "kind": "projected",
+      "from": "front",
+      "side": "top"
+    }
+  },
+  "dimensions": {
+    "depth": {
+      "view": "top",
+      "offset": 7.0,
+      "kind": "overall",
+      "along": "vertical"
+    },
+    "diameter1": {
+      "view": "top",
+      "offset": 6.0,
+      "kind": "diameter_group",
+      "edges": [
+        {
+          "kind": "cylinder_axis",
+          "part": "bin",
+          "face": {
+            "internal": false,
+            "created_by": null,
+            "normal": null,
+            "near_centre": [
+              50.000000000000014,
+              86.60254037844386,
+              2.5
+            ],
+            "in_box": null,
+            "area": null,
+            "tolerance": 1e-6,
+            "expect": 1
+          }
+        },
+        {
+          "kind": "cylinder_axis",
+          "part": "bin",
+          "face": {
+            "internal": false,
+            "created_by": null,
+            "normal": null,
+            "near_centre": [
+              100.0,
+              -2.1503773612885155e-16,
+              2.5
+            ],
+            "in_box": null,
+            "area": null,
+            "tolerance": 1e-6,
+            "expect": 1
+          }
+        },
+        {
+          "kind": "cylinder_axis",
+          "part": "bin",
+          "face": {
+            "internal": false,
+            "created_by": null,
+            "normal": null,
+            "near_centre": [
+              -49.999999999999986,
+              86.60254037844388,
+              2.5
+            ],
+            "in_box": null,
+            "area": null,
+            "tolerance": 1e-6,
+            "expect": 1
+          }
+        },
+        {
+          "kind": "cylinder_axis",
+          "part": "bin",
+          "face": {
+            "internal": false,
+            "created_by": null,
+            "normal": null,
+            "near_centre": [
+              -100.0,
+              1.2329979700677207e-14,
+              2.5
+            ],
+            "in_box": null,
+            "area": null,
+            "tolerance": 1e-6,
+            "expect": 1
+          }
+        },
+        {
+          "kind": "cylinder_axis",
+          "part": "bin",
+          "face": {
+            "internal": false,
+            "created_by": null,
+            "normal": null,
+            "near_centre": [
+              50.000000000000014,
+              -86.60254037844386,
+              2.5
+            ],
+            "in_box": null,
+            "area": null,
+            "tolerance": 1e-6,
+            "expect": 1
+          }
+        },
+        {
+          "kind": "cylinder_axis",
+          "part": "bin",
+          "face": {
+            "internal": false,
+            "created_by": null,
+            "normal": null,
+            "near_centre": [
+              -50.00000000000002,
+              -86.60254037844386,
+              2.5
+            ],
+            "in_box": null,
+            "area": null,
+            "tolerance": 1e-6,
+            "expect": 1
+          }
+        }
+      ]
+    },
+    "height": {
+      "view": "front",
+      "offset": 7.0,
+      "kind": "overall",
+      "along": "vertical"
+    },
+    "width": {
+      "view": "front",
+      "offset": -7.0,
+      "kind": "overall",
+      "along": "horizontal"
+    }
+  },
+  "notes": [],
+  "title_block": {}
+}
