@@ -233,6 +233,7 @@ impl Project {
             geometry: faber_model::Geometry::<Scalar>::Imported {
                 asset,
                 purchased: purchased.map(Box::new),
+                link: None,
             },
         };
         let operations = vec![faber_model::Edit::PutPart { id, part }];

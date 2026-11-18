@@ -1553,6 +1553,7 @@ mod tests {
                     geometry: Geometry::Imported {
                         asset: String::new(),
                         purchased: None,
+                        link: None,
                     },
                     placement: Default::default(),
                     colour: [0; 3],

@@ -142,6 +142,13 @@ pub struct Purchased {
     pub mass_g: Option<f64>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Link {
+    pub path: String,
+    pub hash: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 #[serde(bound(deserialize = "N: Deserialize<'de> + Default"))]
@@ -226,6 +233,8 @@ pub enum Geometry<N = f64> {
         asset: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         purchased: Option<Box<Purchased>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link: Option<Link>,
     },
     Mirror {
         source: String,
@@ -1845,7 +1854,12 @@ impl<N> Geometry<N> {
                 radius: map(radius)?,
                 height: map(height)?,
             },
-            Geometry::Imported { asset, purchased } => Geometry::Imported {
+            Geometry::Imported {
+                asset,
+                purchased,
+                link,
+            } => Geometry::Imported {
+                link: link.clone(),
                 purchased: purchased.clone(),
                 asset: asset.clone(),
             },

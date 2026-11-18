@@ -147,6 +147,7 @@ pub fn apply(
                     geometry: Geometry::Imported {
                         asset: key,
                         purchased: None,
+                        link: None,
                     },
                 }],
                 output: "base".into(),
@@ -174,6 +175,7 @@ pub fn apply(
             new.geometry = Geometry::<Scalar>::Imported {
                 asset: key,
                 purchased: None,
+                link: None,
             };
         }
         parts.push(id.clone());

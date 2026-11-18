@@ -208,6 +208,7 @@ fn unbuildable_staged_asset_is_not_published() {
     part.geometry = Geometry::Imported {
         asset: key.clone(),
         purchased: None,
+        link: None,
     };
     let edit = faber_model::Edit::PutPart {
         id: "cube".into(),
