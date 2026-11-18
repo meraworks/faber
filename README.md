@@ -8,9 +8,9 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick start</a> Â·
-  <a href="#viewer-tour">Viewer tour</a> Â·
-  <a href="#tools">MCP tools</a> Â·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#viewer-tour">Viewer tour</a> ·
+  <a href="#tools">MCP tools</a> ·
   <a href="docs/modelling-guide.md">Modelling guide</a>
 </p>
 
