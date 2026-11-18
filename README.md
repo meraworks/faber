@@ -1,9 +1,22 @@
 <p align="center"><img src="assets/logo.svg" width="72" alt="Faber logo"></p>
 
-# Faber
+<h1 align="center">Faber</h1>
 
-Faber builds 3D parts through stdio MCP. A separate native viewer reads the
-same project files. Lengths are in millimetres. Z is up.
+<p align="center">
+  <b>Parametric 3D CAD for AI coding agents.</b><br>
+  Build parts through MCP, inspect the solids in the viewer and edit the same project with the mouse.
+</p>
+
+<p align="center">
+  <a href="#run">Quick start</a> ·
+  <a href="#viewer-tour">Viewer tour</a> ·
+  <a href="#tools">MCP tools</a> ·
+  <a href="docs/modelling-guide.md">Modelling guide</a>
+</p>
+
+<p align="center"><img src="docs/images/modelling-demo.gif" width="960" alt="Faber extrudes a hexagonal blank, cuts the cavity and rebuilds the bin as its height increases. A moving section exposes the walls and floor before STEP export."></p>
+
+<p align="center"><sub>From a hexagonal blank to a STEP file. The captions show the MCP calls used to build and resize the part. The cut views come from Section Analysis in the viewer. <a href="examples/hex-bin">Open the example project</a>.</sub></p>
 
 ## Run
 
@@ -31,6 +44,22 @@ and its arguments to `["mcp"]`. There is no required viewer or daemon.
 Run `faber schema` to print the current project JSON schema. The
 [modelling guide](docs/modelling-guide.md) describes batching, preview, source
 queries and units. The CLI guide and MCP guide return this same text.
+
+## Viewer tour
+
+These recordings show the development viewer.
+
+- **Inspect a cut.** Enable Section Analysis, then drag the arrow to move the plane. Drag either curved line or its round handle to rotate it. Hold Shift before you start a drag for fine control.
+
+<p align="center"><img src="docs/images/section-analysis.gif" width="900" alt="A cut plane moves through the hexagonal bin. The section exposes the wall thickness and the closed floor."></p>
+
+<p align="center"><sub>Section analysis of the <a href="examples/hex-bin">hexagonal bin</a>. The cut changes the view and preserves the solid.</sub></p>
+
+- **Drive an assembly.** Open Assembly motion and select a joint. In the example below, the input arm drives the output arm through a connecting rod. A gear relation turns the indicator in the opposite direction.
+
+<p align="center"><img src="docs/images/assembly-motion.gif" width="900" alt="The input arm turns. The connecting rod moves the output arm and the indicator turns in the opposite direction."></p>
+
+Both animations use frames from the development viewer.
 
 ## Tools
 
