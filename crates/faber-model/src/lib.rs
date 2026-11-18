@@ -1,6 +1,8 @@
 //! Project recipes. Lengths are in millimetres and angles are in degrees.
 
+mod material;
 pub mod motion;
+pub use material::{MaterialClass, MaterialData};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -1022,6 +1024,8 @@ pub struct Placement<N = f64> {
 #[serde(deny_unknown_fields)]
 #[schemars(bound = "N: JsonSchema + Default")]
 pub struct Part<N = f64> {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
     pub name: String,
     pub geometry: Geometry<N>,
     #[serde(default)]
@@ -1036,6 +1040,8 @@ pub struct Part<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectData {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub materials: BTreeMap<String, MaterialData>,
     pub schema: u32,
     pub revision: u64,
     #[serde(default, skip_serializing_if = "motion_empty")]
@@ -1214,6 +1220,7 @@ impl<N: Clone> Part<N> {
         mut map: impl FnMut(&N) -> Result<T, String>,
     ) -> Result<Part<T>, String> {
         Ok(Part {
+            material: self.material.clone(),
             name: self.name.clone(),
             geometry: self.geometry.map_numbers(&mut map)?,
             placement: self.placement.map_numbers(&mut map)?,

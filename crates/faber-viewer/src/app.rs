@@ -312,6 +312,7 @@ impl Shell {
 
     pub fn welcome(cc: &eframe::CreationContext<'_>) -> Self {
         let data = ProjectData {
+            materials: Default::default(),
             schema: 1,
             revision: 0,
             name: String::new(),
@@ -3985,6 +3986,7 @@ mod tests {
         }))
         .unwrap();
         let part = Part {
+            material: None,
             name: "Block".into(),
             geometry,
             placement: Placement::default(),
@@ -4067,6 +4069,7 @@ mod tests {
         }))
         .unwrap();
         let part = Part {
+            material: None,
             name: "Block".into(),
             geometry,
             placement: Placement::default(),
@@ -4140,6 +4143,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut project = faber_wiring::open(dir.path(), true, Some("Viewer test".into())).unwrap();
         let mut part = Part {
+            material: None,
             name: "Bin".into(),
             geometry: Geometry::Pocket {
                 profile: Profile {
@@ -4820,6 +4824,7 @@ mod tests {
             floor: 4.,
         };
         let part = Part {
+            material: None,
             name: "Bin".into(),
             geometry: Geometry::History {
                 features: vec![faber_model::Feature {
@@ -4949,6 +4954,7 @@ mod tests {
             floor: 4.,
         };
         let part = Part {
+            material: None,
             name: "Bin".into(),
             geometry: Geometry::History {
                 features: vec![

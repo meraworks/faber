@@ -465,6 +465,7 @@ impl SketchDraft {
             }
         };
         Ok(Part {
+            material: None,
             name: self.name.clone(),
             colour: [151, 172, 176],
             group: String::new(),

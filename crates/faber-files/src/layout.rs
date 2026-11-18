@@ -32,6 +32,8 @@ struct Probe {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    materials: BTreeMap<String, faber_model::MaterialData>,
     schema: u32,
     revision: u64,
     name: String,
@@ -41,6 +43,8 @@ struct Manifest {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    material: Option<String>,
     schema: u32,
     name: String,
     geometry: Geometry<Scalar>,
@@ -115,6 +119,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         parts.insert(
             id,
             Part {
+                material: file.material,
                 name: file.name,
                 geometry: file.geometry,
                 placement,
@@ -142,6 +147,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         None => Default::default(),
     };
     Ok(ProjectData {
+        materials: manifest.materials,
         schema: ONE_FILE_SCHEMA,
         revision: manifest.revision,
         motion,
@@ -162,6 +168,7 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
     for (id, part) in &data.parts {
         let file = PartFile {
+            material: part.material.clone(),
             schema: FILE_SCHEMA,
             name: part.name.clone(),
             geometry: part.geometry.clone(),
@@ -209,6 +216,7 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
         }
     }
     let manifest = Manifest {
+        materials: data.materials.clone(),
         schema: MANIFEST_SCHEMA,
         revision: data.revision,
         name: data.name.clone(),

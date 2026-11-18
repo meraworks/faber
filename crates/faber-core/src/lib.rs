@@ -207,6 +207,7 @@ impl Project {
             .ok_or("Asset storage is not available")?
             .put(source)?;
         let part = Part {
+            material: None,
             name,
             group: String::new(),
             note: String::new(),

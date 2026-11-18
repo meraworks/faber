@@ -341,6 +341,7 @@ fn open_with_store(
     let store = Arc::new(FileStore::open(path)?);
     if (create || generated) && !path.join("faber.json").exists() {
         let data = ProjectData {
+            materials: Default::default(),
             schema: 1,
             revision: 0,
             name: name.unwrap_or_else(|| "Untitled".into()),
@@ -389,6 +390,7 @@ pub fn create(path: &Path, name: String) -> Result<Project> {
         return Err("A project already exists in this folder".into());
     }
     let data = ProjectData {
+        materials: Default::default(),
         schema: 1,
         revision: 0,
         name,
