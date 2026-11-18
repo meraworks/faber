@@ -74,6 +74,7 @@ pub fn regenerate(
 fn placement_only(current: Option<&Part<Scalar>>, part: &Part<Scalar>) -> bool {
     current.is_some_and(|old| {
         old.name == part.name
+            && old.material == part.material
             && old.colour == part.colour
             && old.group == part.group
             && old.note == part.note

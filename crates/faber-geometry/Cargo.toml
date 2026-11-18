@@ -9,3 +9,4 @@ faber-model = { path = "../faber-model" }
 faber-ports = { path = "../faber-ports" }
 glam.workspace = true
 earcutr.workspace = true
+rayon = "1.12"

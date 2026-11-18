@@ -69,53 +69,32 @@ fn definition(kind: Kind) -> Value {
             "face": schema_json::<FaceSelector<Scalar>>(),
         }),
         Kind::Section => schema_json::<SectionAnalysis<Scalar>>(),
-        Kind::Edit => schema_json::<Edit>(),
+        Kind::Edit => edit_schema(),
     }
+}
+
+fn edit_schema() -> Value {
+    // Generate both sets of variants with the same definitions and reference names.
+    let mut generator = schemars::SchemaGenerator::default();
+    let metadata = json!(faber_core::PartInfoOperation::json_schema(&mut generator));
+    let mut root = json!(generator.into_root_schema_for::<Edit>());
+    let edits = root["oneOf"]
+        .as_array_mut()
+        .expect("The edit schema has variants");
+    let extra = variants(&metadata);
+    if extra.is_empty() {
+        edits.push(metadata);
+    } else {
+        edits.extend_from_slice(extra);
+    }
+    root
 }
 
 fn schema_json<T: JsonSchema>() -> Value {
     serde_json::to_value(schema_for!(T)).expect("a schema is JSON")
 }
 
-/// Names the bad name and up to three near names. Without a near name, it gives the hint.
-pub fn unknown(what: &str, name: &str, candidates: &[&str], hint: &str) -> String {
-    let near = nearest(name, candidates);
-    if near.is_empty() {
-        format!("Unknown {what} {name}. {hint}")
-    } else {
-        format!("Unknown {what} {name}. Nearest: {}.", near.join(", "))
-    }
-}
-
-/// Up to three candidates within a small edit distance, the closest first.
-pub fn nearest<'a>(name: &str, candidates: &[&'a str]) -> Vec<&'a str> {
-    let limit = (name.chars().count() / 3).max(2);
-    let mut scored: Vec<(usize, &str)> = candidates
-        .iter()
-        .map(|candidate| (distance(name, candidate), *candidate))
-        .filter(|(distance, _)| *distance <= limit)
-        .collect();
-    scored.sort();
-    scored.into_iter().take(3).map(|(_, name)| name).collect()
-}
-
-/// The Levenshtein distance between two names, counted in characters.
-fn distance(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut diagonal = row[0];
-        row[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let above = row[j + 1];
-            row[j + 1] = (diagonal + usize::from(ca != *cb))
-                .min(above + 1)
-                .min(row[j] + 1);
-            diagonal = above;
-        }
-    }
-    row[b.len()]
-}
+pub use faber_core::names::unknown;
 
 fn variants(root: &Value) -> &[Value] {
     root["oneOf"]

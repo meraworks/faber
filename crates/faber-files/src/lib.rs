@@ -5,9 +5,11 @@ mod feature_cache;
 mod history;
 pub mod layout;
 mod mesh_input;
+mod vector;
 pub use assets::FileAssets;
 pub use feature_cache::FileFeatureCache;
 pub use layout::{fingerprint, read};
+pub use vector::VectorWriter;
 
 use faber_model::ProjectData;
 use faber_ports::{Exchange, Mesh, ProjectStore, Result};

@@ -260,6 +260,7 @@ fn written_files(before: &ProjectData, after: &ProjectData) -> Vec<String> {
 /// True when two parts have the same recipe and metadata. Placement is not compared.
 fn same_recipe(a: &Part<Scalar>, b: &Part<Scalar>) -> bool {
     a.name == b.name
+        && a.material == b.material
         && a.geometry == b.geometry
         && a.colour == b.colour
         && a.group == b.group

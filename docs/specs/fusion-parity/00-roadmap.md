@@ -1,6 +1,7 @@
 # Fusion parity roadmap
 
-Status: chunk 17 supplies the viewer controls. Chunk 01 is next.
+Status: chunks 17 and 01 supply viewer controls and the shared geometry tools.
+Chunk 18 is next.
 See `docs/specs/faber-progress.md` for the checks for each finished chunk.
 
 This file is the index and the specification for eighteen plans. Each plan is one

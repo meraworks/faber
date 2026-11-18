@@ -1398,3 +1398,22 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   a pin. Use the pin to check selection, parameter edits and wheel zoom.
 - The workspace passed 622 tests. Workspace Clippy passed with warnings denied.
 - The release installer passed a silent install. Both installed programs match the release binaries. The installed CLI read both example parts.
+
+## Fusion parity 01: Foundations
+
+- The library contains eleven materials with sources. A project can supply
+  its own material with the same id. The inspector and MCP use the same
+  density for the mass of a solid. See [Material data](../material-data.md)
+  for the test directions, estimates and limits.
+- Each triangle of an exact body can carry its source face index. The
+  placement and the persistent mesh cache preserve these indices. An adapter
+  that supplies only a mesh still works.
+- The ray queries return triangle indices and distances in millimetres.
+  Shared edges and vertices give one hit. Vector sheets use named layers,
+  curves and text, with SVG and R12 DXF output.
+- The model change passed 623 workspace tests in a separate build directory.
+  The example is `examples/material-samples`. Its 10 mm steel cube weighs
+  7.85 g at the specified density.
+- In the release build, 100 000 rays on a 100 000-triangle mesh took 151 ms. There were 58 846 hits. The time excludes tree construction.
+- Workspace Clippy passed with warnings denied. All 660 tests passed. The release throughput test ran separately.
+- The release build and silent install passed. The installed CLI read the material sample project.

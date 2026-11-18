@@ -11,6 +11,8 @@ mod feature_info;
 mod generated;
 mod history;
 mod hole;
+pub mod materials;
+pub mod names;
 pub mod overhang;
 mod pattern;
 mod pipe;
@@ -23,6 +25,7 @@ mod select;
 mod thread;
 
 pub use batch::{Operation, PartInfo, PartInfoOperation};
+pub use body_cache::face_triangles;
 use faber_model::{Part, ProjectData, Scalar};
 use faber_ports::{Body, Kernel, ProjectStore, Result, Shape};
 pub use feature_info::{FeatureInfo, Reading};
@@ -38,12 +41,15 @@ use std::sync::{Arc, Mutex};
 
 /// Mass properties of a placed part in world coordinates.
 pub struct MassReport {
+    pub material: Option<String>,
+    /// The density used for mass and inertia.
+    pub density_g_cm3: Option<f64>,
     pub volume_mm3: f64,
     pub area_mm2: f64,
     pub centre_of_mass_mm: [f64; 3],
-    /// Present only when a density is given.
+    /// Present when the part or the request supplies a density.
     pub mass_g: Option<f64>,
-    /// Present only when a density is given.
+    /// Present when the part or the request supplies a density.
     pub inertia_kg_mm2: Option<[[f64; 3]; 3]>,
 }
 
@@ -304,6 +310,17 @@ impl Project {
         {
             return Err("Density must be above zero".into());
         }
+        let material = self
+            .data
+            .parts
+            .get(id)
+            .ok_or_else(|| format!("Unknown part: {id}"))?
+            .material
+            .clone();
+        let density_g_cm3 = match (density_g_cm3, material.as_deref()) {
+            (None, Some(id)) => Some(materials::get(&self.data, id)?.density_g_cm3),
+            (density, _) => density,
+        };
         let properties = self.cached("mass_properties", id, || {
             let shape = self
                 .bodies
@@ -315,17 +332,21 @@ impl Project {
                 .ok_or_else(|| format!("Part {id} has no exact shape"))?;
             self.kernel.mass_properties(shape)
         })?;
-        // One gram per cubic centimetre is 1e-3 g/mm3 or 1e-6 kg/mm3.
-        let mass = density_g_cm3.map(|density| {
-            let kg_per_mm3 = density * 1e-6;
-            (
-                density * properties.volume_mm3 * 1e-3,
-                properties
-                    .inertia_unit_mm5
-                    .map(|row| row.map(|v| v * kg_per_mm3)),
-            )
-        });
+        let mass = if let Some(density) = density_g_cm3 {
+            let grams = (properties.volume_mm3 * 1e-3) * density;
+            let inertia = properties
+                .inertia_unit_mm5
+                .map(|row| row.map(|v| (v * 1e-6) * density));
+            if !grams.is_finite() || inertia.iter().flatten().any(|v| !v.is_finite()) {
+                return Err("The mass or inertia exceeds the number range.".into());
+            }
+            Some((grams, inertia))
+        } else {
+            None
+        };
         Ok(MassReport {
+            material,
+            density_g_cm3,
             volume_mm3: properties.volume_mm3,
             area_mm2: properties.area_mm2,
             centre_of_mass_mm: properties.centre_of_mass_mm,
@@ -710,6 +731,7 @@ fn validate_data(data: &ProjectData) -> Result<()> {
     if data.name.trim().is_empty() {
         return Err("Project name is empty".into());
     }
+    materials::validate(data)?;
     if data.parts.len() > 2000 {
         return Err("Project has more than 2000 parts".into());
     }
@@ -933,6 +955,7 @@ impl Builder<'_> {
             group: part.group.clone(),
             colour: part.colour,
             mesh: placed.mesh,
+            face_of_triangle: local.face_of_triangle.clone(),
             volume: local.volume,
             bounds: placed.bounds,
             shape,
@@ -979,13 +1002,14 @@ impl Builder<'_> {
             timing.properties = body_cache::elapsed(started);
             let started = std::time::Instant::now();
             let mesh = self
-                .tessellate(&shape, output_key.as_deref())
+                .tessellate(&shape, properties.faces, output_key.as_deref())
                 .map_err(|error| part_error(id, &part.geometry, error))?;
             timing.tessellate = body_cache::elapsed(started);
             return Ok(body_cache::LocalBody {
                 geometry: part.geometry.clone(),
                 shape: Some(shape),
-                mesh,
+                face_of_triangle: mesh.face_of_triangle,
+                mesh: mesh.mesh,
                 volume: properties.volume,
                 bounds: properties.bounds,
             });
@@ -1020,6 +1044,7 @@ impl Builder<'_> {
             geometry: part.geometry.clone(),
             shape: None,
             mesh,
+            face_of_triangle: Vec::new(),
             volume,
             bounds: [lo.to_array(), hi.to_array()],
         })
@@ -1057,18 +1082,43 @@ impl Builder<'_> {
 
     /// Tessellates an unplaced shape. A history output reads its mesh from the feature cache
     /// when the cache has it.
-    fn tessellate(&self, shape: &Shape, output_key: Option<&str>) -> Result<faber_ports::Mesh> {
-        // The cache takes letters and digits only. The prefix marks the 0.03 mm mesh.
+    fn tessellate(
+        &self,
+        shape: &Shape,
+        face_count: u32,
+        output_key: Option<&str>,
+    ) -> Result<faber_ports::FaceMesh> {
+        let valid = |faces: &faber_ports::FaceMesh| {
+            !faces.mesh.triangles.is_empty()
+                && faces.face_of_triangle.len() == faces.mesh.triangles.len()
+                && faces
+                    .face_of_triangle
+                    .iter()
+                    .all(|i| (1..=face_count).contains(i))
+        };
+        // The prefix identifies the 0.03 mm mesh with face indices.
         let cached = match (self.persist, output_key) {
-            (Some(store), Some(key)) => Some((store, format!("mesh03{key}"))),
+            (Some(store), Some(key)) => Some((store, format!("mesh04{key}"))),
             _ => None,
         };
         if let Some((store, name)) = &cached
             && let Some(mesh) = store.get(name).as_deref().and_then(body_cache::decode_mesh)
+            && valid(&mesh)
         {
             return Ok(mesh);
         }
-        let mesh = self.kernel.tessellate(shape, TESSELLATION_MM)?;
+        let mesh = match self.kernel.tessellate_faces(shape, TESSELLATION_MM) {
+            Err(error) if error == faber_ports::FACE_MESH_UNSUPPORTED => {
+                return Ok(faber_ports::FaceMesh {
+                    mesh: self.kernel.tessellate(shape, TESSELLATION_MM)?,
+                    face_of_triangle: Vec::new(),
+                });
+            }
+            result => result?,
+        };
+        if !valid(&mesh) {
+            return Err("Each triangle needs a face index".into());
+        }
         if let Some((store, name)) = &cached {
             // A failed write only means that the next open tessellates again.
             let _ = store.put(name, &body_cache::encode_mesh(&mesh));

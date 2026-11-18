@@ -840,3 +840,33 @@ a part for its tools.
 
 Enter applies the open form. Escape first closes a menu, then stops a pick,
 then cancels a tool, then clears the selection. Each press does one action.
+
+## Materials and face meshes
+
+Open `examples/material-samples`. The steel cube is 10 mm on each side. Its
+volume is 1 cm³. At 7.85 g/cm³ its mass is 7.85 g. The pin beside the cube
+has a curved side and two flat ends.
+
+Use `materials` to find a material or read its properties and source. Assign
+its id to a part with `set_part_info`. Read `mass_properties` with the part
+id to use that density. A density in the request overrides the material.
+A project material takes precedence over a library material with the same id.
+For a design source, define project materials before the source uses them.
+Use the optional `material` argument of `faber.part` to assign the id.
+See [Material data](material-data.md) for the grades and test directions.
+Library values are typical. For a printed part, check the material, process
+and layer direction before you use a strength value.
+
+The face mesh of a native solid gives a face index for each triangle. `faber_core::face_triangles` gives its points in world coordinates,
+including the part placement. Rebuilds can change face indices. Imported
+triangle meshes have no exact faces.
+
+Use `faber_geometry::bvh::Bvh` for the first ray hit, all ray hits, the closest
+surface point or an inside test. Results refer to the triangles of the input
+mesh. The inside test needs a closed mesh. Ray distances use millimetres.
+
+Use `faber_wiring::export_vector` with a vector document and a path that ends
+in `.svg` or `.dxf`. Put lines, circles and arcs on named layers. Supply a
+sheet size in millimetres. Coordinates start at the lower left. The SVG writer
+converts the vertical coordinate to the page direction. A vector document
+contains sheet geometry and text. Solid modelling history stays in the project.

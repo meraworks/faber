@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "name": "Steel cube",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "base",
+        "geometry": {
+          "op": "box",
+          "size": [
+            10,
+            10,
+            10
+          ]
+        }
+      }
+    ],
+    "output": "base"
+  },
+  "colour": [
+    126,
+    139,
+    153
+  ],
+  "group": "Samples",
+  "note": "",
+  "material": "steel-s235"
+}

@@ -12,6 +12,7 @@ fn dark_surfaces_keep_their_value_under_direct_reflection() {
         group: String::new(),
         colour: [40, 43, 48],
         volume: 0.,
+        face_of_triangle: Vec::new(),
         shape: None,
         bounds: [[0., -10., -10.], [0., 10., 10.]],
         mesh: Mesh {

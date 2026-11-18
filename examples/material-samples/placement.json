@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "parts": {
+    "round_pin": {
+      "translation": [
+        22,
+        5,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    },
+    "steel_cube": {
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

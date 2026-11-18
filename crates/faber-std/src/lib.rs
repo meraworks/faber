@@ -1,6 +1,7 @@
 //! Metric standard tables: thread pitch, clearance holes, tap drills and screw heads.
 //! Lengths are in millimetres.
 
+pub mod materials;
 mod table;
 
 /// Clearance hole series from ISO 273.

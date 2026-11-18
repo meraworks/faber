@@ -43,6 +43,8 @@ impl Operation {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PartInfo {
+    /// Material id. An empty string clears the material.
+    pub material: Option<String>,
     /// Part id.
     pub id: String,
     /// New name. Must not be blank.
@@ -63,7 +65,12 @@ pub enum PartInfoOperation {
 }
 
 fn part_info(data: &mut ProjectData, info: PartInfo) -> Result<()> {
-    if info.name.is_none() && info.colour.is_none() && info.group.is_none() && info.note.is_none() {
+    if info.material.is_none()
+        && info.name.is_none()
+        && info.colour.is_none()
+        && info.group.is_none()
+        && info.note.is_none()
+    {
         return Err("Set at least one part field to change".into());
     }
     if info
@@ -77,6 +84,9 @@ fn part_info(data: &mut ProjectData, info: PartInfo) -> Result<()> {
         .parts
         .get_mut(&info.id)
         .ok_or_else(|| format!("Unknown part: {}", info.id))?;
+    if let Some(id) = info.material {
+        part.material = (!id.is_empty()).then_some(id);
+    }
     if let Some(name) = info.name {
         part.name = name;
     }

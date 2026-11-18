@@ -1,4 +1,6 @@
-//! Closed meshes from flat profiles.
+//! Closed meshes from flat profiles and spatial queries on triangle meshes.
+
+pub mod bvh;
 
 use faber_model::{Geometry, Profile};
 use faber_ports::{Kernel, Mesh, Result};

@@ -9,6 +9,12 @@ files. Fusion was not run.
 Chunk 17 adds canvas selection, a view cube, command search and keyboard
 control of edit windows. Face and edge selection are in chunk 18.
 
+## Materials and shared geometry
+
+Chunk 01 adds material assignment and a mass read with the effective density.
+Triangle indices link a placed mesh to its solid faces. The ray queries and
+vector writers supply geometry for picking, drawings and analysis.
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under

@@ -226,3 +226,93 @@ fn guide_topic_returns_one_section() {
     let error = session.refused("guide", json!({"topic":"Quik start"}));
     assert!(error.contains("Nearest: Quick start."), "{error}");
 }
+
+#[test]
+fn unknown_material_names_the_nearest_and_material_in_use_is_not_removed() {
+    let mut session = Session::start();
+    let dir = tempfile::tempdir().unwrap();
+    open_project(&mut session, dir.path());
+    let part = json!({"name":"Cube","colour":[10,20,30],"geometry":{"op":"box","size":[10,10,10]}});
+    session.ok("put_part", json!({"id":"cube","part":part}));
+    assert_eq!(
+        session.refused("set_part_info", json!({"id":"cube","material":"pett"})),
+        "Unknown material pett. Nearest: petg."
+    );
+    let mut row = session.ok("materials", json!({"id":"pla"}));
+    row.as_object_mut().unwrap().remove("id");
+    row["density_g_cm3"] = json!(2.0);
+    session.ok(
+        "set_material",
+        json!({"id":"custom","material":row,"expected_revision":1}),
+    );
+    assert!(
+        session
+            .refused(
+                "set_part_info",
+                json!({"id":"cube","material":"custom","expected_revision":1})
+            )
+            .contains("revision")
+    );
+    session.ok(
+        "set_part_info",
+        json!({"id":"cube","material":"custom","expected_revision":2}),
+    );
+    let mass = session.ok("mass_properties", json!({"id":"cube"}));
+    assert_eq!(mass["material"], "custom");
+    assert_eq!(mass["density_source"], "material");
+    assert_eq!(mass["density_g_cm3"], 2.);
+    let overridden = session.ok("mass_properties", json!({"id":"cube","density_g_cm3":3.}));
+    assert_eq!(overridden["density_source"], "request");
+    assert_eq!(overridden["density_g_cm3"], 3.);
+    assert_eq!(overridden["material"], "custom");
+    assert!((mass["mass_g"].as_f64().unwrap() - 2.).abs() < 1e-9);
+    let list = session.ok("materials", json!({"query":"custom"}));
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["id"], "custom");
+    assert!(
+        session
+            .refused(
+                "remove_material",
+                json!({"id":"custom","expected_revision":3})
+            )
+            .contains("cube")
+    );
+    session.ok(
+        "set_part_info",
+        json!({"id":"cube","material":"","expected_revision":3}),
+    );
+    session.ok(
+        "remove_material",
+        json!({"id":"custom","expected_revision":4}),
+    );
+}
+#[test]
+fn edit_schema_exposes_the_material_assignment() {
+    let mut session = Session::start();
+    let reply = session.ok("schema", json!({"kind":"edit"}));
+    let root = &reply["definition"];
+    fn resolve<'a>(node: &'a Value, root: &'a Value) -> &'a Value {
+        if let Some(reference) = node["$ref"].as_str() {
+            root.pointer(reference.strip_prefix('#').unwrap())
+                .expect("Broken edit schema reference")
+        } else {
+            node
+        }
+    }
+    let mut pending = vec![root];
+    let mut found = false;
+    while let Some(node) = pending.pop() {
+        let node = resolve(node, root);
+        if node.pointer("/properties/tool/const") == Some(&json!("set_part_info")) {
+            assert!(node["properties"].get("material").is_some());
+            assert!(node["required"].as_array().unwrap().contains(&json!("id")));
+            found = true;
+        }
+        for key in ["oneOf", "anyOf", "allOf"] {
+            if let Some(children) = node[key].as_array() {
+                pending.extend(children);
+            }
+        }
+    }
+    assert!(found, "The edit schema omits set_part_info.");
+}

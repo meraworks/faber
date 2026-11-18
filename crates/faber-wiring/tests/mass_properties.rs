@@ -64,3 +64,24 @@ fn unknown_part_and_non_positive_density_are_refused() {
     assert!(project.mass_properties("p", Some(0.)).is_err());
     assert!(project.mass_properties("p", Some(-1.)).is_err());
 }
+#[test]
+fn large_density_returns_a_finite_mass_or_an_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut p = faber_wiring::open(directory.path(), true, Some("Mass".into())).unwrap();
+    for (name, side) in [("small", 10), ("large", 100), ("rod", 1)] {
+        let size = if name == "rod" {
+            [10000, 1, 1]
+        } else {
+            [side; 3]
+        };
+        p.put_part(
+            name.into(),
+            part(json!({"name":name,"colour":[10,20,30],"geometry":{"op":"box","size":size}})),
+        )
+        .unwrap();
+    }
+    let mass = p.mass_properties("small", Some(1e307)).unwrap();
+    assert!((mass.mass_g.unwrap() / 1e307 - 1.).abs() < 1e-12);
+    assert!(p.mass_properties("large", Some(1e307)).is_err());
+    assert!(p.mass_properties("rod", Some(1e306)).is_err());
+}

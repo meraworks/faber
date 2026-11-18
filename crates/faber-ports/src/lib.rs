@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub mod source;
+pub mod vector;
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -38,12 +39,24 @@ pub struct Mesh {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FaceMesh {
+    pub mesh: Mesh,
+    /// One face index from the topology query for each triangle.
+    pub face_of_triangle: Vec<u32>,
+}
+
+pub const FACE_MESH_UNSUPPORTED: &str = "Face mesh is not supported";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Body {
     pub id: String,
     pub name: String,
     pub group: String,
     pub colour: [u8; 3],
     pub mesh: Mesh,
+    /// Empty when the source has no face indices.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_of_triangle: Vec<u32>,
     pub volume: f64,
     pub bounds: [[f64; 3]; 2],
     #[serde(skip)]
@@ -267,6 +280,9 @@ pub trait Kernel: Send + Sync {
     }
     fn tessellate(&self, _shape: &Shape, _tolerance: f64) -> Result<Mesh> {
         Err("Exact solids are not available".into())
+    }
+    fn tessellate_faces(&self, _shape: &Shape, _tolerance: f64) -> Result<FaceMesh> {
+        Err(FACE_MESH_UNSUPPORTED.into())
     }
     fn write_shape(&self, _shape: &Shape, _path: &Path) -> Result<()> {
         Err("Exact shape output is not available".into())

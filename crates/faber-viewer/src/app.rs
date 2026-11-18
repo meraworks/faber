@@ -13,6 +13,9 @@ mod forms_tests;
 mod keys;
 #[cfg(test)]
 mod keys_tests;
+mod material;
+#[cfg(test)]
+mod material_tests;
 mod motion_relations;
 mod move_tool;
 mod selection;
@@ -2381,6 +2384,12 @@ impl Shell {
                 && !part.note.is_empty()
             {
                 ui.label(RichText::new(&part.note).small().color(MUTED));
+            }
+            if self.selected.as_ref() == Some(&body.id)
+                && let Some(choice) =
+                    material::selector(ui, &self.data, body, self.pending.is_none())
+            {
+                self.save_material(ui.ctx(), body.id.clone(), choice);
             }
         }
         if crate::overhang::panel(ui, &mut self.overhang) {

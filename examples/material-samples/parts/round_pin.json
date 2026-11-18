@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "name": "Round pin",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "base",
+        "geometry": {
+          "op": "cylinder",
+          "radius": 4,
+          "height": 14
+        }
+      }
+    ],
+    "output": "base"
+  },
+  "colour": [
+    207,
+    133,
+    64
+  ],
+  "group": "Samples",
+  "note": "",
+  "material": "pla"
+}

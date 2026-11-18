@@ -147,6 +147,8 @@ pub struct MetricFastener {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetPartInfo {
+    /// Material id. An empty string clears it.
+    material: Option<String>,
     /// Part id.
     id: String,
     /// New name. Must not be blank.
@@ -258,6 +260,28 @@ pub struct SetParam {
     /// Return every part, not only the changed parts.
     #[serde(default)]
     verbose: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Materials {
+    id: Option<String>,
+    query: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetMaterial {
+    id: String,
+    material: faber_model::MaterialData,
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveMaterial {
+    id: String,
+    expected_revision: Option<u64>,
 }
 
 /// Motion study input. Its fields sit beside expected_revision and verbose.
@@ -501,13 +525,14 @@ fn part_info(fields: serde_json::Map<String, Value>) -> Result<PartInfo, String>
                 info.id = serde_json::from_value(value).map_err(read)?;
                 has_id = true;
             }
+            "material" => info.material = serde_json::from_value(value).map_err(read)?,
             "name" => info.name = serde_json::from_value(value).map_err(read)?,
             "colour" => info.colour = serde_json::from_value(value).map_err(read)?,
             "group" => info.group = serde_json::from_value(value).map_err(read)?,
             "note" => info.note = serde_json::from_value(value).map_err(read)?,
             _ => {
                 return Err(format!(
-                    "unknown field `{key}`, expected one of `id`, `name`, `colour`, `group`, `note`"
+                    "unknown field `{key}`, expected one of `id`, `name`, `colour`, `group`, `note`, `material`"
                 ));
             }
         }
@@ -1023,7 +1048,69 @@ impl Faber {
     }
 
     #[tool(
-        description = "Read the volume, surface area and centre of mass of a placed part in world coordinates. If density_g_cm3 is set, also read the mass and the inertia about the centre of mass. The project stays unchanged."
+        description = "List materials by name or id. Give an id to read all its properties and source."
+    )]
+    fn materials(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<Materials>>,
+    ) -> CallToolResult {
+        let mut guard = self.project.lock().unwrap_or_else(|p| p.into_inner());
+        result((|| {
+            if let Some(open) = guard.as_mut() {
+                faber_wiring::refresh(&open.path, &mut open.project)?;
+            }
+            let rows =
+                faber_core::materials::catalogue(guard.as_ref().map(|open| &open.project.data));
+            if let Some(id) = args.id {
+                if args.query.is_some() {
+                    return Err("Use either id or query.".into());
+                }
+                let row = rows.get(id.as_str()).ok_or_else(|| {
+                    schema_tool::unknown(
+                        "material",
+                        &id,
+                        &rows.keys().copied().collect::<Vec<_>>(),
+                        "Read the material list.",
+                    )
+                })?;
+                let mut value = json!(row);
+                value["id"] = json!(id);
+                return Ok(value);
+            }
+            let query = args.query.unwrap_or_default().to_lowercase();
+            Ok(Value::Array(rows.into_iter().filter(|(id,row)| id.to_lowercase().contains(&query) || row.name.to_lowercase().contains(&query))
+                .map(|(id,row)|json!({"id":id,"name":row.name,"class":row.class,"density_g_cm3":row.density_g_cm3,"youngs_mpa":row.youngs_mpa,"yield_mpa":row.yield_mpa})).collect()))
+        })())
+    }
+
+    #[tool(
+        description = "Add or replace a project material. A project material overrides the library entry with the same id."
+    )]
+    fn set_material(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SetMaterial>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            p.set_material(args.id.clone(), args.material)?;
+            Ok(json!({"id":args.id,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(description = "Remove a project material when no part uses it.")]
+    fn remove_material(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<RemoveMaterial>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            p.remove_material(&args.id)?;
+            Ok(json!({"id":args.id,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(
+        description = "Read the volume, surface area and centre of mass of a placed part in world coordinates. Use density_g_cm3 or the part material for mass and inertia. The project stays unchanged."
     )]
     fn mass_properties(
         &self,
@@ -1034,6 +1121,15 @@ impl Faber {
             let mut value = json!({"schema":1,"revision":p.data.revision,"id":args.id,
                 "coordinates":"world","volume_mm3":report.volume_mm3,"area_mm2":report.area_mm2,
                 "centre_of_mass_mm":report.centre_of_mass_mm});
+            if let (Some(id), Some(density)) = (report.material, report.density_g_cm3) {
+                value["material"] = json!(id);
+                value["density_g_cm3"] = json!(density);
+                value["density_source"] = json!(if args.density_g_cm3.is_some() {
+                    "request"
+                } else {
+                    "material"
+                });
+            }
             if let Some(mass_g) = report.mass_g {
                 value["mass_g"] = json!(mass_g);
             }
@@ -1533,7 +1629,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Change the name, colour, group or note of a part. Set at least one field. The geometry, placement and volume do not change. Each change makes one undo step."
+        description = "Change the name, material, colour, group or note of a part. Set at least one field. The geometry, placement and volume do not change. Each change makes one undo step."
     )]
     fn set_part_info(
         &self,
@@ -1543,6 +1639,7 @@ impl Faber {
             check_revision(p, args.expected_revision)?;
             let before = Before::of(p);
             p.set_part_info(PartInfo {
+                material: args.material,
                 id: args.id,
                 name: args.name,
                 colour: args.colour,

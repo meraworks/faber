@@ -533,6 +533,7 @@ unsafe extern "C" {
         triangle_count: *mut usize,
         normals: *mut *const f64,
     );
+    fn faber_mesh_face_indices(input: *const c_void) -> *const u32;
     fn faber_read(
         path: *const c_char,
         result: *mut *mut c_void,
@@ -1965,6 +1966,9 @@ impl Kernel for OcctKernel {
         })
     }
     fn tessellate(&self, shape: &Shape, tolerance: f64) -> Result<Mesh> {
+        Ok(self.tessellate_faces(shape, tolerance)?.mesh)
+    }
+    fn tessellate_faces(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::FaceMesh> {
         positive(tolerance)?;
         let shape = pointer(shape)?;
         let _guard = gate();
@@ -2010,13 +2014,18 @@ impl Kernel for OcctKernel {
         }
         let points = unsafe { std::slice::from_raw_parts(vertices, vertex_count * 3) };
         let indices = unsafe { std::slice::from_raw_parts(triangles, triangle_count * 3) };
-        Ok(Mesh {
+        let faces = unsafe { faber_mesh_face_indices(raw.0.as_ptr()) };
+        let mesh = Mesh {
             normals: unsafe { std::slice::from_raw_parts(normals, vertex_count * 3) }
                 .as_chunks::<3>()
                 .0
                 .to_vec(),
             vertices: points.as_chunks::<3>().0.to_vec(),
             triangles: indices.as_chunks::<3>().0.to_vec(),
+        };
+        Ok(faber_ports::FaceMesh {
+            mesh,
+            face_of_triangle: unsafe { std::slice::from_raw_parts(faces, triangle_count) }.to_vec(),
         })
     }
     fn write_shape(&self, shape: &Shape, path: &Path) -> Result<()> {

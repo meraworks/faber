@@ -107,6 +107,7 @@ mod tests {
             },
             volume: 0.,
             bounds: [[0., 0., 0.], [10., 10., 0.]],
+            face_of_triangle: Vec::new(),
             shape: None,
         }
     }

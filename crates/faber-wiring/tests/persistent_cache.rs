@@ -40,7 +40,7 @@ struct Counting {
 
 /// Mesh entries of the unplaced body cache. The counters below count feature entries only.
 fn is_mesh(key: &str) -> bool {
-    key.starts_with("mesh03")
+    key.starts_with("mesh")
 }
 
 impl FeatureCache for Counting {

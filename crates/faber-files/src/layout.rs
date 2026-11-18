@@ -289,12 +289,27 @@ fn read_optional<T: DeserializeOwned>(root: &Path, name: &str) -> Result<Option<
     read_json(root, name).map(Some)
 }
 
-fn put<T: Serialize>(root: &Path, name: &str, value: &T, changed: &mut Vec<PathBuf>) -> Result<()> {
+fn put<T: Serialize + DeserializeOwned>(
+    root: &Path,
+    name: &str,
+    value: &T,
+    changed: &mut Vec<PathBuf>,
+) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
     bytes.push(b'\n');
     let path = root.join(name);
-    if has_exact_name(&path) && std::fs::read(&path).is_ok_and(|current| current == bytes) {
-        return Ok(());
+    if has_exact_name(&path)
+        && let Ok(current) = std::fs::read(&path)
+    {
+        if current == bytes {
+            return Ok(());
+        }
+        // Keep the original bytes when only layout or default fields differ.
+        if let Ok(old) = serde_json::from_slice::<T>(&current)
+            && serde_json::to_vec_pretty(&old).is_ok_and(|old| old == bytes[..bytes.len() - 1])
+        {
+            return Ok(());
+        }
     }
     atomic_write(&path, &bytes)?;
     changed.push(path);

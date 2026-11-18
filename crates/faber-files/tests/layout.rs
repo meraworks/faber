@@ -411,3 +411,21 @@ fn failed_regenerate_write_restores_the_old_files() {
     assert_eq!(store.load().unwrap(), expected);
     assert_eq!(store.history_target(HistoryMove::Undo).unwrap(), first);
 }
+
+#[test]
+fn unchanged_project_files_keep_their_original_line_endings_and_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    layout::write(dir.path(), &fixture()).unwrap();
+    let path = dir.path().join("parts/base.json");
+    let raw = fs::read_to_string(&path).unwrap();
+    let original = format!(" \r\n{}", raw.replace('\n', "\r\n"));
+    fs::write(&path, &original).unwrap();
+    let before = layout::fingerprint(dir.path()).unwrap();
+    assert!(
+        layout::write(dir.path(), &layout::read(dir.path()).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    assert_eq!(layout::fingerprint(dir.path()).unwrap(), before);
+}

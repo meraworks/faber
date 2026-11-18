@@ -106,8 +106,11 @@ impl Kernel for Counting {
     fn summary_properties(&self, shape: &Shape) -> Result<Properties> {
         self.inner.summary_properties(shape)
     }
-    fn tessellate(&self, shape: &Shape, tolerance: f64) -> Result<Mesh> {
-        self.inner.tessellate(shape, tolerance)
+    fn tessellate(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::Mesh> {
+        Ok(self.tessellate_faces(shape, tolerance)?.mesh)
+    }
+    fn tessellate_faces(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::FaceMesh> {
+        self.inner.tessellate_faces(shape, tolerance)
     }
     fn build(&self, geometry: &faber_model::Geometry) -> Result<Mesh> {
         self.inner.build(geometry)

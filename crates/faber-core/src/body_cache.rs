@@ -2,7 +2,7 @@
 
 use crate::placement::rotation_matrix;
 use faber_model::{Geometry, Placement};
-use faber_ports::{Kernel, Mesh, Result, Shape};
+use faber_ports::{Body, FaceMesh, Kernel, Mesh, Result, Shape};
 use glam::{DMat3, DVec3};
 use std::time::Instant;
 
@@ -12,9 +12,21 @@ pub(crate) struct LocalBody {
     pub geometry: Geometry,
     pub shape: Option<Shape>,
     pub mesh: Mesh,
+    pub face_of_triangle: Vec<u32>,
     pub volume: f64,
     /// Unplaced bounds: exact for a shape, from the mesh otherwise.
     pub bounds: [[f64; 3]; 2],
+}
+
+/// The triangles of one face in world coordinates.
+pub fn face_triangles(body: &Body, face: u32) -> Vec<[[f64; 3]; 3]> {
+    body.mesh
+        .triangles
+        .iter()
+        .zip(&body.face_of_triangle)
+        .filter(|(_, index)| **index == face)
+        .map(|(triangle, _)| triangle.map(|i| body.mesh.vertices[i as usize]))
+        .collect()
 }
 
 /// The placed mesh, bounds and shape of one part.
@@ -154,7 +166,8 @@ pub(crate) fn elapsed(started: Instant) -> f64 {
 }
 
 /// Stores a mesh as little-endian numbers. Each list starts with its count.
-pub(crate) fn encode_mesh(mesh: &Mesh) -> Vec<u8> {
+pub(crate) fn encode_mesh(faces: &FaceMesh) -> Vec<u8> {
+    let mesh = &faces.mesh;
     let mut out = Vec::new();
     push_count(&mut out, mesh.vertices.len());
     for vertex in &mesh.vertices {
@@ -168,11 +181,15 @@ pub(crate) fn encode_mesh(mesh: &Mesh) -> Vec<u8> {
     for normal in &mesh.normals {
         push_all(&mut out, normal.iter().map(|v| v.to_le_bytes()));
     }
+    push_all(
+        &mut out,
+        faces.face_of_triangle.iter().map(|i| i.to_le_bytes()),
+    );
     out
 }
 
 /// Reads a mesh from `encode_mesh`. Any malformed byte returns None.
-pub(crate) fn decode_mesh(bytes: &[u8]) -> Option<Mesh> {
+pub(crate) fn decode_mesh(bytes: &[u8]) -> Option<FaceMesh> {
     let mut reader = Reader(bytes);
     let vertices = (0..reader.count()?)
         .map(|_| Some([reader.f64()?, reader.f64()?, reader.f64()?]))
@@ -183,21 +200,27 @@ pub(crate) fn decode_mesh(bytes: &[u8]) -> Option<Mesh> {
     let normals = (0..reader.count()?)
         .map(|_| Some([reader.f64()?, reader.f64()?, reader.f64()?]))
         .collect::<Option<Vec<_>>>()?;
-    if !reader.0.is_empty() {
+    if reader.0.len() != triangles.len().checked_mul(4)? {
         return None;
     }
+    let face_of_triangle = (0..triangles.len())
+        .map(|_| reader.u32())
+        .collect::<Option<Vec<_>>>()?;
     let vertex_count = vertices.len();
     let indices_in_range = triangles
         .iter()
         .all(|t| t.iter().all(|&i| (i as usize) < vertex_count));
     let normals_match = normals.is_empty() || normals.len() == vertex_count;
-    if !indices_in_range || !normals_match {
+    if !indices_in_range || !normals_match || face_of_triangle.contains(&0) {
         return None;
     }
-    Some(Mesh {
-        vertices,
-        triangles,
-        normals,
+    Some(FaceMesh {
+        mesh: Mesh {
+            vertices,
+            triangles,
+            normals,
+        },
+        face_of_triangle,
     })
 }
 
@@ -233,13 +256,16 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::{decode_mesh, encode_mesh};
-    use faber_ports::Mesh;
+    use faber_ports::{FaceMesh, Mesh};
 
-    fn sample() -> Mesh {
-        Mesh {
-            vertices: vec![[0., 0., 0.], [1.5, -2., 3.25], [4., 5., 6.]],
-            triangles: vec![[0, 1, 2]],
-            normals: vec![[0., 0., 1.]; 3],
+    fn sample() -> FaceMesh {
+        FaceMesh {
+            mesh: Mesh {
+                vertices: vec![[0., 0., 0.], [1.5, -2., 3.25], [4., 5., 6.]],
+                triangles: vec![[0, 1, 2]],
+                normals: vec![[0., 0., 1.]; 3],
+            },
+            face_of_triangle: vec![3],
         }
     }
 
@@ -247,9 +273,10 @@ mod tests {
     fn mesh_round_trip_keeps_every_value() {
         let mesh = sample();
         let decoded = decode_mesh(&encode_mesh(&mesh)).unwrap();
-        assert_eq!(decoded.vertices, mesh.vertices);
-        assert_eq!(decoded.triangles, mesh.triangles);
-        assert_eq!(decoded.normals, mesh.normals);
+        assert_eq!(decoded.mesh.vertices, mesh.mesh.vertices);
+        assert_eq!(decoded.mesh.triangles, mesh.mesh.triangles);
+        assert_eq!(decoded.mesh.normals, mesh.mesh.normals);
+        assert_eq!(decoded.face_of_triangle, mesh.face_of_triangle);
     }
 
     #[test]
@@ -263,18 +290,27 @@ mod tests {
     }
 
     #[test]
+    fn each_triangle_needs_a_positive_face_index() {
+        let mut mesh = sample();
+        for invalid in [vec![], vec![0], vec![1, 2]] {
+            mesh.face_of_triangle = invalid;
+            assert!(decode_mesh(&encode_mesh(&mesh)).is_none());
+        }
+    }
+
+    #[test]
     fn triangle_index_past_the_vertices_is_refused() {
         let mut mesh = sample();
-        mesh.triangles = vec![[0, 1, 3]];
+        mesh.mesh.triangles = vec![[0, 1, 3]];
         assert!(decode_mesh(&encode_mesh(&mesh)).is_none());
     }
 
     #[test]
     fn normal_count_must_be_zero_or_the_vertex_count() {
         let mut mesh = sample();
-        mesh.normals = vec![[0., 0., 1.]; 2];
+        mesh.mesh.normals = vec![[0., 0., 1.]; 2];
         assert!(decode_mesh(&encode_mesh(&mesh)).is_none());
-        mesh.normals.clear();
+        mesh.mesh.normals.clear();
         assert!(decode_mesh(&encode_mesh(&mesh)).is_some());
     }
 }

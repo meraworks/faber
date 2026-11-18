@@ -96,9 +96,12 @@ impl Kernel for Counting {
     fn summary_properties(&self, shape: &Shape) -> Result<Properties> {
         self.inner.summary_properties(shape)
     }
-    fn tessellate(&self, shape: &Shape, tolerance: f64) -> Result<Mesh> {
+    fn tessellate(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::Mesh> {
+        Ok(self.tessellate_faces(shape, tolerance)?.mesh)
+    }
+    fn tessellate_faces(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::FaceMesh> {
         self.tessellate.fetch_add(1, Ordering::Relaxed);
-        self.inner.tessellate(shape, tolerance)
+        self.inner.tessellate_faces(shape, tolerance)
     }
     fn build(&self, geometry: &Geometry) -> Result<Mesh> {
         self.inner.build(geometry)
@@ -378,6 +381,8 @@ fn warm_open_reads_the_mesh_from_the_feature_cache() {
     let first = open_warm(&cold);
     assert!(cold.tessellate.load(Ordering::Relaxed) > 0);
     let triangles = first.bodies[0].mesh.triangles.clone();
+    let faces = first.bodies[0].face_of_triangle.clone();
+    assert_eq!(faces.len(), triangles.len());
     drop(first);
 
     let warm = Counting::new();
@@ -385,6 +390,7 @@ fn warm_open_reads_the_mesh_from_the_feature_cache() {
 
     assert_eq!(warm.tessellate.load(Ordering::Relaxed), 0);
     assert_eq!(second.bodies[0].mesh.triangles, triangles);
+    assert_eq!(second.bodies[0].face_of_triangle, faces);
 }
 
 #[test]

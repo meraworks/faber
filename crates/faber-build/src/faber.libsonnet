@@ -10,12 +10,12 @@
 
   // A part with a feature history. `features` is a list of features. `output`
   // is the id of the feature that gives the solid.
-  part(name, features, output, colour=[150, 150, 150])::
+  part(name, features, output, colour=[150, 150, 150], material=null)::
     {
       name: name,
       colour: colour,
       geometry: { op: 'history', features: features, output: output },
-    },
+    } + (if material == null then {} else { material: material }),
 
   // A feature with an id, an operation and its fields.
   feature(id, op, fields)::

@@ -44,6 +44,7 @@ fn box_body(size: [f64; 3]) -> Body {
         },
         volume: size.iter().product(),
         bounds: [[-x, -y, -z], [x, y, z]],
+        face_of_triangle: Vec::new(),
         shape: None,
     }
 }

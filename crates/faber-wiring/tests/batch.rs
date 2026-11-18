@@ -245,9 +245,16 @@ impl faber_ports::Kernel for Tessellating {
         shape: &faber_ports::Shape,
         tolerance: f64,
     ) -> faber_ports::Result<faber_ports::Mesh> {
+        Ok(self.tessellate_faces(shape, tolerance)?.mesh)
+    }
+    fn tessellate_faces(
+        &self,
+        shape: &faber_ports::Shape,
+        tolerance: f64,
+    ) -> faber_ports::Result<faber_ports::FaceMesh> {
         self.tessellations
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.inner.tessellate(shape, tolerance)
+        self.inner.tessellate_faces(shape, tolerance)
     }
     fn build(&self, geometry: &faber_model::Geometry) -> faber_ports::Result<faber_ports::Mesh> {
         self.inner.build(geometry)

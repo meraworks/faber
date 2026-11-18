@@ -433,6 +433,11 @@ impl ExportFile {
     }
 }
 
+pub fn export_vector(doc: &faber_ports::vector::VectorDoc, path: &Path) -> Result<()> {
+    use faber_ports::vector::VectorExport;
+    faber_files::VectorWriter.write(doc, path)
+}
+
 pub fn export(bodies: &[Body], path: &Path) -> Result<Vec<String>> {
     Ok(export_meshes(bodies, path, LIBRARY_TOLERANCE_MM)?
         .into_iter()

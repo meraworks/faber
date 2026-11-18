@@ -1,3 +1,4 @@
+#include "bridge.h"
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -100,7 +101,10 @@ struct FaberCurveSegment { int32_t kind; double data[9]; const double* points; s
 struct FaberEdge { uint32_t index; double length; double centre[3]; double direction[3]; double radius; };
 struct FaberFace { uint32_t index; double area; double centre[3]; double normal[3]; double start[3],axis[3],radius,length; int internal; };
 struct FaberEdgeFace { uint32_t edge,face; };
-struct FaberMesh { std::vector<double> vertices; std::vector<double> normals; std::vector<uint32_t> triangles; };
+struct FaberMesh {
+    std::vector<double> vertices, normals;
+    std::vector<uint32_t> triangles, face_of_triangle;
+};
 struct FaberProperties {
     double volume;
     double centre[3];
@@ -944,8 +948,10 @@ extern "C" int faber_mesh(const void* input,double tolerance,void** result,char*
         BRepMesh_IncrementalMesh operation(shape,tolerance,false,0.1,false);
         if(!operation.IsDone()) throw std::runtime_error("Cannot make mesh");
         auto mesh=std::make_unique<FaberMesh>();
-        for(TopExp_Explorer iterator(shape,TopAbs_FACE);iterator.More();iterator.Next()) {
-            const TopoDS_Face face=TopoDS::Face(iterator.Current());TopLoc_Location location;
+        TopTools_IndexedMapOfShape faces;
+        TopExp::MapShapes(shape,TopAbs_FACE,faces);
+        for(int f=1;f<=faces.Extent();++f) {
+            const TopoDS_Face face=TopoDS::Face(faces(f));TopLoc_Location location;
             const Handle(Poly_Triangulation) triangles=BRep_Tool::Triangulation(face,location);
             if(triangles.IsNull()) throw std::runtime_error("Face has no mesh");
             BRepLib_ToolTriangulatedShape::ComputeNormals(face,triangles);
@@ -962,6 +968,7 @@ extern "C" int faber_mesh(const void* input,double tolerance,void** result,char*
                 if(face.Orientation()==TopAbs_REVERSED) std::swap(b,c);
                 mesh->triangles.insert(mesh->triangles.end(),{base+a-1,base+b-1,base+c-1});
             }
+            mesh->face_of_triangle.insert(mesh->face_of_triangle.end(),triangles->NbTriangles(),static_cast<uint32_t>(f));
         }
         *result=mesh.release();
     });
@@ -972,6 +979,10 @@ extern "C" void faber_mesh_data(const void* input,const double** vertices,size_t
     *vertices=mesh->vertices.data();*vertex_count=mesh->vertices.size()/3;
     *triangles=mesh->triangles.data();*triangle_count=mesh->triangles.size()/3;
     *normals=mesh->normals.data();
+}
+
+extern "C" const uint32_t* faber_mesh_face_indices(const void* input) noexcept {
+    return static_cast<const FaberMesh*>(input)->face_of_triangle.data();
 }
 
 extern "C" int faber_write(const void* input,const char* path,char* error,size_t capacity) noexcept {

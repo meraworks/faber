@@ -258,3 +258,24 @@ fn removed_part_in_a_motion_joint_is_refused() {
     let data = faber_files::read(root).unwrap();
     faber_core::build(&data, &OcctKernel).unwrap();
 }
+
+#[test]
+fn changing_only_the_material_is_in_the_build_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = |id: &str| {
+        format!(
+            "local f = import 'faber.libsonnet'; {{parts:{{pin:f.part('Pin',[f.box('base',[10,10,10])],'base',material='{id}')}}}}"
+        )
+    };
+    write(dir.path(), "design.jsonnet", &src("pla"));
+    source().build(dir.path()).unwrap();
+    write(dir.path(), "design.jsonnet", &src("steel-s235"));
+    let report = source().build(dir.path()).unwrap();
+    assert!(report.written.contains(&"parts/pin.json".to_owned()));
+    assert_eq!(
+        faber_files::read(dir.path()).unwrap().parts["pin"]
+            .material
+            .as_deref(),
+        Some("steel-s235")
+    );
+}
