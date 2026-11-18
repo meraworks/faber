@@ -152,6 +152,11 @@ fn speed(body: &Body, study: &MotionStudy, driver: &str, range: [f64; 2]) -> f64
         }
         if source == driver {
             match joint.kind {
+                JointKind::Rigid
+                | JointKind::Cylindrical
+                | JointKind::PinSlot
+                | JointKind::Planar
+                | JointKind::Ball => return f64::INFINITY,
                 JointKind::Revolute => speed += radius * ratio.to_radians(),
                 JointKind::Slider => {
                     speed += ratio;

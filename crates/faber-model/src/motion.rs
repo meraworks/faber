@@ -5,6 +5,8 @@ use glam::{DQuat, DVec3, EulerRot};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+mod coordinates;
+pub use coordinates::{Pose, PoseValue};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -27,6 +29,12 @@ pub struct Joint {
     pub axis: [f64; 3],
     #[serde(default)]
     pub limits: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub second_axis: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits2: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits3: Option<[f64; 2]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -34,6 +42,11 @@ pub struct Joint {
 pub enum JointKind {
     Revolute,
     Slider,
+    Rigid,
+    Cylindrical,
+    PinSlot,
+    Planar,
+    Ball,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -102,10 +115,18 @@ impl MotionStudy {
         &self,
         inputs: &BTreeMap<String, f64>,
     ) -> Result<BTreeMap<String, Placement>, String> {
+        self.solve_pose(
+            &inputs
+                .iter()
+                .map(|(id, &v)| (id.clone(), PoseValue::Number(v)))
+                .collect(),
+        )
+    }
+    pub fn solve_pose(&self, inputs: &Pose) -> Result<BTreeMap<String, Placement>, String> {
         let mut followers = BTreeMap::new();
         for (id, link) in &self.linkages {
-            let driver = self.revolute(&link.driver)?;
-            let follower = self.revolute(&link.follower)?;
+            let driver = self.scalar_joint(&link.driver)?;
+            let follower = self.scalar_joint(&link.follower)?;
             if driver.parent != follower.parent
                 || followers.insert(&link.follower, link).is_some()
                 || self.gears.contains_key(&link.follower)
@@ -114,8 +135,8 @@ impl MotionStudy {
             }
         }
         for (id, gear) in &self.gears {
-            self.revolute(id)?;
-            self.revolute(&gear.driver)?;
+            self.scalar_joint(id)?;
+            self.scalar_joint(&gear.driver)?;
             if !gear.ratio.is_finite() || gear.ratio == 0.0 {
                 return Err(format!("Invalid gear ratio for {id}"));
             }
@@ -144,40 +165,27 @@ impl MotionStudy {
                     None => Frame::default(),
                 };
                 let mut rod = None;
-                let value = if let Some(gear) = self.gears.get(id) {
+                let driven;
+                let values = if let Some(gear) = self.gears.get(id) {
                     let Some(value) = angles.get(&gear.driver) else {
                         continue;
                     };
-                    value * gear.ratio
+                    driven = [value * gear.ratio];
+                    &driven[..]
                 } else if let Some(link) = followers.get(id) {
                     let Some(angle) = angles.get(&link.driver) else {
                         continue;
                     };
                     let (angle, frame) = link.close(&self.joints[&link.driver], joint, *angle)?;
                     rod = Some((&link.rod_parts, parent.compose(frame)));
-                    angle
+                    driven = [angle];
+                    &driven[..]
                 } else {
-                    inputs.get(id).copied().unwrap_or_default()
+                    inputs
+                        .get(id)
+                        .map_or(&[0.; 3][..joint.kind.count()], PoseValue::as_slice)
                 };
-                if !value.is_finite()
-                    || joint.limits.is_some_and(|[low, high]| {
-                        !low.is_finite() || !high.is_finite() || value < low || value > high
-                    })
-                {
-                    return Err(format!("Motion value outside the limits for {id}"));
-                }
-                let axis = joint.direction()?;
-                let origin = DVec3::from(joint.origin);
-                if !origin.is_finite() {
-                    return Err(format!("Invalid origin for {id}"));
-                }
-                let local = match joint.kind {
-                    JointKind::Revolute => Frame::about(axis, value.to_radians(), origin),
-                    JointKind::Slider => Frame {
-                        offset: axis * value,
-                        ..Frame::default()
-                    },
-                };
+                let local = joint.displacement(id, values)?;
                 let frame = parent.compose(local);
                 for (ids, transform) in Some((&joint.parts, frame)).into_iter().chain(rod) {
                     let placement = transform.placement()?;
@@ -188,7 +196,9 @@ impl MotionStudy {
                     }
                 }
                 frames.insert(id, frame);
-                angles.insert(id, value);
+                if let [value] = values {
+                    angles.insert(id, *value);
+                }
                 pending.remove(id);
             }
             if pending.len() == count {
@@ -201,11 +211,11 @@ impl MotionStudy {
         Ok(parts)
     }
 
-    fn revolute(&self, id: &str) -> Result<&Joint, String> {
+    fn scalar_joint(&self, id: &str) -> Result<&Joint, String> {
         self.joints
             .get(id)
-            .filter(|joint| joint.kind == JointKind::Revolute)
-            .ok_or_else(|| format!("Expected a revolute joint for {id}"))
+            .filter(|joint| joint.kind.count() == 1)
+            .ok_or_else(|| format!("Expected a revolute or slider joint for {id}"))
     }
 }
 
@@ -220,38 +230,67 @@ impl Joint {
 impl FourBar {
     fn close(&self, driver: &Joint, follower: &Joint, angle: f64) -> Result<(f64, Frame), String> {
         let axis = follower.direction()?;
-        let drive_axis = driver.direction()?;
         let a = DVec3::from(self.driver_pin);
         let b = DVec3::from(self.follower_pin);
         let pivot = DVec3::from(follower.origin);
-        let moved = Frame::about(drive_axis, angle.to_radians(), driver.origin.into()).point(a);
-        let planar = |v: DVec3| v - axis * axis.dot(v);
-        let radius = planar(b - pivot);
+        let driver_frame = driver.displacement(&self.driver, &[angle])?;
+        let moved = driver_frame.point(a);
         let rod = b - a;
-        let centres = planar(moved - pivot);
-        let distance = centres.length();
-        let radius_length = radius.length();
-        if radius_length <= 1e-12 || rod.length() <= 1e-12 || distance <= 1e-12 {
+        if rod.length() <= 1e-12 {
             return Err("The linkage has coincident pin centres".into());
         }
-        let axial_gap = axis.dot(b - moved);
-        let cosine = (distance.powi(2) + radius_length.powi(2) + axial_gap.powi(2)
-            - rod.length_squared())
-            / (2.0 * distance * radius_length);
-        if !(-1.0000000001..=1.0000000001).contains(&cosine) {
-            return Err("The linkage cannot reach the specified position".into());
-        }
-        let branch = if axis.dot(planar(a - pivot).cross(radius)) < 0.0 {
-            -1.0
+        let (follower_value, follower_frame) = if follower.kind == JointKind::Slider {
+            let gap = b - moved;
+            let along = axis.dot(gap);
+            let squared = rod.length_squared() - (gap - axis * along).length_squared();
+            if squared < -1e-10 * rod.length_squared() {
+                return Err("The linkage cannot reach the specified position".into());
+            }
+            let branch = if axis.dot(rod) < 0. { -1. } else { 1. };
+            let travel = -along + branch * squared.max(0.).sqrt();
+            (
+                travel,
+                Frame {
+                    offset: axis * travel,
+                    ..Frame::default()
+                },
+            )
         } else {
-            1.0
+            let planar = |v: DVec3| v - axis * axis.dot(v);
+            let radius = planar(b - pivot);
+            let centres = planar(moved - pivot);
+            let distance = centres.length();
+            let radius_length = radius.length();
+            if radius_length <= 1e-12 || rod.length() <= 1e-12 || distance <= 1e-12 {
+                return Err("The linkage has coincident pin centres".into());
+            }
+            let axial_gap = axis.dot(b - moved);
+            let cosine = (distance.powi(2) + radius_length.powi(2) + axial_gap.powi(2)
+                - rod.length_squared())
+                / (2.0 * distance * radius_length);
+            if !(-1.0000000001..=1.0000000001).contains(&cosine) {
+                return Err("The linkage cannot reach the specified position".into());
+            }
+            let branch = if axis.dot(planar(a - pivot).cross(radius)) < 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
+            let next = DQuat::from_axis_angle(axis, branch * cosine.clamp(-1.0, 1.0).acos())
+                * (centres * (radius_length / distance));
+            let signed_angle =
+                |from: DVec3, to: DVec3| axis.dot(from.cross(to)).atan2(from.dot(to));
+            let follower_angle = signed_angle(radius, next);
+            let follower_rotation = DQuat::from_axis_angle(axis, follower_angle);
+            (
+                follower_angle.to_degrees(),
+                Frame {
+                    rotation: follower_rotation,
+                    offset: pivot - follower_rotation * pivot,
+                },
+            )
         };
-        let next = DQuat::from_axis_angle(axis, branch * cosine.clamp(-1.0, 1.0).acos())
-            * (centres * (radius_length / distance));
-        let signed_angle = |from: DVec3, to: DVec3| axis.dot(from.cross(to)).atan2(from.dot(to));
-        let follower_angle = signed_angle(radius, next);
-        let follower_rotation = DQuat::from_axis_angle(axis, follower_angle);
-        let next_rod = pivot + follower_rotation * (b - pivot) - moved;
+        let next_rod = follower_frame.point(b) - moved;
         let direction = next_rod.normalize();
         let initial = rod.normalize();
         let cross = initial.cross(direction);
@@ -270,8 +309,8 @@ impl FourBar {
                         .ok_or("Invalid socket axis")?;
                 }
                 let studs = [
-                    DQuat::from_axis_angle(drive_axis, angle.to_radians()) * axes[0].normalize(),
-                    follower_rotation * axes[1].normalize(),
+                    driver_frame.rotation * axes[0].normalize(),
+                    follower_frame.rotation * axes[1].normalize(),
                 ];
                 let score = |roll: f64| {
                     let rotation = DQuat::from_axis_angle(direction, roll.to_radians()) * base;
@@ -298,7 +337,7 @@ impl FourBar {
             return Ok((0.0, Frame::default()));
         }
         Ok((
-            follower_angle.to_degrees(),
+            follower_value,
             Frame {
                 rotation,
                 offset: moved - rotation * a,
@@ -319,6 +358,9 @@ mod tests {
             origin: [x, 0., 0.],
             axis: [0., 0., 2.],
             limits: None,
+            second_axis: None,
+            limits2: None,
+            limits3: None,
         }
     }
 

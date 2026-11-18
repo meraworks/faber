@@ -187,6 +187,11 @@ impl Shell {
         };
         let delta = ui.input(|i| i.pointer.delta());
         let change = match joint.kind {
+            JointKind::Rigid
+            | JointKind::Cylindrical
+            | JointKind::PinSlot
+            | JointKind::Planar
+            | JointKind::Ball => return false,
             JointKind::Slider => {
                 let d = project(origin + axis) - project(origin);
                 if d.length_sq() > 0.01 {
@@ -369,6 +374,9 @@ impl Shell {
                                 origin: centre,
                                 axis: [0., 0., 1.],
                                 limits: None,
+                                limits2: None,
+                                limits3: None,
+                                second_axis: None,
                             },
                         ));
                     }
