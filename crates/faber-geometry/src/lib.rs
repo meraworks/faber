@@ -10,6 +10,7 @@ pub struct NativeKernel;
 impl Kernel for NativeKernel {
     fn build(&self, geometry: &Geometry) -> Result<Mesh> {
         match geometry {
+            Geometry::Instance { .. } => Err("An instance needs a source part.".into()),
             Geometry::Imported { .. }
             | Geometry::Thread { .. }
             | Geometry::Hole { .. }

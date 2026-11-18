@@ -531,6 +531,7 @@ pub(crate) fn output_error(features: &[Feature], output: &str, error: String) ->
 /// Returns the operation kind as a snake case name, such as `fillet`.
 pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
     match geometry {
+        Geometry::Instance { .. } => "instance",
         Geometry::Imported { .. } => "imported",
         Geometry::Rib { .. } => "rib",
         Geometry::Web { .. } => "web",

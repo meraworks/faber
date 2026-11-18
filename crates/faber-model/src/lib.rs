@@ -137,6 +137,9 @@ pub struct Purchased {
 #[serde(bound(deserialize = "N: Deserialize<'de> + Default"))]
 #[schemars(bound = "N: JsonSchema + Default")]
 pub enum Geometry<N = f64> {
+    Instance {
+        of: String,
+    },
     Rib {
         body: String,
         plane: String,
@@ -1770,6 +1773,7 @@ impl<N> Geometry<N> {
                     .collect::<Result<_, String>>()?,
                 ruled: *ruled,
             },
+            Geometry::Instance { of } => Geometry::Instance { of: of.clone() },
             Geometry::Sphere { radius } => Geometry::Sphere {
                 radius: map(radius)?,
             },
