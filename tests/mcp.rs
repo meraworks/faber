@@ -525,7 +525,83 @@ fn stdio_topology_filters_by_kind_selector_and_limit() {
         serde_json::from_str(limited["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(limited["edges"].as_array().unwrap().len(), 2, "{limited}");
     assert_eq!(limited["faces"].as_array().unwrap().len(), 0, "{limited}");
-    assert_eq!(limited["total"]["edges"], 12, "{limited}");
+    assert_eq!(limited["total_edges"], 12, "{limited}");
+    assert!(limited["total_faces"].is_null(), "{limited}");
+    drop(input);
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn topology_default_limit_is_50_with_totals() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_faber"))
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut id = 0;
+    let mut request = |method: &str, params: Value| -> Value {
+        id += 1;
+        writeln!(
+            input,
+            "{}",
+            json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+        )
+        .unwrap();
+        input.flush().unwrap();
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        assert!(!line.is_empty(), "MCP server stopped");
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert!(reply.get("error").is_none(), "{reply}");
+        if method == "initialize" {
+            writeln!(
+                input,
+                "{}",
+                json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+            )
+            .unwrap();
+            input.flush().unwrap();
+        }
+        reply["result"].clone()
+    };
+    request(
+        "initialize",
+        json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"faber-test","version":"1"}}),
+    );
+    let open = request(
+        "tools/call",
+        json!({"name":"open","arguments":{"path":dir.path(),"create":true,"name":"Topology"}}),
+    );
+    assert_ne!(open["isError"], true, "{open}");
+    // Twenty separate cylinders give 60 faces.
+    let put = request(
+        "tools/call",
+        json!({"name":"put_part","arguments":{"id":"pattern","part":{"name":"Row","colour":[100,140,170],"geometry":{"op":"history","output":"row","features":[
+            {"id":"seed","geometry":{"op":"cylinder","radius":2,"height":4}},
+            {"id":"row","geometry":{"op":"linear_pattern","source":"seed","count":20,"step":[6,0,0]}}
+        ]}}}}),
+    );
+    assert_ne!(put["isError"], true, "{put}");
+    let mut read = |arguments: Value| -> Value {
+        let reply = request(
+            "tools/call",
+            json!({"name":"topology","arguments":arguments}),
+        );
+        assert_ne!(reply["isError"], true, "{reply}");
+        serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let limited = read(json!({"id":"pattern"}));
+    assert_eq!(limited["faces"].as_array().unwrap().len(), 50, "{limited}");
+    let all = read(json!({"id":"pattern","limit":1000}));
+    let total = all["faces"].as_array().unwrap().len();
+    assert!(total > 50, "{all}");
+    assert_eq!(limited["total_faces"], total, "{limited}");
+    drop(read);
     drop(input);
     assert!(child.wait().unwrap().success());
 }
@@ -926,6 +1002,37 @@ fn stdio_move_part_copy_keeps_the_source() {
         json!({"id":"src","translate":[1.,0.,0.],"copy_as":"copy"}),
     );
     assert!(taken.contains("already exists"), "{taken}");
+    s.finish();
+}
+
+#[test]
+fn move_part_with_ids_moves_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"left","part":box_part("Left", [10., 20., 30.], [0., 0., 0.])}),
+    );
+    s.ok(
+        "put_part",
+        json!({"id":"right","part":box_part("Right", [10., 20., 30.], [50., 0., 0.])}),
+    );
+    let moved = s.ok(
+        "move_part",
+        json!({"ids":["left","right"],"translate":[0.,0.,5.]}),
+    );
+    let changed = moved["changed"].as_array().unwrap();
+    assert_eq!(changed.len(), 2, "{moved}");
+    let entry = |id: &str| changed.iter().find(|e| e["id"] == id).unwrap().clone();
+    assert_near(&entry("left")["bounds_mm"], &[0., 0., 5., 10., 20., 35.]);
+    assert_near(&entry("right")["bounds_mm"], &[50., 0., 5., 60., 20., 35.]);
+    let both = s.refused(
+        "move_part",
+        json!({"id":"left","ids":["right"],"translate":[1.,0.,0.]}),
+    );
+    assert!(both.contains("not both"), "{both}");
+    let neither = s.refused("move_part", json!({"translate":[1.,0.,0.]}));
+    assert!(neither.contains("Give id or ids"), "{neither}");
     s.finish();
 }
 

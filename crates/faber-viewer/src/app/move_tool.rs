@@ -4,7 +4,7 @@
 //! OK sets the placement of the part in one edit.
 
 use super::*;
-use faber_core::{AlignMode, Axis, Motion, align_shift, refuse_purchased_copy, tidy};
+use faber_core::{AlignMode, Axis, Motion, align_shift, refuse_purchased_copy, tidy, union_box};
 use faber_model::{Edit, Part, Placement, Scalar};
 use glam::{DMat3, DMat4, DQuat, DVec3, EulerRot, Mat4};
 use std::borrow::Cow;
@@ -32,6 +32,11 @@ const SURFACE_TOLERANCE_MM: f64 = 0.5;
 const PANEL_WIDTH: f32 = 280.;
 /// Space between the command panel and the viewport edge, in pixels.
 const PANEL_MARGIN: f32 = 12.;
+/// Error when a moving part has a parameter expression in its placement.
+const PARAMETER_REFUSED: &str =
+    "A moving part uses parameter values. Move/Copy refuses it. Use Move / rotate instead.";
+/// Error when a relative move of a group has a part with a parameter expression.
+const GROUP_PARAMETER_REFUSED: &str = "A selected part uses parameter values. Relative moves refuse it. Change the placement of each part one at a time.";
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum MoveMode {
@@ -127,6 +132,10 @@ pub(super) struct MoveDraft {
     expected: ProjectData,
     pub(super) part: String,
     base: Placement<f64>,
+    // Other selected parts that move with the primary part, and their placements before the move.
+    others: Vec<(String, Placement<f64>)>,
+    // World box of the moving parts before the move. For a group, the common box.
+    group_bounds: Option<[[f64; 3]; 2]>,
     // World centre of the bounding box before the move.
     centre: DVec3,
     // Arm length in mm.
@@ -204,6 +213,22 @@ fn placement_matrix(placement: &Placement<f64>) -> DMat4 {
     )
 }
 
+/// Placement as stored numbers.
+pub(super) fn numbers(placement: &Placement<f64>) -> Placement<Scalar> {
+    Placement {
+        translation: placement.translation.map(Scalar::Number),
+        rotation: placement.rotation.map(Scalar::Number),
+    }
+}
+
+/// Placement as numbers. None when a field is a parameter expression.
+fn fixed_placement(placement: &Placement<Scalar>) -> Option<Placement<f64>> {
+    Some(Placement {
+        translation: fixed(&placement.translation)?,
+        rotation: fixed(&placement.rotation)?,
+    })
+}
+
 fn fixed(values: &[Scalar; 3]) -> Option<[f64; 3]> {
     let mut out = [0.; 3];
     for (slot, value) in out.iter_mut().zip(values) {
@@ -230,7 +255,7 @@ fn snapped(value: f64, step: f64) -> f64 {
     (value / step).round() * step
 }
 
-fn parse_vector(text: &[String; 3]) -> Option<DVec3> {
+pub(super) fn parse_vector(text: &[String; 3]) -> Option<DVec3> {
     let mut out = [0.; 3];
     for (slot, value) in out.iter_mut().zip(text) {
         let number: f64 = value.trim().parse().ok()?;
@@ -243,7 +268,7 @@ fn parse_vector(text: &[String; 3]) -> Option<DVec3> {
 }
 
 /// Screen position of a world point. None when the point is behind the camera.
-fn screen_point(rect: egui::Rect, matrix: Mat4, point: DVec3) -> Option<egui::Pos2> {
+pub(super) fn screen_point(rect: egui::Rect, matrix: Mat4, point: DVec3) -> Option<egui::Pos2> {
     let clip = matrix * point.as_vec3().extend(1.);
     (clip.w > 0.).then(|| {
         rect.center()
@@ -272,6 +297,7 @@ fn align_translation(
     shift
 }
 
+/// Id of a copy. Each copy gets `_copy`, then a number when the id is taken.
 fn copy_id(parts: &BTreeMap<String, Part<Scalar>>, id: &str) -> String {
     let mut n = 1;
     loop {
@@ -290,12 +316,12 @@ fn copy_id(parts: &BTreeMap<String, Part<Scalar>>, id: &str) -> String {
     }
 }
 
-/// Saves the new placement, or a copy of the part, in one edit.
-fn commit(
+/// Saves the new placement of each part in one batch. With `copy`, adds a copy of each part.
+/// Each copy keeps its source.
+pub(super) fn commit(
     root: &Path,
     expected: &ProjectData,
-    id: &str,
-    placement: Placement<Scalar>,
+    moves: Vec<(String, Placement<Scalar>)>,
     copy: bool,
     strict: bool,
 ) -> Result<(ProjectData, Vec<Body>), String> {
@@ -303,24 +329,57 @@ fn commit(
     if project.data != *expected {
         return Err("Project changed. Open the move tool again.".into());
     }
-    let mut part = expected.parts.get(id).ok_or("Part is missing")?.clone();
-    if copy {
-        refuse_purchased_copy(id, &part)?;
+    let mut operations = Vec::with_capacity(moves.len());
+    for (id, placement) in moves {
+        let mut part = expected.parts.get(&id).ok_or("Part is missing")?.clone();
+        if copy {
+            refuse_purchased_copy(&id, &part)?;
+        }
+        part.placement = placement;
+        let target = if copy {
+            part.name = format!("{} copy", part.name);
+            copy_id(&expected.parts, &id)
+        } else {
+            id
+        };
+        operations.push(Edit::PutPart { id: target, part });
     }
-    part.placement = placement;
-    let target = if copy {
-        part.name = format!("{} copy", part.name);
-        copy_id(&expected.parts, id)
-    } else {
-        id.to_owned()
-    };
-    let operations = vec![Edit::PutPart { id: target, part }];
     if strict {
         project.batch_strict(operations)?;
     } else {
         project.batch(operations)?;
     }
     Ok((project.data, project.bodies))
+}
+
+/// Relative move of a group of parts. The turn is about the common centre of the group.
+/// The values are mm and degrees. A parameter expression is refused.
+pub(super) fn relative_moves(
+    data: &ProjectData,
+    bodies: &[Body],
+    ids: &[String],
+    translate: DVec3,
+    rotation: [f64; 3],
+) -> Result<Vec<(String, Placement<Scalar>)>, String> {
+    let common = bodies
+        .iter()
+        .filter(|body| ids.contains(&body.id))
+        .map(|body| body.bounds)
+        .reduce(union_box)
+        .ok_or("The parts have no solid.")?;
+    let pivot = (DVec3::from(common[0]) + DVec3::from(common[1])) * 0.5;
+    let turn = placement_rotation(rotation);
+    ids.iter()
+        .map(|id| {
+            let part = data
+                .parts
+                .get(id)
+                .ok_or_else(|| format!("Unknown part: {id}"))?;
+            let base = fixed_placement(&part.placement)
+                .ok_or_else(|| GROUP_PARAMETER_REFUSED.to_string())?;
+            Ok((id.clone(), numbers(&compose(base, pivot, translate, turn))))
+        })
+        .collect()
 }
 
 impl MoveDraft {
@@ -394,7 +453,7 @@ impl MoveDraft {
             self.error = Some("Enter numbers in mm.");
             return;
         };
-        let Some(moving) = self.bounds.get(&self.part).copied() else {
+        let Some(moving) = self.group_bounds else {
             self.translate = DVec3::ZERO;
             self.error = Some("The part has no solid.");
             return;
@@ -484,13 +543,12 @@ impl MoveDraft {
     }
 
     fn align_offset(&self) -> Result<DVec3, &'static str> {
-        let moving = self
-            .bounds
-            .get(&self.part)
-            .copied()
-            .ok_or("The part has no solid.")?;
+        let moving = self.group_bounds.ok_or("The part has no solid.")?;
         if self.align.target == self.part {
             return Err("A part cannot align to itself.");
+        }
+        if self.others.iter().any(|(id, _)| *id == self.align.target) {
+            return Err("Choose a target part outside the selection.");
         }
         let target = if self.align.target == ORIGIN {
             [[0.; 3]; 2]
@@ -620,9 +678,21 @@ impl MoveDraft {
         });
     }
 
+    /// The primary part only. The tests read it.
+    #[cfg(test)]
     fn result(&self) -> Placement<f64> {
         let (translate, turn) = self.motion();
         compose(self.base.clone(), self.pivot_point(), translate, turn)
+    }
+
+    /// New placement of every moving part. All parts share one pivot and one motion.
+    fn results(&self) -> Vec<(String, Placement<f64>)> {
+        let (translate, turn) = self.motion();
+        let pivot = self.pivot_point();
+        std::iter::once((self.part.clone(), self.base.clone()))
+            .chain(self.others.iter().cloned())
+            .map(|(id, base)| (id, compose(base, pivot, translate, turn)))
+            .collect()
     }
 }
 
@@ -755,34 +825,48 @@ impl Shell {
         let Some(part) = self.data.parts.get(id) else {
             return;
         };
-        let (Some(translation), Some(rotation)) = (
-            fixed(&part.placement.translation),
-            fixed(&part.placement.rotation),
-        ) else {
-            self.error = Some(
-                "This part uses parameter values. Move/Copy refuses it. Use Move / rotate instead."
-                    .into(),
-            );
+        let Some(base) = fixed_placement(&part.placement) else {
+            self.error = Some(PARAMETER_REFUSED.into());
             return;
         };
-        let (pivot, size) = match self.bodies.iter().find(|body| body.id == id) {
-            Some(body) => {
-                let low = DVec3::from(body.bounds[0]);
-                let high = DVec3::from(body.bounds[1]);
+        // The other selected parts move with the primary part.
+        let mut others = Vec::new();
+        for other in self.others_with(id) {
+            let placed = self
+                .data
+                .parts
+                .get(&other)
+                .and_then(|part| fixed_placement(&part.placement));
+            let Some(placed) = placed else {
+                self.error = Some(PARAMETER_REFUSED.into());
+                return;
+            };
+            others.push((other, placed));
+        }
+        // The pivot and the arm length come from the common box of all moving parts.
+        let group_bounds = self
+            .bodies
+            .iter()
+            .filter(|body| body.id == id || others.iter().any(|(other, _)| *other == body.id))
+            .map(|body| body.bounds)
+            .reduce(union_box);
+        let (pivot, size) = match group_bounds {
+            Some(bounds) => {
+                let low = DVec3::from(bounds[0]);
+                let high = DVec3::from(bounds[1]);
                 (
                     (low + high) * 0.5,
                     ((high - low).max_element() * 0.5).max(5.),
                 )
             }
-            None => (DVec3::from(translation), 5.),
+            None => (DVec3::from(base.translation), 5.),
         };
         self.move_draft = Some(MoveDraft {
             expected: self.data.clone(),
             part: id.to_owned(),
-            base: Placement {
-                translation,
-                rotation,
-            },
+            base,
+            others,
+            group_bounds,
             centre: pivot,
             size,
             mode,
@@ -833,15 +917,14 @@ impl Shell {
         if draft.error.is_some() {
             return;
         }
-        let result = draft.result();
-        let placement = Placement {
-            translation: result.translation.map(Scalar::Number),
-            rotation: result.rotation.map(Scalar::Number),
-        };
+        let moves = draft
+            .results()
+            .into_iter()
+            .map(|(id, result)| (id, numbers(&result)))
+            .collect();
+        let copy = draft.copy;
         let root = self.root.clone();
         let expected = draft.expected.clone();
-        let part = draft.part.clone();
-        let copy = draft.copy;
         let strict = self.strict_edits;
         let ctx = ctx.clone();
         let (tx, rx) = mpsc::channel();
@@ -849,7 +932,7 @@ impl Shell {
         self.saving = true;
         self.error = None;
         std::thread::spawn(move || {
-            let _ = tx.send(commit(&root, &expected, &part, placement, copy, strict));
+            let _ = tx.send(commit(&root, &expected, moves, copy, strict));
             ctx.request_repaint();
         });
     }
@@ -1361,8 +1444,10 @@ impl Shell {
             * Mat4::from_quat(turn.as_quat())
             * Mat4::from_translation(-pivot);
         let mut poses = self.motion.poses.clone();
-        let current = poses.get(&draft.part).copied().unwrap_or(Mat4::IDENTITY);
-        poses.insert(draft.part.clone(), delta * current);
+        for id in std::iter::once(&draft.part).chain(draft.others.iter().map(|(id, _)| id)) {
+            let current = poses.get(id).copied().unwrap_or(Mat4::IDENTITY);
+            poses.insert(id.clone(), delta * current);
+        }
         Cow::Owned(poses)
     }
 }
@@ -2267,5 +2352,660 @@ mod tests {
         assert!(harness.state().move_draft.is_some());
         let (data, _) = faber_wiring::read(dir.path()).unwrap();
         assert_eq!(data.parts.len(), 2);
+    }
+
+    /// Screen box of a body. It spans the eight projected corners of the world box.
+    fn screen_box(harness: &egui_kittest::Harness<'_, Shell>, id: &str) -> egui::Rect {
+        let rect = harness.get_by_label("Model viewport").rect();
+        let matrix = harness.state().camera.matrix(rect.aspect_ratio());
+        let body = harness
+            .state()
+            .bodies
+            .iter()
+            .find(|body| body.id == id)
+            .unwrap();
+        let mut out = egui::Rect::NOTHING;
+        for corner in 0..8 {
+            let point = DVec3::from(std::array::from_fn(|axis| {
+                body.bounds[(corner >> axis) & 1][axis]
+            }));
+            if let Some(pos) = screen_point(rect, matrix, point) {
+                out.extend_with(pos);
+            }
+        }
+        out
+    }
+
+    /// Left drag from one screen point to another. It draws a rectangle on empty space.
+    fn drag_box(harness: &mut egui_kittest::Harness<'_, Shell>, from: egui::Pos2, to: egui::Pos2) {
+        harness.hover_at(from);
+        harness.step();
+        harness.drag_at(from);
+        harness.step();
+        harness.hover_at(to);
+        harness.step();
+        harness.drop_at(to);
+        harness.step();
+    }
+
+    /// Centre of each body's world box, by id.
+    fn centres(harness: &egui_kittest::Harness<'_, Shell>) -> BTreeMap<String, DVec3> {
+        harness
+            .state()
+            .bodies
+            .iter()
+            .map(|body| {
+                let centre = (DVec3::from(body.bounds[0]) + DVec3::from(body.bounds[1])) * 0.5;
+                (body.id.clone(), centre)
+            })
+            .collect()
+    }
+
+    /// Clicks a row of the browser while the modifier keys are held.
+    fn click_row(
+        harness: &mut egui_kittest::Harness<'_, Shell>,
+        name: &str,
+        modifiers: egui::Modifiers,
+    ) {
+        let pos = harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, name)
+            .rect()
+            .center();
+        harness.event(egui::Event::ModifiersChanged(modifiers));
+        harness.step();
+        harness.hover_at(pos);
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers,
+        });
+        harness.step();
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.step();
+    }
+
+    fn select_both(harness: &mut egui_kittest::Harness<'_, Shell>) {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Bin")
+            .click();
+        harness.step();
+        click_row(harness, "Plate", egui::Modifiers::CTRL);
+        harness.step();
+        assert_eq!(harness.state().selection(), ["bin", "plate"]);
+    }
+
+    #[test]
+    fn ctrl_click_adds_and_removes() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        assert_eq!(harness.state().selected.as_deref(), Some("plate"));
+        click_row(&mut harness, "Bin", egui::Modifiers::CTRL);
+        harness.step();
+        assert_eq!(harness.state().selection(), ["plate"]);
+    }
+
+    #[test]
+    fn rectangle_left_to_right_selects_inside_only() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        let bin = screen_box(&harness, "bin");
+        drag_box(
+            &mut harness,
+            bin.min - Vec2::splat(12.),
+            bin.max + Vec2::splat(12.),
+        );
+        assert_eq!(harness.state().selection(), ["bin"]);
+    }
+
+    #[test]
+    fn rectangle_right_to_left_selects_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        let plate = screen_box(&harness, "plate");
+        // The box starts on empty space and ends inside the corner of the plate.
+        drag_box(
+            &mut harness,
+            plate.max + Vec2::splat(20.),
+            plate.min + Vec2::splat(10.),
+        );
+        assert_eq!(harness.state().selection(), ["plate"]);
+    }
+
+    #[test]
+    fn shift_click_selects_a_range_in_the_browser() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Plate")
+            .click();
+        harness.step();
+        click_row(&mut harness, "Bin", egui::Modifiers::SHIFT);
+        harness.step();
+        assert_eq!(harness.state().selection(), ["bin", "plate"]);
+        assert_eq!(harness.state().selected.as_deref(), Some("bin"));
+    }
+
+    #[test]
+    fn escape_clears_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(harness.state().selection().is_empty());
+        assert!(harness.state().selected.is_none());
+    }
+
+    #[test]
+    fn ctrl_a_selects_all_visible_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.step();
+        assert_eq!(harness.state().selection(), ["bin", "plate"]);
+    }
+
+    #[test]
+    fn group_move_keeps_the_relative_positions() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        let before = centres(&harness);
+        let revision = harness.state().data.revision;
+        harness.key_press(egui::Key::M);
+        harness.step();
+        {
+            let draft = harness.state_mut().move_draft.as_mut().unwrap();
+            assert_eq!(draft.others.len(), 1);
+            draft.fields[0] = "10".into();
+            draft.angles[2] = "90".into();
+        }
+        harness.step();
+        harness.get_by_label("OK").click();
+        wait_for_commit(&mut harness);
+        assert_eq!(harness.state().data.revision, revision + 1);
+        let after = centres(&harness);
+        let gap = |c: &BTreeMap<String, DVec3>| (c["bin"] - c["plate"]).length();
+        assert!((gap(&before) - gap(&after)).abs() < 1e-6);
+        assert!((after["bin"] - before["bin"]).length() > 1.);
+        assert!((after["plate"] - before["plate"]).length() > 1.);
+    }
+
+    #[test]
+    fn group_move_is_one_undo_step() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        let original = harness.state().data.clone();
+        select_both(&mut harness);
+        harness.key_press(egui::Key::M);
+        harness.step();
+        harness.state_mut().move_draft.as_mut().unwrap().fields[0] = "10".into();
+        harness.step();
+        harness.get_by_label("OK").click();
+        wait_for_commit(&mut harness);
+        assert_ne!(harness.state().data, original);
+        harness.get_by_label("Undo").click();
+        wait_for_commit(&mut harness);
+        assert_eq!(harness.state().data.parts, original.parts);
+    }
+
+    #[test]
+    fn group_copy_adds_one_copy_per_part() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        harness.key_press(egui::Key::M);
+        harness.step();
+        {
+            let draft = harness.state_mut().move_draft.as_mut().unwrap();
+            draft.copy = true;
+            draft.fields[0] = "20".into();
+        }
+        harness.step();
+        harness.get_by_label("OK").click();
+        wait_for_commit(&mut harness);
+        let (data, _) = faber_wiring::read(dir.path()).unwrap();
+        assert_eq!(data.parts.len(), 4);
+        assert!((saved_placement(dir.path(), "bin_copy").translation[0] - 20.).abs() < 1e-9);
+        assert!((saved_placement(dir.path(), "plate_copy").translation[0] - 20.).abs() < 1e-9);
+        assert!((saved_placement(dir.path(), "plate").translation[2] - 200.).abs() < 1e-9);
+    }
+
+    #[test]
+    fn group_copy_with_a_purchased_part_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        bin_project(dir.path());
+        let mut project = faber_wiring::open(dir.path(), false, None).unwrap();
+        let hash = "f940c8dadc7ad6fe0337a3802cafe12cc716e64c1c519f432a01dea892f6c25e";
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/fastener-check/assets")
+            .join(hash);
+        project
+            .import_with_record(
+                "screw".into(),
+                "Screw".into(),
+                &source,
+                true,
+                Some(faber_model::Purchased {
+                    source: "FreeCAD-library".into(),
+                    licence: "CC BY 3.0".into(),
+                    designation: "M3 x 10".into(),
+                    mass_g: None,
+                }),
+            )
+            .unwrap();
+        drop(project);
+        let mut harness = open(dir.path());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Bin")
+            .click();
+        harness.step();
+        click_row(&mut harness, "Screw", egui::Modifiers::CTRL);
+        harness.step();
+        harness.key_press(egui::Key::M);
+        harness.step();
+        harness.state_mut().move_draft.as_mut().unwrap().copy = true;
+        harness.step();
+        harness.get_by_label("OK").click();
+        wait_for_commit_error(&mut harness);
+        assert_eq!(
+            harness.state().error.as_deref(),
+            Some("Part screw is a purchased part. A copy is not permitted.")
+        );
+        let (data, _) = faber_wiring::read(dir.path()).unwrap();
+        assert_eq!(data.parts.len(), 2);
+    }
+
+    #[test]
+    fn floating_window_press_starts_no_rectangle() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Plate")
+            .click();
+        harness.step();
+        harness.state_mut().start_placement("bin");
+        for _ in 0..3 {
+            harness.step();
+        }
+        let view = harness.get_by_label("Model viewport").rect();
+        let button = harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Apply placement")
+            .rect()
+            .center();
+        // The window reaches into the viewport at its right edge. The press lands on the window.
+        let press = egui::pos2(view.left() + 40., button.y);
+        assert!(view.contains(press));
+        // The drag would cover every part if it drew a rectangle.
+        drag_with(
+            &mut harness,
+            press,
+            view.left_top() + Vec2::splat(5.),
+            egui::PointerButton::Primary,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(harness.state().selection(), ["plate"]);
+    }
+
+    #[test]
+    fn hidden_part_leaves_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        harness.state_mut().hidden.insert("plate".into());
+        harness.step();
+        assert_eq!(harness.state().selection(), ["bin"]);
+        assert_eq!(harness.state().selected.as_deref(), Some("bin"));
+    }
+
+    #[test]
+    fn removed_primary_part_promotes_an_extra_part() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        harness.state_mut().data.parts.remove("plate");
+        harness.step();
+        assert_eq!(harness.state().selection(), ["bin"]);
+        assert_eq!(harness.state().selected.as_deref(), Some("bin"));
+    }
+
+    #[test]
+    fn group_delete_with_a_joint_part_is_refused_as_a_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut project = faber_wiring::open(dir.path(), false, None).unwrap();
+        let study = serde_json::from_value(serde_json::json!({
+            "joints": {"hinge": {"kind": "revolute", "parts": ["plate"],
+                "origin": [0, 0, 200], "axis": [0, 0, 1]}},
+            "gears": {},
+            "linkages": {}
+        }))
+        .unwrap();
+        project
+            .batch(vec![faber_model::Edit::SetMotion { study }])
+            .unwrap();
+        drop(project);
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        open_row_menu(&mut harness, "Bin");
+        harness.get_by_label("Delete parts").click();
+        wait_for_commit_error(&mut harness);
+        let error = harness.state().error.clone().unwrap_or_default();
+        assert!(error.contains("Unknown motion part: plate"), "{error}");
+        let (data, _) = faber_wiring::read(dir.path()).unwrap();
+        assert_eq!(data.parts.len(), 2);
+    }
+
+    #[test]
+    fn drag_under_four_pixels_is_a_click() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Plate")
+            .click();
+        harness.step();
+        let view = harness.get_by_label("Model viewport").rect();
+        let corner = view.left_top() + Vec2::splat(40.);
+        assert!(harness.state().pick_body(view, corner).is_none());
+        // A rectangle over the corner would select both parts. A click clears the selection.
+        drag_with(
+            &mut harness,
+            corner,
+            corner + Vec2::new(2., 1.),
+            egui::PointerButton::Primary,
+            egui::Modifiers::NONE,
+        );
+        assert!(harness.state().selection().is_empty());
+    }
+
+    #[test]
+    fn press_on_a_part_starts_no_rectangle() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Plate")
+            .click();
+        harness.step();
+        let view = harness.get_by_label("Model viewport").rect();
+        let matrix = harness.state().camera.matrix(view.aspect_ratio());
+        let on_bin = screen_point(view, matrix, DVec3::new(0., 0., 60.)).unwrap();
+        assert_eq!(
+            harness.state().pick_body(view, on_bin).as_deref(),
+            Some("bin")
+        );
+        drag_with(
+            &mut harness,
+            on_bin,
+            view.left_top() + Vec2::splat(5.),
+            egui::PointerButton::Primary,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(harness.state().selection(), ["plate"]);
+    }
+
+    /// Opens the menu of a browser row with a secondary click.
+    fn open_row_menu(harness: &mut egui_kittest::Harness<'_, Shell>, name: &str) {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, name)
+            .click_secondary();
+        for _ in 0..3 {
+            harness.step();
+        }
+    }
+
+    /// Drags with one button while modifier keys are held. The pointer moves in three steps.
+    fn drag_with(
+        harness: &mut egui_kittest::Harness<'_, Shell>,
+        from: egui::Pos2,
+        to: egui::Pos2,
+        button: egui::PointerButton,
+        modifiers: egui::Modifiers,
+    ) {
+        harness.event(egui::Event::ModifiersChanged(modifiers));
+        harness.step();
+        harness.hover_at(from);
+        harness.step();
+        harness.event(egui::Event::PointerButton {
+            pos: from,
+            button,
+            pressed: true,
+            modifiers,
+        });
+        harness.step();
+        for step in 1..=3 {
+            harness.hover_at(from + (to - from) * (step as f32 / 3.));
+            harness.step();
+        }
+        harness.event(egui::Event::PointerButton {
+            pos: to,
+            button,
+            pressed: false,
+            modifiers,
+        });
+        harness.step();
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.step();
+    }
+
+    /// Start and end of a 60 px horizontal drag from the viewport centre.
+    fn centre_drag(harness: &egui_kittest::Harness<'_, Shell>) -> (egui::Pos2, egui::Pos2) {
+        let centre = harness.get_by_label("Model viewport").rect().center();
+        (centre, centre + Vec2::new(60., 0.))
+    }
+
+    #[test]
+    fn middle_drag_pans() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        let (yaw, target) = (harness.state().camera.yaw, harness.state().camera.target);
+        let (from, to) = centre_drag(&harness);
+        drag_with(
+            &mut harness,
+            from,
+            to,
+            egui::PointerButton::Middle,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(harness.state().camera.yaw, yaw);
+        assert_ne!(harness.state().camera.target, target);
+    }
+
+    #[test]
+    fn shift_middle_drag_orbits() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        let (yaw, target) = (harness.state().camera.yaw, harness.state().camera.target);
+        let (from, to) = centre_drag(&harness);
+        drag_with(
+            &mut harness,
+            from,
+            to,
+            egui::PointerButton::Middle,
+            egui::Modifiers::SHIFT,
+        );
+        assert_ne!(harness.state().camera.yaw, yaw);
+        assert_eq!(harness.state().camera.target, target);
+    }
+
+    #[test]
+    fn alt_left_drag_orbits() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        let (yaw, target) = (harness.state().camera.yaw, harness.state().camera.target);
+        let (from, to) = centre_drag(&harness);
+        drag_with(
+            &mut harness,
+            from,
+            to,
+            egui::PointerButton::Primary,
+            egui::Modifiers::ALT,
+        );
+        assert_ne!(harness.state().camera.yaw, yaw);
+        assert_eq!(harness.state().camera.target, target);
+        assert!(harness.state().selection().is_empty());
+    }
+
+    /// Adds a third part, a block at x = 150, to the project on disk.
+    fn cap_project(dir: &Path) {
+        plate_project(dir);
+        let mut project = faber_wiring::open(dir, false, None).unwrap();
+        let geometry: Geometry<Scalar> = serde_json::from_value(serde_json::json!({
+            "op": "history",
+            "features": [{"id": "cap", "geometry": {"op": "box", "size": [20, 20, 20]}}],
+            "output": "cap"
+        }))
+        .unwrap();
+        let cap = Part {
+            name: "Cap".into(),
+            geometry,
+            placement: Placement {
+                translation: [Scalar::Number(150.), Scalar::Number(0.), Scalar::Number(0.)],
+                rotation: Default::default(),
+            },
+            colour: [100, 200, 100],
+            group: String::new(),
+            note: String::new(),
+        };
+        project.put_part("cap".into(), cap).unwrap();
+    }
+
+    #[test]
+    fn hide_acts_on_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        cap_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        open_row_menu(&mut harness, "Bin");
+        harness.get_by_label("Hide parts").click();
+        harness.step();
+        let hidden: Vec<&str> = harness.state().hidden.iter().map(String::as_str).collect();
+        assert_eq!(hidden, ["bin", "plate"]);
+    }
+
+    #[test]
+    fn isolate_acts_on_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        cap_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        open_row_menu(&mut harness, "Bin");
+        harness.get_by_label("Isolate parts").click();
+        harness.step();
+        let hidden: Vec<&str> = harness.state().hidden.iter().map(String::as_str).collect();
+        assert_eq!(hidden, ["cap"]);
+    }
+
+    #[test]
+    fn delete_removes_the_selection_in_one_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        cap_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        let revision = harness.state().data.revision;
+        open_row_menu(&mut harness, "Bin");
+        harness.get_by_label("Delete parts").click();
+        wait_for_commit(&mut harness);
+        assert_eq!(harness.state().data.revision, revision + 1);
+        let ids: Vec<&String> = harness.state().data.parts.keys().collect();
+        assert_eq!(ids, ["cap"]);
+    }
+
+    #[test]
+    fn delete_of_a_selected_part_in_a_section_is_refused_as_for_one_part() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut project = faber_wiring::open(dir.path(), false, None).unwrap();
+        project
+            .batch(vec![faber_model::Edit::SetSection {
+                id: "cut".into(),
+                section: serde_json::from_value(serde_json::json!({
+                    "plane": {"kind": "face", "part": "bin",
+                        "face": {"normal": [0, 0, -1], "expect": 1, "tolerance": 0.000001}}
+                }))
+                .unwrap(),
+            }])
+            .unwrap();
+        drop(project);
+        let refusal = "Section cut uses part bin. Remove the section first.";
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        open_row_menu(&mut harness, "Bin");
+        harness.get_by_label("Delete parts").click();
+        wait_for_commit_error(&mut harness);
+        // A batch of several parts names the failing operation before the same text.
+        let error = harness.state().error.clone().unwrap_or_default();
+        assert!(error.ends_with(refusal), "{error}");
+        // One part refuses with the same text.
+        harness.state_mut().select_only(Some("bin".into()));
+        harness.step();
+        open_row_menu(&mut harness, "Bin");
+        harness.get_by_label("Delete part").click();
+        wait_for_commit_error(&mut harness);
+        assert_eq!(harness.state().error.as_deref(), Some(refusal));
+        let (data, _) = faber_wiring::read(dir.path()).unwrap();
+        assert_eq!(data.parts.len(), 2);
+    }
+
+    #[test]
+    fn group_exact_placement_moves_the_parts_relatively() {
+        let dir = tempfile::tempdir().unwrap();
+        plate_project(dir.path());
+        let mut harness = open(dir.path());
+        select_both(&mut harness);
+        let before = centres(&harness);
+        let revision = harness.state().data.revision;
+        harness.get_by_label("Exact placement").click();
+        harness.step();
+        {
+            let draft = harness.state_mut().placement_draft.as_mut().unwrap();
+            assert_eq!(draft.others, ["bin"]);
+            draft.translation[0] = "10".into();
+            draft.rotation[2] = "90".into();
+        }
+        harness.step();
+        harness.get_by_label("Apply placement").click();
+        wait_for_commit(&mut harness);
+        assert_eq!(harness.state().data.revision, revision + 1);
+        let after = centres(&harness);
+        let gap = |c: &BTreeMap<String, DVec3>| (c["bin"] - c["plate"]).length();
+        assert!((gap(&before) - gap(&after)).abs() < 1e-6);
+        assert!((after["bin"] - before["bin"]).length() > 1.);
+        assert!((after["plate"] - before["plate"]).length() > 1.);
+    }
+
+    /// Waits for a save that ends with an error. The draft stays open.
+    fn wait_for_commit_error(harness: &mut egui_kittest::Harness<'_, Shell>) {
+        harness.step();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while harness.state().pending.is_some() {
+            harness.step();
+            assert!(Instant::now() < deadline, "Move did not finish");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }

@@ -26,7 +26,7 @@ async fn main() {
         Some("migrate") if args.len() == 2 => migrate(Path::new(&args[1])),
         Some("build") if args.len() == 2 => build(Path::new(&args[1])),
         Some("export") if args.len() >= 3 => export(&args),
-        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | export PROJECT DIRECTORY [--format stl|step] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
+        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | export PROJECT DIRECTORY [--format stl|step] [--tolerance MM] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -57,10 +57,17 @@ fn build(root: &Path) -> Result<(), String> {
 fn export(args: &[String]) -> Result<(), String> {
     let mut format = "stl";
     let mut force = false;
+    let mut tolerance = faber_wiring::EXPORT_TOLERANCE_MM;
     let mut options = args[3..].iter();
     while let Some(option) = options.next() {
         match option.as_str() {
             "--force" => force = true,
+            "--tolerance" => {
+                let value = options.next().ok_or("--tolerance requires a value in mm")?;
+                tolerance = value
+                    .parse::<f64>()
+                    .map_err(|_| "--tolerance requires a number in mm")?;
+            }
             "--format" => {
                 format = options.next().ok_or("--format requires stl or step")?;
                 if !matches!(format, "stl" | "step") {
@@ -71,8 +78,19 @@ fn export(args: &[String]) -> Result<(), String> {
         }
     }
     let (data, bodies) = faber_wiring::read(Path::new(&args[1]))?;
-    let files =
-        faber_wiring::export_checked(&bodies, &data.contacts, Path::new(&args[2]), format, force)?;
-    println!("{}", serde_json::json!({"files":files}));
+    let files = faber_wiring::export_checked_with(
+        &bodies,
+        &data.contacts,
+        Path::new(&args[2]),
+        format,
+        force,
+        tolerance,
+    )?;
+    let mut reply =
+        serde_json::json!({"files":files.iter().map(|file| file.to_json()).collect::<Vec<_>>()});
+    if format == "stl" {
+        reply["tolerance_mm"] = serde_json::json!(tolerance);
+    }
+    println!("{reply}");
     Ok(())
 }

@@ -483,7 +483,7 @@ Set `of_face` on an edge selector to a face selector. The result is every edge t
 
 ### Topology filters
 
-Set `kind` to `edges` or `faces` to return one list. Set `edge` or `face` to keep only the items that pass a selector. Set `limit` to cap each list. A filtered reply adds `total`, the count before the limit. The `expect` value of a filter is not checked.
+Set `kind` to `edges` or `faces` to return one list. Set `edge` or `face` to keep only the items that pass a selector. Each list holds at most 50 items. Set `limit` to change the cap. There is no offset; to read more items, raise `limit`. The reply always has `total_edges` and `total_faces`, the counts before the cap. A list that `kind` leaves out has a null total. The `expect` value of a filter is not checked.
 
 ```json
 {"id":"base","kind":"faces","face":{"normal":[0,0,1],"tolerance":0.000001,"expect":1}}
@@ -612,7 +612,7 @@ These are perspective views from the selected direction. Front looks from negati
 
 The section keeps the material on the side opposite to `normal`. Set `reverse` to `true` to keep the material on the side that `normal` points to. A view along the plane shows the cut face edge-on. To see the cut face, use a view along `normal`. For `normal: [1,0,0]`, use the `right` view.
 
-`export` writes one STL or STEP file per part into `directory`. Set `format` to `stl` or `step`. Faber refuses an export when the check finds a violation. Set `force` to `true` to export anyway. `import_part` keeps an owned STEP solid in the project and makes a new part. Use the purchased part record for catalogue hardware. Slicer settings are separate.
+`export` writes one STL or STEP file per part into `directory`. Set `format` to `stl` or `step`. Faber refuses an export when the check finds a violation. Set `force` to `true` to export anyway. For STL, set `tolerance_mm` from 0.001 to 1.0 mm. The default is 0.01 mm. Each entry of `files` is an object with `path` and, for STL, `triangles`. The reply holds `tolerance_mm` for STL. STEP has no triangle count. The viewer and the library still write STL at 0.001 mm. `import_part` keeps an owned STEP solid in the project and makes a new part. Use the purchased part record for catalogue hardware. Slicer settings are separate.
 
 ### Feature details
 

@@ -2,6 +2,7 @@ mod assembly;
 mod feature_tools;
 mod motion_relations;
 mod move_tool;
+mod selection;
 #[cfg(test)]
 mod suppress_tests;
 use crate::mark;
@@ -66,6 +67,13 @@ struct PlacementDraft {
     part: String,
     translation: [String; 3],
     rotation: [String; 3],
+    // Other selected parts. When not empty, the values are relative moves of the group.
+    others: Vec<String>,
+}
+
+/// Three fields with zero.
+fn zero_fields() -> [String; 3] {
+    std::array::from_fn(|_| "0".to_owned())
 }
 
 fn is_archive_path(path: &std::path::Path) -> bool {
@@ -156,6 +164,10 @@ pub struct Shell {
     overhang: crate::overhang::State,
     pub plane: Section,
     pub selected: Option<String>,
+    // Other selected parts. The primary part is `selected`.
+    extra_selected: BTreeSet<String>,
+    // Press point of a rectangle selection on empty space.
+    box_drag: Option<egui::Pos2>,
     pub section_selected: Option<String>,
     section_pending: Option<mpsc::Receiver<(String, Result<Section, String>)>>,
     pub hidden: BTreeSet<String>,
@@ -269,6 +281,8 @@ impl Shell {
                 reverse: false,
             }),
             selected: None,
+            extra_selected: BTreeSet::new(),
+            box_drag: None,
             section_selected: None,
             section_pending: None,
             hidden: BTreeSet::new(),
@@ -474,13 +488,21 @@ impl Shell {
         };
         let mut apply = false;
         let mut cancel = false;
+        let group = !draft.others.is_empty();
         egui::Window::new("Move / rotate part").default_width(380.).show(ctx, |ui| {
-            ui.heading(&draft.part);
-            ui.label("Position uses mm. Rotation uses degrees, X then Y then Z, about the part origin.");
-            ui.label("Values can use project parameters.");
+            if group {
+                ui.heading(format!("{} parts", draft.others.len() + 1));
+                ui.label("Relative move. Each value adds to every selected part, in mm and degrees.");
+                ui.label("The turn is about the common centre of the parts.");
+            } else {
+                ui.heading(&draft.part);
+                ui.label("Position uses mm. Rotation uses degrees, X then Y then Z, about the part origin.");
+                ui.label("Values can use project parameters.");
+            }
             ui.add_enabled_ui(!self.saving, |ui| {
                 egui::Grid::new("placement_fields").show(ui, |ui| {
-                    for (prefix, values) in [("Position", &mut draft.translation), ("Rotation", &mut draft.rotation)] {
+                    let names = if group { ("Move", "Turn") } else { ("Position", "Rotation") };
+                    for (prefix, values) in [(names.0, &mut draft.translation), (names.1, &mut draft.rotation)] {
                         for (axis, value) in ["X", "Y", "Z"].into_iter().zip(values) {
                             let label = ui.label(format!("{prefix} {axis}"));
                             ui.text_edit_singleline(value).labelled_by(label.id);
@@ -496,7 +518,41 @@ impl Shell {
             if self.saving { ui.spinner(); }
             if let Some(error) = &self.error { ui.colored_label(Color32::LIGHT_RED, error); }
         });
-        if apply {
+        if apply && group {
+            let ids: Vec<String> = std::iter::once(draft.part.clone())
+                .chain(draft.others.iter().cloned())
+                .collect();
+            let moves = match (
+                move_tool::parse_vector(&draft.translation),
+                move_tool::parse_vector(&draft.rotation),
+            ) {
+                (Some(translate), Some(turn)) => move_tool::relative_moves(
+                    &draft.expected,
+                    &self.bodies,
+                    &ids,
+                    translate,
+                    turn.to_array(),
+                ),
+                _ => Err("Enter numbers in mm and degrees.".to_owned()),
+            };
+            match moves {
+                Ok(moves) => {
+                    let root = self.root.clone();
+                    let expected = draft.expected.clone();
+                    let strict = self.strict_edits;
+                    let ctx = ctx.clone();
+                    let (tx, rx) = mpsc::channel();
+                    self.pending = Some(rx);
+                    self.saving = true;
+                    self.error = None;
+                    std::thread::spawn(move || {
+                        let _ = tx.send(move_tool::commit(&root, &expected, moves, false, strict));
+                        ctx.request_repaint();
+                    });
+                }
+                Err(error) => self.error = Some(error),
+            }
+        } else if apply {
             let root = self.root.clone();
             let expected = draft.expected.clone();
             let part = draft.part.clone();
@@ -706,6 +762,7 @@ impl Shell {
                                         ui.horizontal(|ui| {
                                             for id in [&finding.a, &finding.b] {
                                                 if ui.button(format!("Select {id}")).clicked() {
+                                                    self.extra_selected.clear();
                                                     self.selected = Some(id.clone());
                                                     self.mesh_dirty = true;
                                                 }
@@ -1396,7 +1453,7 @@ impl Shell {
                         self.modified = faber_wiring::project_fingerprint(&self.root).ok();
                         self.camera = Camera::fit(&bodies);
                         self.dirty = true;
-                        self.selected = None;
+                        self.select_only(None);
                         self.hidden.clear();
                         self.section_on = false;
                         self.section_selected = None;
@@ -1431,13 +1488,7 @@ impl Shell {
                     }
                     self.sync_section(ctx);
                     self.hidden.retain(|id| self.data.parts.contains_key(id));
-                    if self
-                        .selected
-                        .as_ref()
-                        .is_some_and(|id| !self.data.parts.contains_key(id))
-                    {
-                        self.selected = None;
-                    }
+                    self.prune_selection();
                 }
                 Err(e) => self.error = Some(e),
             }
@@ -1602,22 +1653,35 @@ impl Shell {
         if !self.placement_available() {
             return;
         }
+        let others = self.others_with(id);
         if let Some(part) = self.data.parts.get(id) {
             let text = |value: &faber_model::Scalar| match value {
                 faber_model::Scalar::Number(number) => number.to_string(),
                 faber_model::Scalar::Expression(expression) => expression.clone(),
             };
+            // A group takes relative values, so the fields start at zero.
+            let (translation, rotation) = if others.is_empty() {
+                (
+                    part.placement.translation.each_ref().map(text),
+                    part.placement.rotation.each_ref().map(text),
+                )
+            } else {
+                (zero_fields(), zero_fields())
+            };
             self.placement_draft = Some(PlacementDraft {
                 expected: self.data.clone(),
                 part: id.to_owned(),
-                translation: part.placement.translation.each_ref().map(text),
-                rotation: part.placement.rotation.each_ref().map(text),
+                translation,
+                rotation,
+                others,
             });
             self.error = None;
         }
     }
 
     fn body_menu(&mut self, ui: &mut egui::Ui) {
+        // Hide, isolate and delete act on the whole selection.
+        let ids = self.selection();
         if let Some(id) = self.selected.clone() {
             if ui
                 .add_enabled(
@@ -1647,36 +1711,45 @@ impl Shell {
                 ui.close();
             }
             let hidden = self.hidden.contains(&id);
+            let plural = if ids.len() > 1 { "parts" } else { "body" };
             if ui
-                .button(if hidden { "Show body" } else { "Hide body" })
+                .button(format!("{} {plural}", if hidden { "Show" } else { "Hide" }))
                 .clicked()
             {
-                if hidden {
-                    self.hidden.remove(&id);
-                } else {
-                    self.hidden.insert(id.clone());
+                for part in &ids {
+                    if hidden {
+                        self.hidden.remove(part);
+                    } else {
+                        self.hidden.insert(part.clone());
+                    }
                 }
                 self.mesh_dirty = true;
                 ui.close();
             }
-            if ui.button("Isolate body").clicked() {
+            if ui.button(format!("Isolate {plural}")).clicked() {
                 self.hidden = self
                     .bodies
                     .iter()
-                    .filter(|body| body.id != id)
+                    .filter(|body| !ids.contains(&body.id))
                     .map(|body| body.id.clone())
                     .collect();
                 self.mesh_dirty = true;
                 ui.close();
             }
+            let delete = if ids.len() > 1 {
+                "Delete parts"
+            } else {
+                "Delete part"
+            };
             if ui
-                .add_enabled(self.placement_available(), egui::Button::new("Delete part"))
+                .add_enabled(self.placement_available(), egui::Button::new(delete))
                 .clicked()
             {
-                self.save_sections(
-                    ui.ctx(),
-                    vec![faber_model::Edit::RemovePart { id: id.clone() }],
-                );
+                let removals = ids
+                    .iter()
+                    .map(|part| faber_model::Edit::RemovePart { id: part.clone() })
+                    .collect();
+                self.save_sections(ui.ctx(), removals);
                 ui.close();
             }
             ui.separator();
@@ -1746,6 +1819,7 @@ impl Shell {
         ui.add_space(12.);
         ui.label(RichText::new("BODIES").size(11.).color(MUTED));
         ui.add_space(10.);
+        let chosen = self.selection();
         for body in std::sync::Arc::clone(&self.bodies).iter() {
             ui.horizontal(|ui| {
                 let mut visible = !self.hidden.contains(&body.id);
@@ -1761,16 +1835,23 @@ impl Shell {
                     }
                     self.mesh_dirty = true;
                 }
-                let selected = self.selected.as_deref() == Some(&body.id);
+                let selected = chosen.contains(&body.id);
                 let row = ui
                     .add(egui::Button::selectable(selected, &body.name).truncate())
                     .on_hover_text(&body.name);
                 if row.clicked() || row.secondary_clicked() {
-                    self.selected = if selected && row.clicked() {
-                        None
-                    } else {
-                        Some(body.id.clone())
-                    };
+                    let (ctrl, shift) =
+                        ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
+                    if row.clicked() && shift {
+                        self.select_range(&body.id);
+                    } else if row.clicked() && ctrl {
+                        self.toggle_part(&body.id);
+                    } else if row.clicked() && chosen.len() == 1 && selected {
+                        self.select_only(None);
+                    } else if !(row.secondary_clicked() && selected) {
+                        // A right click on a selected part keeps the group for the menu.
+                        self.select_only(Some(body.id.clone()));
+                    }
                     self.select_part_joint();
                     self.mesh_dirty = true;
                 }
@@ -2173,7 +2254,9 @@ impl Shell {
                     .color(MUTED),
             );
             ui.label(
-                RichText::new("Drag to orbit · Scroll to zoom")
+                RichText::new(
+                    "Drag empty space to select. Middle drag to pan.\nShift + middle drag or Alt + left drag to orbit. Scroll to zoom.",
+                )
                     .small()
                     .color(MUTED),
             );
@@ -2290,8 +2373,37 @@ impl Shell {
                     glam::Vec3::ZERO
                 }
             });
-            let anchor = origin + n * (offset - n.dot(origin));
+            let mut anchor = origin + n * (offset - n.dot(origin));
             let matrix = self.camera.matrix(rect.aspect_ratio());
+            // Keep the handle in the view. A close view of a large model puts the
+            // model anchor off the screen. Then use the plane point nearest to it
+            // that the view shows. A drag keeps its own pivot.
+            if self.section_drag.is_none() {
+                let seen = matrix.project_point3(anchor);
+                let at =
+                    rect.center() + Vec2::new(seen.x * rect.width(), -seen.y * rect.height()) * 0.5;
+                let inside = rect.shrink(90f32.min(rect.size().min_elem() * 0.4));
+                let in_depth = (0.0..=1.0).contains(&seen.z);
+                if !in_depth || !inside.contains(at) {
+                    let target = if in_depth {
+                        inside.clamp(at)
+                    } else {
+                        rect.center()
+                    };
+                    let ndc = (target - rect.center()) / (rect.size() * 0.5);
+                    let inverse = matrix.inverse();
+                    let near = inverse.project_point3(glam::Vec3::new(ndc.x, -ndc.y, 0.));
+                    let far = inverse.project_point3(glam::Vec3::new(ndc.x, -ndc.y, 1.));
+                    let ray = far - near;
+                    let along = n.dot(ray);
+                    if along.abs() > 1e-6 {
+                        let t = (offset - n.dot(near)) / along;
+                        if (0.0..=1.0).contains(&t) {
+                            anchor = near + ray * t;
+                        }
+                    }
+                }
+            }
             let screen = |world| {
                 let p = matrix.project_point3(world);
                 rect.center() + Vec2::new(p.x * rect.width(), -p.y * rect.height()) * 0.5
@@ -2471,6 +2583,10 @@ impl Shell {
             )
         });
         let moving = self.move_canvas(ui, rect);
+        let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
+        let busy =
+            moving || alt || self.move_draft.is_some() || handle.as_ref().is_some_and(|h| h.3);
+        let boxed = self.box_select(ui, rect, busy, response.hovered());
         let delta = ui.input(|i| i.pointer.delta());
         let joint_drag = self.drag_joint(
             ui,
@@ -2478,18 +2594,18 @@ impl Shell {
             &response,
             handle.as_ref().is_some_and(|h| h.3) || moving,
         );
-        if response.dragged_by(egui::PointerButton::Primary)
-            && !handle.as_ref().is_some_and(|h| h.3)
-            && !joint_drag
-            && !moving
-        {
+        // Fusion mapping. Left drag on empty space selects. Shift + middle, or Alt + left, orbits.
+        // Middle drag pans. Right drag pans too.
+        let orbit = (response.dragged_by(egui::PointerButton::Middle) && shift)
+            || (response.dragged_by(egui::PointerButton::Primary) && alt);
+        if orbit && !handle.as_ref().is_some_and(|h| h.3) && !joint_drag && !moving && !boxed {
             self.camera.yaw -= delta.x * 0.35;
             self.camera.pitch = (self.camera.pitch + delta.y * 0.35).clamp(-85., 89.);
             self.dirty = true;
         }
-        if response.dragged_by(egui::PointerButton::Secondary)
-            || response.dragged_by(egui::PointerButton::Middle)
-        {
+        let pan = response.dragged_by(egui::PointerButton::Secondary)
+            || (response.dragged_by(egui::PointerButton::Middle) && !shift);
+        if pan {
             let forward = (self.camera.target - self.camera.eye()).normalize();
             let right = forward.cross(glam::Vec3::Z).normalize();
             let up = right.cross(forward);
@@ -2499,9 +2615,23 @@ impl Shell {
         }
         if (response.clicked() || response.secondary_clicked())
             && !moving
+            && !boxed
             && let Some(pos) = response.interact_pointer_pos()
         {
-            self.selected = self.pick_body(rect, pos);
+            let picked = self.pick_body(rect, pos);
+            let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+            // A right click on a selected part keeps the group for the menu.
+            let keep = response.secondary_clicked()
+                && picked
+                    .as_ref()
+                    .is_some_and(|id| self.selection().contains(id));
+            if ctrl {
+                if let Some(id) = picked {
+                    self.toggle_part(&id);
+                }
+            } else if !keep {
+                self.select_only(picked);
+            }
             self.select_part_joint();
             self.mesh_dirty = true;
         }
@@ -2783,6 +2913,7 @@ impl eframe::App for Shell {
             return;
         }
         self.move_keys(&ctx);
+        self.selection_keys(&ctx);
         if !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::F)) {
             self.fit();
         }
@@ -2927,6 +3058,14 @@ impl eframe::App for Shell {
                         .small()
                         .color(MUTED),
                     );
+                    let chosen = self.selection().len();
+                    if chosen > 1 {
+                        ui.label(
+                            RichText::new(format!("   ·   {chosen} parts selected"))
+                                .small()
+                                .color(MUTED),
+                        );
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{:.2} ms submit   ·   mm", self.frame_ms))
@@ -3540,6 +3679,69 @@ mod tests {
     }
     use egui_kittest::kittest::Queryable;
     use faber_model::{Geometry, Part, Placement, Profile};
+
+    #[test]
+    fn section_handle_stays_in_view_when_zoomed_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = faber_wiring::open(dir.path(), true, Some("Handle test".into())).unwrap();
+        let geometry: Geometry<faber_model::Scalar> = serde_json::from_value(serde_json::json!({
+            "op": "history",
+            "features": [{"id": "block", "geometry": {"op": "box", "size": [400, 400, 400]}}],
+            "output": "block"
+        }))
+        .unwrap();
+        let part = Part {
+            name: "Block".into(),
+            geometry,
+            placement: Placement::default(),
+            colour: [130, 170, 180],
+            group: String::new(),
+            note: String::new(),
+        };
+        project.put_part("block".into(), part).unwrap();
+        let (data, bodies) = faber_wiring::read(dir.path()).unwrap();
+        let root = dir.path().to_path_buf();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1440., 1100.))
+            .wgpu_setup(crate::gpu_setup())
+            .build_eframe(move |cc| Shell::new(cc, root, data, bodies, None));
+        for _ in 0..5 {
+            harness.step();
+        }
+        harness.key_press(egui::Key::S);
+        for _ in 0..3 {
+            harness.step();
+        }
+        assert!(harness.state().section_on);
+        // Zoom in on a point off the model. The model centre leaves the view.
+        {
+            let camera = &mut harness.state_mut().camera;
+            camera.target = glam::Vec3::new(900., 0., 0.);
+            camera.distance = 60.;
+        }
+        for _ in 0..3 {
+            harness.step();
+        }
+        let view = harness.get_by_label("Model viewport").rect();
+        let seen = harness
+            .state()
+            .camera
+            .matrix(view.aspect_ratio())
+            .project_point3(glam::Vec3::new(0., 0., 200.));
+        assert!(
+            seen.x.abs() > 1. || seen.y.abs() > 1. || !(0.0..=1.0).contains(&seen.z),
+            "The model centre must be off the view: {seen:?}"
+        );
+        let handle = harness
+            .ctx
+            .read_response(egui::Id::unique("section_offset_handle"))
+            .unwrap()
+            .rect;
+        assert!(
+            view.contains(handle.min) && view.contains(handle.max),
+            "Handle {handle:?} is outside the view {view:?}"
+        );
+    }
 
     #[test]
     fn section_angles_define_a_unit_normal_on_base_and_oblique_planes() {

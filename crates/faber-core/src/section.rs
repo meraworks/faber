@@ -437,6 +437,10 @@ impl crate::Project {
 
     /// Reads the exact cut of each cut part by a saved section.
     pub fn section_info(&self, id: &str) -> Result<SectionReport> {
+        self.cached("section_info", id, || self.section_report(id))
+    }
+
+    fn section_report(&self, id: &str) -> Result<SectionReport> {
         let (origin, normal, section) = self.resolve_section(id)?;
         let (x, y) = frame(normal);
         let mut parts = Vec::new();

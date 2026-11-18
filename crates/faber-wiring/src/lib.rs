@@ -373,7 +373,36 @@ pub fn create(path: &Path, name: String) -> Result<Project> {
     .with_checks(Arc::new(MeshChecks)))
 }
 
+/// Default tessellation tolerance of an STL export by the MCP tool and the CLI, in millimetres.
+pub const EXPORT_TOLERANCE_MM: f64 = 0.01;
+
+/// Tessellation tolerance of the library exports, in millimetres.
+const LIBRARY_TOLERANCE_MM: f64 = 0.001;
+
+/// One written file. Triangles are counted for an STL file only.
+pub struct ExportFile {
+    pub path: String,
+    pub triangles: Option<usize>,
+}
+
+impl ExportFile {
+    /// The file as a reply entry. The triangle count is absent for a STEP file.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self.triangles {
+            Some(triangles) => serde_json::json!({"path":self.path,"triangles":triangles}),
+            None => serde_json::json!({"path":self.path}),
+        }
+    }
+}
+
 pub fn export(bodies: &[Body], path: &Path) -> Result<Vec<String>> {
+    Ok(export_meshes(bodies, path, LIBRARY_TOLERANCE_MM)?
+        .into_iter()
+        .map(|file| file.path)
+        .collect())
+}
+
+fn export_meshes(bodies: &[Body], path: &Path, tolerance: f64) -> Result<Vec<ExportFile>> {
     let mut ids = std::collections::BTreeSet::new();
     for body in bodies {
         if !faber_core::valid_id(&body.id) || !ids.insert(body.id.to_ascii_lowercase()) {
@@ -386,13 +415,16 @@ pub fn export(bodies: &[Body], path: &Path) -> Result<Vec<String>> {
         let print_mesh;
         let mesh = match &body.shape {
             Some(shape) => {
-                print_mesh = OcctKernel.tessellate(shape, 0.001)?;
+                print_mesh = OcctKernel.tessellate(shape, tolerance)?;
                 &print_mesh
             }
             None => &body.mesh,
         };
         MeshExchange.write(mesh, &output)?;
-        files.push(output.to_string_lossy().into_owned());
+        files.push(ExportFile {
+            path: output.to_string_lossy().into_owned(),
+            triangles: Some(mesh.triangles.len()),
+        });
     }
     Ok(files)
 }
@@ -447,8 +479,30 @@ pub fn export_checked(
     format: &str,
     force: bool,
 ) -> Result<Vec<String>> {
+    Ok(
+        export_checked_with(bodies, contacts, path, format, force, LIBRARY_TOLERANCE_MM)?
+            .into_iter()
+            .map(|file| file.path)
+            .collect(),
+    )
+}
+
+/// Writes one file per body after the interference check. The tolerance applies to STL only.
+pub fn export_checked_with(
+    bodies: &[Body],
+    contacts: &std::collections::BTreeMap<String, Contact>,
+    path: &Path,
+    format: &str,
+    force: bool,
+    tolerance: f64,
+) -> Result<Vec<ExportFile>> {
     if !matches!(format, "stl" | "step") {
         return Err("Format must be stl or step".into());
+    }
+    if !(0.001..=1.0).contains(&tolerance) {
+        return Err(format!(
+            "Tolerance {tolerance} mm is outside 0.001 to 1.0 mm."
+        ));
     }
     if !force {
         let report = interference(bodies, 0.1, contacts)?;
@@ -457,8 +511,14 @@ pub fn export_checked(
         }
     }
     match format {
-        "stl" => export(bodies, path),
-        _ => export_exact(bodies, path),
+        "stl" => export_meshes(bodies, path, tolerance),
+        _ => Ok(export_exact(bodies, path)?
+            .into_iter()
+            .map(|path| ExportFile {
+                path,
+                triangles: None,
+            })
+            .collect()),
     }
 }
 

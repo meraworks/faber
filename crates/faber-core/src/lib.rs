@@ -16,6 +16,7 @@ mod pattern;
 mod pipe;
 mod placement;
 mod provenance;
+mod read_cache;
 mod scale;
 mod section;
 mod select;
@@ -29,11 +30,11 @@ pub use generated::regenerate;
 use glam::DVec3;
 pub use placement::{
     AlignMode, Axis, Motion, Pivot, PivotName, PointToPoint, Rotation, RotationAxis, align_shift,
-    refuse_purchased_copy, tidy,
+    move_edits, refuse_purchased_copy, tidy, union_box,
 };
 pub use section::{CutPart, ResolvedSection, SectionReport};
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Mass properties of a placed part in world coordinates.
 pub struct MassReport {
@@ -44,6 +45,20 @@ pub struct MassReport {
     pub mass_g: Option<f64>,
     /// Present only when a density is given.
     pub inertia_kg_mm2: Option<[[f64; 3]; 3]>,
+}
+
+/// Edge and face lists. A list that the kind leaves out is None.
+pub type TopologyLists = (
+    Option<Vec<faber_ports::EdgeInfo>>,
+    Option<Vec<faber_ports::FaceInfo>>,
+);
+
+/// Which lists a topology read returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TopologyKind {
+    Both,
+    Edges,
+    Faces,
 }
 
 pub struct Project {
@@ -60,6 +75,8 @@ pub struct Project {
     /// The error of the last design source build, if it failed.
     source_error: Option<String>,
     locals: BTreeMap<String, body_cache::LocalBody>,
+    /// Results of read calls for the current revision.
+    read_cache: Mutex<read_cache::ReadCache>,
 }
 
 struct Prepared {
@@ -116,6 +133,7 @@ impl Project {
             source: None,
             source_error: None,
             locals,
+            read_cache: Mutex::default(),
         })
     }
 
@@ -137,6 +155,7 @@ impl Project {
             self.bodies = bodies;
             self.histories = histories;
             self.locals = locals;
+            self.clear_reads();
         }
         Ok(())
     }
@@ -284,15 +303,17 @@ impl Project {
         {
             return Err("Density must be above zero".into());
         }
-        let shape = self
-            .bodies
-            .iter()
-            .find(|body| body.id == id)
-            .ok_or_else(|| format!("Unknown part: {id}"))?
-            .shape
-            .as_ref()
-            .ok_or_else(|| format!("Part {id} has no exact shape"))?;
-        let properties = self.kernel.mass_properties(shape)?;
+        let properties = self.cached("mass_properties", id, || {
+            let shape = self
+                .bodies
+                .iter()
+                .find(|body| body.id == id)
+                .ok_or_else(|| format!("Unknown part: {id}"))?
+                .shape
+                .as_ref()
+                .ok_or_else(|| format!("Part {id} has no exact shape"))?;
+            self.kernel.mass_properties(shape)
+        })?;
         // One gram per cubic centimetre is 1e-3 g/mm3 or 1e-6 kg/mm3.
         let mass = density_g_cm3.map(|density| {
             let kg_per_mm3 = density * 1e-6;
@@ -312,6 +333,37 @@ impl Project {
         })
     }
 
+    /// Runs a read once for each revision. The result is kept in the read cache.
+    fn cached<T: Clone + Send + 'static>(
+        &self,
+        tool: &'static str,
+        key: &str,
+        make: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let revision = self.data.revision;
+        let kept = self
+            .read_cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get::<T>(revision, tool, key);
+        if let Some(value) = kept {
+            return Ok(value);
+        }
+        let value = make()?;
+        self.read_cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .put(revision, tool, key.to_string(), value.clone());
+        Ok(value)
+    }
+
+    fn clear_reads(&mut self) {
+        self.read_cache
+            .get_mut()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+    }
+
     pub fn feature_topology(
         &self,
         id: &str,
@@ -319,6 +371,42 @@ impl Project {
     ) -> Result<(Vec<faber_ports::EdgeInfo>, Vec<faber_ports::FaceInfo>)> {
         let shape = self.feature_shape(id, feature)?;
         Ok((self.kernel.edges(shape)?, self.kernel.faces(shape)?))
+    }
+
+    /// Edges and faces of a part or one feature. Each selector keeps only the items that pass it.
+    /// A selector count is not checked here. A list that `kind` leaves out is None.
+    pub fn selected_topology_kind(
+        &self,
+        id: &str,
+        feature: Option<&str>,
+        kind: TopologyKind,
+        edge: Option<&faber_model::EdgeSelector>,
+        face: Option<&faber_model::FaceSelector>,
+    ) -> Result<TopologyLists> {
+        let key = format!("{id:?}/{feature:?}");
+        let shape = self.topology_shape(id, feature)?;
+        let kernel = self.kernel.as_ref();
+        let edges = match kind {
+            TopologyKind::Faces => None,
+            _ => {
+                let list = self.cached("edges", &key, || kernel.edges(shape))?;
+                Some(match edge {
+                    Some(selector) => select::filter_edges(kernel, shape, list, selector)?,
+                    None => list,
+                })
+            }
+        };
+        let faces = match kind {
+            TopologyKind::Edges => None,
+            _ => {
+                let list = self.cached("faces", &key, || kernel.faces(shape))?;
+                Some(match face {
+                    Some(selector) => select::filter_faces(shape, list, selector)?,
+                    None => list,
+                })
+            }
+        };
+        Ok((edges, faces))
     }
 
     /// Edges and faces of a part or one feature. Each selector keeps only the items that pass it.
@@ -330,29 +418,25 @@ impl Project {
         edge: Option<&faber_model::EdgeSelector>,
         face: Option<&faber_model::FaceSelector>,
     ) -> Result<(Vec<faber_ports::EdgeInfo>, Vec<faber_ports::FaceInfo>)> {
-        let shape = match feature {
-            Some(feature) => self.feature_shape(id, feature)?,
+        let (edges, faces) =
+            self.selected_topology_kind(id, feature, TopologyKind::Both, edge, face)?;
+        Ok((edges.unwrap_or_default(), faces.unwrap_or_default()))
+    }
+
+    fn topology_shape(&self, id: &str, feature: Option<&str>) -> Result<&Shape> {
+        match feature {
+            Some(feature) => self.feature_shape(id, feature),
             None => {
                 let body = self
                     .bodies
                     .iter()
                     .find(|body| body.id == id)
                     .ok_or_else(|| format!("Unknown part: {id}"))?;
-                body.shape.as_ref().ok_or("Part has no exact shape")?
+                body.shape
+                    .as_ref()
+                    .ok_or_else(|| "Part has no exact shape".to_string())
             }
-        };
-        let kernel = self.kernel.as_ref();
-        let edges = kernel.edges(shape)?;
-        let faces = kernel.faces(shape)?;
-        let edges = match edge {
-            Some(selector) => select::filter_edges(kernel, shape, edges, selector)?,
-            None => edges,
-        };
-        let faces = match face {
-            Some(selector) => select::filter_faces(shape, faces, selector)?,
-            None => faces,
-        };
-        Ok((edges, faces))
+        }
     }
 
     fn feature_shape(&self, id: &str, feature: &str) -> Result<&faber_ports::Shape> {
@@ -451,6 +535,7 @@ impl Project {
         self.bodies = bodies;
         self.histories = histories;
         self.locals = locals;
+        self.clear_reads();
         Ok(())
     }
 

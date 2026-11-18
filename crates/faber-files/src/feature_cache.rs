@@ -6,6 +6,8 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 /// Format marker. Another marker means another format, and the entry is ignored.
@@ -22,6 +24,10 @@ pub struct FileFeatureCache {
     limit: u64,
     /// Entries that this instance wrote. Pruning never removes them.
     written: Mutex<HashSet<PathBuf>>,
+    /// Bytes of all entries. The folder is listed at open and when pruning.
+    total: Mutex<u64>,
+    #[cfg(test)]
+    listings: AtomicUsize,
 }
 
 impl FileFeatureCache {
@@ -30,23 +36,33 @@ impl FileFeatureCache {
     }
 
     pub fn with_limit(root: &Path, limit: u64) -> Self {
-        Self {
+        let cache = Self {
             root: root.into(),
             limit,
             written: Mutex::new(HashSet::new()),
+            total: Mutex::new(0),
+            #[cfg(test)]
+            listings: AtomicUsize::new(0),
+        };
+        let total: u64 = cache.scan().iter().map(|file| file.1).sum();
+        if let Ok(mut current) = cache.total.lock() {
+            *current = total;
         }
+        cache
     }
 
     fn folder(&self) -> PathBuf {
         self.root.join(".faber").join("cache")
     }
 
-    /// Removes the oldest entries, not written by this instance, until the total is at most 80 % of the limit.
-    fn prune(&self) {
+    /// Lists the entries with their modified time and size.
+    fn scan(&self) -> Vec<(SystemTime, u64, PathBuf)> {
+        #[cfg(test)]
+        self.listings.fetch_add(1, Ordering::Relaxed);
         let Ok(entries) = std::fs::read_dir(self.folder()) else {
-            return;
+            return Vec::new();
         };
-        let mut files: Vec<(SystemTime, u64, PathBuf)> = entries
+        entries
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
@@ -56,9 +72,15 @@ impl FileFeatureCache {
                 let metadata = entry.metadata().ok()?;
                 Some((metadata.modified().ok()?, metadata.len(), path))
             })
-            .collect();
+            .collect()
+    }
+
+    /// Removes the oldest entries, not written by this instance, until the total is at most 80 % of the limit.
+    fn prune(&self) {
+        let mut files = self.scan();
         let mut total: u64 = files.iter().map(|file| file.1).sum();
         if total <= self.limit {
+            self.set_total(total);
             return;
         }
         let target = (u128::from(self.limit) * u128::from(KEEP_PERCENT) / 100) as u64;
@@ -78,6 +100,19 @@ impl FileFeatureCache {
                 total -= size;
             }
         }
+        self.set_total(total);
+    }
+
+    fn set_total(&self, value: u64) {
+        if let Ok(mut total) = self.total.lock() {
+            *total = value;
+        }
+    }
+
+    /// Number of folder listings made by this instance. Used by the tests.
+    #[cfg(test)]
+    fn folder_listings(&self) -> usize {
+        self.listings.load(Ordering::Relaxed)
     }
 
     fn path(&self, key: &str) -> Option<PathBuf> {
@@ -119,12 +154,21 @@ impl FeatureCache for FileFeatureCache {
             .map_err(|e| e.to_string())?;
         file.write_all(bytes).map_err(|e| e.to_string())?;
         file.as_file().sync_all().map_err(|e| e.to_string())?;
+        let replaced = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         file.persist(&path)
             .map_err(|e| format!("Cannot save cache entry: {e}"))?;
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let total = {
+            let mut total = self.total.lock().unwrap_or_else(|p| p.into_inner());
+            *total = total.saturating_sub(replaced).saturating_add(size);
+            *total
+        };
         if let Ok(mut written) = self.written.lock() {
             written.insert(path);
         }
-        self.prune();
+        if total > self.limit {
+            self.prune();
+        }
         Ok(())
     }
 }
@@ -166,6 +210,17 @@ mod tests {
         for key in ["k3", "k4", "k5"] {
             assert!(entry_path(dir.path(), key).exists(), "{key} was deleted");
         }
+    }
+
+    #[test]
+    fn put_does_not_list_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = FileFeatureCache::new(dir.path());
+        for index in 0..100 {
+            cache.put(&format!("k{index}"), &[0u8; PAYLOAD]).unwrap();
+        }
+        // Opening lists the folder once. Writes keep a running total and do not list it.
+        assert!(cache.folder_listings() <= 1, "{}", cache.folder_listings());
     }
 
     #[test]

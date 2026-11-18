@@ -310,3 +310,46 @@ fn align_batch_places_unchanged_parts_without_tessellating() {
         assert!(body.bounds[0][2].abs() < 1e-9, "{id}: {:?}", body.bounds);
     }
 }
+
+fn centre_of(project: &faber_core::Project, id: &str) -> [f64; 3] {
+    let body = project.bodies.iter().find(|body| body.id == id).unwrap();
+    [0, 1, 2].map(|axis| (body.bounds[0][axis] + body.bounds[1][axis]) / 2.)
+}
+
+#[test]
+fn group_move_is_one_revision_and_keeps_the_spacing() {
+    use faber_core::Motion;
+    let dir = tempfile::tempdir().unwrap();
+    let mut project = faber_wiring::open(dir.path(), true, Some("Group".into())).unwrap();
+    project
+        .batch(edits(json!([
+            {"tool":"put_part","id":"a","part":block([10.,10.,10.])},
+            {"tool":"put_part","id":"b","part":block([10.,10.,10.])}
+        ])))
+        .unwrap();
+    project
+        .move_parts(&["b".into()], Motion::Translate([40., 0., 0.]))
+        .unwrap();
+    let revision = project.data.revision;
+    // Centres: a at (5, 5, 5) and b at (45, 5, 5). The common centre is (25, 5, 5).
+    let rotation = serde_json::from_value(json!({"axis": "z", "angle_deg": 90})).unwrap();
+    project
+        .move_parts(&["a".into(), "b".into()], Motion::Rotate(rotation))
+        .unwrap();
+    assert_eq!(project.data.revision, revision + 1);
+    let a = centre_of(&project, "a");
+    let b = centre_of(&project, "b");
+    assert!(
+        (a[0] - 25.).abs() < 1e-6 && (a[1] + 15.).abs() < 1e-6,
+        "{a:?}"
+    );
+    assert!(
+        (b[0] - 25.).abs() < 1e-6 && (b[1] - 25.).abs() < 1e-6,
+        "{b:?}"
+    );
+    let gap = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+    assert!((gap - 40.).abs() < 1e-6, "{gap}");
+    project.undo().unwrap();
+    assert_eq!(centre_of(&project, "a"), [5., 5., 5.]);
+    assert_eq!(centre_of(&project, "b"), [45., 5., 5.]);
+}

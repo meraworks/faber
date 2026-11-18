@@ -174,8 +174,10 @@ pub struct ImportArchive {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MovePart {
-    /// Part id.
-    id: String,
+    /// Part id. Give id or ids.
+    id: Option<String>,
+    /// Part ids. The parts move together by one motion. Give id or ids.
+    ids: Option<Vec<String>>,
     /// Move by [dx, dy, dz] in mm, relative to the current position.
     translate: Option<[f64; 3]>,
     /// Turn the part about an axis.
@@ -813,6 +815,8 @@ pub struct Export {
     force: bool,
     #[serde(default = "default_format")]
     format: String,
+    /// STL tessellation tolerance in mm, from 0.001 to 1.0. Default 0.01.
+    tolerance_mm: Option<f64>,
 }
 
 fn default_format() -> String {
@@ -1263,50 +1267,39 @@ impl Faber {
     }
 
     #[tool(
-        description = "Read exact edges and faces of a placed part in world coordinates. Set feature to a history feature id to query its cached shape in part coordinates before part placement. Use this source query to set feature selectors. Indices are valid only for the returned revision and shape. Set kind to edges or faces to return one list. Set edge or face to a selector that filters the lists; its expect is not checked. Set limit to cap each list. Filtered replies add total counts before the limit."
+        description = "Read exact edges and faces of a placed part in world coordinates. Each list has at most 50 items. Set limit to change the cap and read more items; there is no offset. Totals count the items before the cap. Set feature to read a feature shape in part coordinates. Indices are valid only for the returned revision. Set kind to edges or faces to return one list; the other total is null. Set edge or face to filter the lists."
     )]
     fn topology(&self, Parameters(Checked(args)): Parameters<Checked<Topology>>) -> CallToolResult {
         self.with(|p| {
-            let kind = args.kind.as_deref();
-            if !matches!(kind, None | Some("edges") | Some("faces")) {
-                return Err("Kind must be edges or faces".into());
-            }
-            if kind == Some("faces") && args.edge.is_some() {
+            let kind = match args.kind.as_deref() {
+                None => faber_core::TopologyKind::Both,
+                Some("edges") => faber_core::TopologyKind::Edges,
+                Some("faces") => faber_core::TopologyKind::Faces,
+                Some(_) => return Err("Kind must be edges or faces".into()),
+            };
+            if kind == faber_core::TopologyKind::Faces && args.edge.is_some() {
                 return Err("Kind faces takes a face selector, not an edge selector".into());
             }
-            if kind == Some("edges") && args.face.is_some() {
+            if kind == faber_core::TopologyKind::Edges && args.face.is_some() {
                 return Err("Kind edges takes an edge selector, not a face selector".into());
             }
             if args.limit == Some(0) {
                 return Err("Limit must be at least 1".into());
             }
-            let filtered = kind.is_some()
-                || args.edge.is_some()
-                || args.face.is_some()
-                || args.limit.is_some();
-            let (mut edges, mut faces) = p.selected_topology(
+            let limit = args.limit.unwrap_or(50);
+            let (edges, faces) = p.selected_topology_kind(
                 &args.id,
                 args.feature.as_deref(),
+                kind,
                 args.edge.as_ref(),
                 args.face.as_ref(),
             )?;
-            let total = json!({"edges":edges.len(),"faces":faces.len()});
-            if kind == Some("faces") {
-                edges.clear();
-            }
-            if kind == Some("edges") {
-                faces.clear();
-            }
-            if let Some(limit) = args.limit {
-                edges.truncate(limit);
-                faces.truncate(limit);
-            }
+            let total_edges = edges.as_ref().map(Vec::len);
+            let total_faces = faces.as_ref().map(Vec::len);
+            let edges: Vec<_> = edges.unwrap_or_default().into_iter().take(limit).collect();
+            let faces: Vec<_> = faces.unwrap_or_default().into_iter().take(limit).collect();
             let coordinates = if args.feature.is_some() { "part" } else { "world" };
-            let mut reply = json!({"schema":1,"id":args.id,"feature":args.feature,"coordinates":coordinates,"revision":p.data.revision,"edges":edges,"faces":faces});
-            if filtered {
-                reply["total"] = total;
-            }
-            Ok(reply)
+            Ok(json!({"schema":1,"id":args.id,"feature":args.feature,"coordinates":coordinates,"revision":p.data.revision,"edges":edges,"faces":faces,"total_edges":total_edges,"total_faces":total_faces}))
         })
     }
 
@@ -1583,7 +1576,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Move or turn a part. Give exactly one mode: translate, rotate, point_to_point or position. Set copy_as to keep the source part. In rotate, origin is the world origin. Reply lists the changed parts with placement and bounds. The change is one undo step."
+        description = "Move or turn a part. Give exactly one mode: translate, rotate, point_to_point or position. Give id, or ids to move several parts together. Set copy_as to keep the source part. In rotate, origin is the world origin. Reply lists the changed parts with placement and bounds. The change is one undo step."
     )]
     fn move_part(
         &self,
@@ -1598,7 +1591,13 @@ impl Faber {
                 args.position,
             )?;
             let before = Before::of(p);
-            p.move_part(&args.id, motion, args.copy_as.as_deref())?;
+            match (&args.id, &args.ids) {
+                (Some(id), None) => p.move_part(id, motion, args.copy_as.as_deref())?,
+                (None, Some(ids)) if args.copy_as.is_none() => p.move_parts(ids, motion)?,
+                (None, Some(_)) => return Err("copy_as takes one id, not ids.".into()),
+                (Some(_), Some(_)) => return Err("Give id or ids, not both.".into()),
+                (None, None) => return Err("Give id or ids.".into()),
+            }
             Ok(placed_reply(&before, p, args.verbose))
         })
     }
@@ -1753,18 +1752,26 @@ impl Faber {
     }
 
     #[tool(
-        description = "Write one file per part. Choose stl for meshes or step for exact solids. Units are millimetres. A refused export lists each finding."
+        description = "Write one file per part. Choose stl for meshes or step for exact solids. Units are millimetres. Set tolerance_mm for stl, from 0.001 to 1.0. The viewer and library write stl at 0.001. A refused export lists each finding."
     )]
     fn export(&self, Parameters(Checked(args)): Parameters<Checked<Export>>) -> CallToolResult {
         self.with(|p| {
-            let files = faber_wiring::export_checked(
+            let tolerance = args
+                .tolerance_mm
+                .unwrap_or(faber_wiring::EXPORT_TOLERANCE_MM);
+            let files = faber_wiring::export_checked_with(
                 &p.bodies,
                 &p.data.contacts,
                 Path::new(&args.directory),
                 &args.format,
                 args.force,
+                tolerance,
             )?;
-            Ok(json!({"schema":1,"files":files}))
+            let mut reply = json!({"schema":1,"files":files.iter().map(|file| file.to_json()).collect::<Vec<_>>()});
+            if args.format == "stl" {
+                reply["tolerance_mm"] = json!(tolerance);
+            }
+            Ok(reply)
         })
     }
 

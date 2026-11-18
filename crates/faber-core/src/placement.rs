@@ -302,6 +302,52 @@ pub fn move_edit(
     placed_edit(data, id, part, placement, copy_as)
 }
 
+/// The edits that move several parts by one motion. `bounds` reads the world box of a part id.
+/// The motion uses the common box of all parts, so the parts keep their spacing.
+pub fn move_edits(
+    data: &ProjectData,
+    ids: &[String],
+    motion: &Motion,
+    mut bounds: impl FnMut(&str) -> Result<[[f64; 3]; 2]>,
+) -> Result<Vec<Edit>> {
+    if ids.is_empty() {
+        return Err("Give at least one part.".into());
+    }
+    for (index, id) in ids.iter().enumerate() {
+        if ids[..index].contains(id) {
+            return Err(format!("Part listed twice: {id}"));
+        }
+    }
+    let boxes = ids
+        .iter()
+        .map(|id| bounds(id))
+        .collect::<Result<Vec<_>>>()?;
+    let common = boxes
+        .into_iter()
+        .reduce(union_box)
+        .ok_or_else(|| "Give at least one part.".to_string())?;
+    ids.iter()
+        .map(|id| {
+            let part = part_of(data, id)?;
+            let placement = motion.apply(&plain(id, &part.placement)?, common)?;
+            placed_edit(data, id, part, placement, None)
+        })
+        .collect()
+}
+
+/// Smallest box that holds both boxes.
+pub fn union_box(a: [[f64; 3]; 2], b: [[f64; 3]; 2]) -> [[f64; 3]; 2] {
+    std::array::from_fn(|corner| {
+        std::array::from_fn(|axis| {
+            if corner == 0 {
+                a[0][axis].min(b[0][axis])
+            } else {
+                a[1][axis].max(b[1][axis])
+            }
+        })
+    })
+}
+
 /// The edit that aligns a part with a target part or with "origin". Only the listed axes move.
 /// `bounds` reads the world box of a part id.
 pub fn align_edit(
@@ -413,6 +459,13 @@ impl Project {
         let bounds = self.world_bounds(id)?;
         let edit = move_edit(&self.data, id, &motion, bounds, copy_as)?;
         self.batch(vec![edit])
+    }
+
+    /// Moves several parts by one motion. The change is one undo step.
+    pub fn move_parts(&mut self, ids: &[String], motion: Motion) -> Result<()> {
+        self.sync()?;
+        let edits = move_edits(&self.data, ids, &motion, |part| self.world_bounds(part))?;
+        self.batch(edits)
     }
 
     /// Aligns a part with a target part or with "origin". Only the listed axes move.
