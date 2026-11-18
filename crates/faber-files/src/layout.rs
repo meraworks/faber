@@ -64,6 +64,8 @@ struct Manifest {
 #[serde(deny_unknown_fields)]
 struct PartFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    component: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     material: Option<String>,
     schema: u32,
     name: String,
@@ -85,6 +87,8 @@ struct PlacementFile {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AssemblyFile {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    components: BTreeMap<String, faber_model::Component>,
     schema: u32,
     #[serde(default)]
     motion: MotionStudy,
@@ -142,6 +146,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         parts.insert(
             id,
             Part {
+                component: file.component,
                 material: file.material,
                 name: file.name,
                 geometry: file.geometry,
@@ -155,10 +160,11 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
     if let Some(id) = placements.keys().next() {
         return Err(format!("placement.json places an unknown part: {id}"));
     }
-    let (motion, contacts) = match read_optional::<AssemblyFile>(root, "assembly.json")? {
+    let (motion, contacts, components) = match read_optional::<AssemblyFile>(root, "assembly.json")?
+    {
         Some(file) => {
             check_schema(&file.schema, "assembly.json")?;
-            (file.motion, file.contacts)
+            (file.motion, file.contacts, file.components)
         }
         None => Default::default(),
     };
@@ -185,6 +191,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
     }
     check_drawings(&drawings)?;
     Ok(ProjectData {
+        components,
         drawings,
         printer,
         materials: manifest.materials,
@@ -229,6 +236,7 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
     }
     for (id, part) in &data.parts {
         let file = PartFile {
+            component: part.component.clone(),
             material: part.material.clone(),
             schema: FILE_SCHEMA,
             name: part.name.clone(),
@@ -248,10 +256,14 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
             .collect(),
     };
     put(root, "placement.json", &placement, &mut changed)?;
-    if data.motion == MotionStudy::default() && data.contacts.is_empty() {
+    if data.motion == MotionStudy::default()
+        && data.contacts.is_empty()
+        && data.components.is_empty()
+    {
         remove(root.join("assembly.json"), &mut changed)?;
     } else {
         let file = AssemblyFile {
+            components: data.components.clone(),
             schema: FILE_SCHEMA,
             motion: data.motion.clone(),
             contacts: data.contacts.clone(),

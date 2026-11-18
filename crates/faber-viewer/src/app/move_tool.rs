@@ -1547,6 +1547,7 @@ mod tests {
             parts.insert(
                 id.to_owned(),
                 Part {
+                    component: None,
                     material: None,
                     name: id.into(),
                     geometry: Geometry::Imported {
@@ -1575,6 +1576,7 @@ mod tests {
             floor: 4.,
         };
         let part = Part {
+            component: None,
             material: None,
             name: "Bin".into(),
             geometry: Geometry::History {
@@ -1803,6 +1805,7 @@ mod tests {
         }))
         .unwrap();
         let plate = Part {
+            component: None,
             material: None,
             name: "Plate".into(),
             geometry,
@@ -2896,6 +2899,7 @@ mod tests {
         }))
         .unwrap();
         let cap = Part {
+            component: None,
             material: None,
             name: "Cap".into(),
             geometry,

@@ -125,6 +125,12 @@ fn history<'a>(
 
 fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
     match edit {
+        Edit::SetComponent { id, component } => {
+            crate::components::set_component(data, id, component)?
+        }
+        Edit::RemoveComponent { id, keep_parts } => {
+            crate::components::remove_component(data, &id, keep_parts)?
+        }
         Edit::SetPrinter { printer } => {
             printer.validate()?;
             data.printer = Some(printer);

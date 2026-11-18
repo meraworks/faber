@@ -4,6 +4,7 @@ mod common;
 
 fn base_part() -> Part {
     Part {
+        component: None,
         material: None,
         name: "Base".into(),
         geometry: Geometry::Extrude {

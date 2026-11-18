@@ -3,6 +3,7 @@
 mod assets;
 mod batch;
 mod body_cache;
+mod components;
 mod construction;
 mod dress_variant;
 mod feature_cache;
@@ -17,6 +18,7 @@ pub mod overhang;
 mod pattern;
 pub mod pick_selector;
 mod pipe;
+pub use components::{component_parts, local_placement, reparent, world_placement};
 mod placement;
 pub mod plastic;
 mod plastic_walls;
@@ -219,6 +221,7 @@ impl Project {
             .ok_or("Asset storage is not available")?
             .put(source)?;
         let part = Part {
+            component: None,
             material: None,
             name,
             group: String::new(),
@@ -749,6 +752,7 @@ pub fn valid_id(id: &str) -> bool {
 }
 
 fn validate_data(data: &ProjectData) -> Result<()> {
+    components::frames(data)?;
     if data.schema != 1 {
         return Err(format!("Unsupported schema: {}", data.schema));
     }

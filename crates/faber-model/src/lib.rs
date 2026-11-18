@@ -17,7 +17,20 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "The batch stores each edit in a box."
+)]
 pub enum Edit {
+    SetComponent {
+        id: String,
+        component: Component,
+    },
+    RemoveComponent {
+        id: String,
+        #[serde(default)]
+        keep_parts: bool,
+    },
     SetDrawing {
         id: String,
         drawing: drawing::Drawing,
@@ -1116,10 +1129,25 @@ pub struct Placement<N = f64> {
     pub rotation: [N; 3],
 }
 
+/// A placed node in the assembly tree.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Component {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(default)]
+    pub placement: Placement,
+    #[serde(default)]
+    pub note: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 #[schemars(bound = "N: JsonSchema + Default")]
 pub struct Part<N = f64> {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
     pub name: String,
@@ -1136,6 +1164,8 @@ pub struct Part<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectData {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub components: BTreeMap<String, Component>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub drawings: BTreeMap<String, drawing::Drawing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1322,6 +1352,7 @@ impl<N: Clone> Part<N> {
         mut map: impl FnMut(&N) -> Result<T, String>,
     ) -> Result<Part<T>, String> {
         Ok(Part {
+            component: self.component.clone(),
             material: self.material.clone(),
             name: self.name.clone(),
             geometry: self.geometry.map_numbers(&mut map)?,

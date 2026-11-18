@@ -570,3 +570,28 @@ fn interrupted_save_recovers_part_recipe_and_placement_from_different_files() {
     let opened = FileStore::open(dir.path()).unwrap().load().unwrap();
     assert_eq!(opened, next);
 }
+
+#[test]
+fn components_and_part_membership_use_the_assembly_and_part_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut data = fixture();
+    let old = serde_json::to_value(&data).unwrap();
+    layout::write(dir.path(), &data).unwrap();
+    let before = layout_bytes(dir.path());
+    let component = serde_json::from_value(serde_json::json!({"name":"Support"})).unwrap();
+    data.components.insert("frame".into(), component);
+    data.parts.get_mut("lid").unwrap().component = Some("frame".into());
+    layout::write(dir.path(), &data).unwrap();
+    assert_eq!(layout::read(dir.path()).unwrap(), data);
+    for (file, key) in [
+        ("assembly.json", "components"),
+        ("parts/lid.json", "component"),
+    ] {
+        let json: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.path().join(file)).unwrap()).unwrap();
+        assert!(json.get(key).is_some());
+    }
+    let restored = serde_json::from_value(old).unwrap();
+    layout::write(dir.path(), &restored).unwrap();
+    assert_eq!(before, layout_bytes(dir.path()));
+}

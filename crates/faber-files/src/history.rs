@@ -98,8 +98,12 @@ fn continues(disk: &ProjectData, old: &ProjectData, new: &ProjectData) -> bool {
         && placements_ok
         && drawings_ok
         && (disk.printer == old.printer || disk.printer == new.printer)
-        && ((disk.motion == old.motion && disk.contacts == old.contacts)
-            || (disk.motion == new.motion && disk.contacts == new.contacts))
+        && ((disk.motion == old.motion
+            && disk.contacts == old.contacts
+            && disk.components == old.components)
+            || (disk.motion == new.motion
+                && disk.contacts == new.contacts
+                && disk.components == new.components))
         && ((disk.sections == old.sections && disk.studies == old.studies)
             || (disk.sections == new.sections && disk.studies == new.studies))
 }

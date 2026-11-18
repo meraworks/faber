@@ -144,6 +144,7 @@ mod tests {
             .collect();
         let mut project = faber_wiring::open(dir, true, Some("Feature test".into())).unwrap();
         let part = Part {
+            component: None,
             material: None,
             name: "Body".into(),
             geometry: Geometry::History {

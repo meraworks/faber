@@ -491,6 +491,7 @@ impl SketchDraft {
             }
         };
         Ok(Part {
+            component: None,
             material: None,
             name: self.name.clone(),
             colour: [151, 172, 176],
