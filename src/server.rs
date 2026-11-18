@@ -98,6 +98,52 @@ struct OpenProject {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct SetPrinter {
+    profile: Option<String>,
+    #[schemars(with = "Option<serde_json::Value>")]
+    printer: Option<faber_model::Printer>,
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrintCheck {
+    parts: Option<Vec<String>>,
+    up: Option<[f64; 3]>,
+    /// Chord error on exact solids in mm. Imported meshes keep their source triangles.
+    #[serde(alias = "resolution")]
+    resolution_mm: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OrientForPrint {
+    part: String,
+    #[serde(default)]
+    apply: bool,
+    strength_direction: Option<[f64; 3]>,
+    #[serde(alias = "resolution")]
+    resolution_mm: Option<f64>,
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FitCheck {
+    a: String,
+    b: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ToleranceStack {
+    /// Each item has nominal, plus, minus in mm and sign 1 or -1.
+    #[schemars(with = "Vec<serde_json::Value>")]
+    items: Vec<faber_wiring::print::StackItem>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Open {
     path: String,
     #[serde(default)]
@@ -902,7 +948,7 @@ pub struct Export {
     force: bool,
     #[serde(default = "default_format")]
     format: String,
-    /// STL tessellation tolerance in mm, from 0.001 to 1.0. Default 0.01.
+    /// Mesh tessellation tolerance in mm, from 0.001 to 1.0. Default 0.01.
     tolerance_mm: Option<f64>,
 }
 
@@ -1107,6 +1153,122 @@ impl Faber {
                 "point_a":measured.point_a,"point_b":measured.point_b}),
             )
         })
+    }
+
+    #[tool(description = "List the printer profiles and their dimensions in mm.")]
+    fn printers(&self) -> CallToolResult {
+        result(Ok(Value::Array(
+            faber_std::printers::profiles()
+                .map(|(id, p)| {
+                    let mut value = json!(p);
+                    value["id"] = json!(id);
+                    value
+                })
+                .collect(),
+        )))
+    }
+
+    #[tool(
+        description = "Set the project printer. Give one profile id or a printer object. Read schema with kind printer."
+    )]
+    fn set_printer(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<SetPrinter>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, a.expected_revision)?;
+            let printer = match (a.profile, a.printer) {
+                (Some(id), None) => faber_std::printers::profile(&id)
+                    .ok_or_else(|| format!("Unknown printer profile: {id}"))?,
+                (None, Some(printer)) => printer,
+                _ => return Err("Give either a profile id or a printer object.".into()),
+            };
+            p.set_printer(printer.clone())?;
+            Ok(json!({"printer":printer,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(
+        description = "Check selected placed parts against the printer. Omit parts to check the assembly. The support volume is an estimate in cubic mm."
+    )]
+    fn print_check(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<PrintCheck>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            let mut report = json!(faber_wiring::print::print_check_at(
+                p,
+                a.parts.as_deref(),
+                a.up.unwrap_or([0., 0., 1.]),
+                a.resolution_mm,
+            )?);
+            if let Some(mm) = a.resolution_mm {
+                report["resolution"]["requested_mm"] = json!(mm);
+            }
+            Ok(report)
+        })
+    }
+
+    #[tool(
+        description = "Rank up to five print orientations. Set apply to place the best fit on the bed in one undo step."
+    )]
+    fn orient_for_print(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<OrientForPrint>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, a.expected_revision)?;
+            let candidates = faber_wiring::print::orientations_at(p, &a.part, a.strength_direction, a.resolution_mm)?;
+            let best = candidates.iter().find(|candidate| candidate.fits);
+            let fits_any = best.is_some();
+            let bounds = p.bodies.iter().find(|body| body.id == a.part)
+                .ok_or("Part has no solid.")?.bounds;
+            let size_mm = std::array::from_fn::<_, 3, _>(|i| bounds[1][i] - bounds[0][i]);
+            if a.apply && let Some(candidate) = best {
+                faber_wiring::print::apply_orientation(p, &a.part, candidate)?;
+            }
+            Ok(json!({
+                "part": a.part,
+                "revision": p.data.revision,
+                "size_mm": size_mm,
+                "bed_mm": faber_wiring::print::printer(&p.data).bed_mm,
+                "fits_any": fits_any,
+                "applied": a.apply && fits_any,
+                "candidates": candidates,
+                "method": "Rank planar regions and axis directions by support, contact, height and overhang.",
+                "resolution": {"direction_merge_deg": 1, "candidate_limit": 40, "requested_mm":a.resolution_mm},
+                "limits": ["Support volume is a geometric estimate. Check the result in the slicer."]
+            }))
+        })
+    }
+
+    #[tool(
+        description = "Find coaxial holes and shafts in two placed parts. The gap is diametral in mm."
+    )]
+    fn fit_check(&self, Parameters(Checked(a)): Parameters<Checked<FitCheck>>) -> CallToolResult {
+        self.with(|p| {
+            Ok(json!({"a":a.a,"b":a.b,"fits":faber_wiring::print::fit_check(p,&a.a,&a.b)?,
+                "method":"Compare the axes and diameters of placed cylindrical faces.",
+                "resolution":{"axis_mm":0.01,"angle_deg":0.1},
+                "limits":["Fit classes use nominal diameters. Shrinkage and surface roughness affect printed parts."]}))
+        })
+    }
+
+    #[tool(
+        description = "Calculate the nominal, worst-case and root-sum-square tolerance stack in mm."
+    )]
+    fn tolerance_stack(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<ToleranceStack>>,
+    ) -> CallToolResult {
+        result(faber_wiring::print::checked_stack(&a.items).map(|s| {
+            json!({
+                "nominal":s.nominal,"worst":s.worst,"rss":s.rss,
+                "method":"Signed worst-case bounds and root-sum-square allowances.",
+                "resolution":"Uses the entered dimensions and allowances in mm.",
+                "limits":["The root-sum-square estimate assumes independent variation."]
+            })
+        }))
     }
 
     #[tool(
@@ -2011,23 +2173,23 @@ impl Faber {
     }
 
     #[tool(
-        description = "Write one file per part. Choose stl for meshes or step for exact solids. Units are millimetres. Set tolerance_mm for stl, from 0.001 to 1.0. The viewer and library write stl at 0.001. A refused export lists each finding."
+        description = "Write stl meshes, step solids or one 3mf assembly. Units are mm. Mesh tolerance is 0.001 to 1.0 mm. A refused export lists each finding."
     )]
     fn export(&self, Parameters(Checked(args)): Parameters<Checked<Export>>) -> CallToolResult {
         self.with(|p| {
             let tolerance = args
                 .tolerance_mm
                 .unwrap_or(faber_wiring::EXPORT_TOLERANCE_MM);
-            let files = faber_wiring::export_checked_with(
+            let files = faber_wiring::export_project_with(
+                &p.data,
                 &p.bodies,
-                &p.data.contacts,
                 Path::new(&args.directory),
                 &args.format,
                 args.force,
                 tolerance,
             )?;
             let mut reply = json!({"schema":1,"files":files.iter().map(|file| file.to_json()).collect::<Vec<_>>()});
-            if args.format == "stl" {
+            if matches!(args.format.as_str(),"stl"|"3mf") {
                 reply["tolerance_mm"] = json!(tolerance);
             }
             Ok(reply)

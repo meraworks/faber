@@ -5,6 +5,7 @@ pub mod study;
 pub mod study_image;
 pub use faber_core::press_pull::{self, preview_feature};
 pub mod parameters;
+pub mod print;
 
 pub mod motion_check;
 
@@ -563,7 +564,7 @@ pub fn export_checked(
     )
 }
 
-/// Writes one file per body after the interference check. The tolerance applies to STL only.
+/// Write placed meshes or exact solids after the interference check.
 pub fn export_checked_with(
     bodies: &[Body],
     contacts: &std::collections::BTreeMap<String, Contact>,
@@ -572,8 +573,50 @@ pub fn export_checked_with(
     force: bool,
     tolerance: f64,
 ) -> Result<Vec<ExportFile>> {
-    if !matches!(format, "stl" | "step") {
-        return Err("Format must be stl or step".into());
+    check_export(bodies, contacts, format, force, tolerance)?;
+    match format {
+        "3mf" => print::export_assembly(bodies, &Default::default(), path, tolerance),
+        "stl" => export_meshes(bodies, path, tolerance),
+        _ => Ok(export_exact(bodies, path)?
+            .into_iter()
+            .map(|path| ExportFile {
+                path,
+                triangles: None,
+            })
+            .collect()),
+    }
+}
+
+/// Keep the local mesh and the build placement of each part in an assembly file.
+pub fn export_project_with(
+    data: &ProjectData,
+    bodies: &[Body],
+    path: &Path,
+    format: &str,
+    force: bool,
+    tolerance: f64,
+) -> Result<Vec<ExportFile>> {
+    if format != "3mf" {
+        return export_checked_with(bodies, &data.contacts, path, format, force, tolerance);
+    }
+    check_export(bodies, &data.contacts, format, force, tolerance)?;
+    print::export_assembly(
+        bodies,
+        &faber_core::resolved_placements(data)?,
+        path,
+        tolerance,
+    )
+}
+
+fn check_export(
+    bodies: &[Body],
+    contacts: &std::collections::BTreeMap<String, Contact>,
+    format: &str,
+    force: bool,
+    tolerance: f64,
+) -> Result<()> {
+    if !matches!(format, "stl" | "step" | "3mf") {
+        return Err("Format must be stl, step or 3mf".into());
     }
     if !(0.001..=1.0).contains(&tolerance) {
         return Err(format!(
@@ -586,16 +629,7 @@ pub fn export_checked_with(
             return Err(refusal(&report.violations, contacts));
         }
     }
-    match format {
-        "stl" => export_meshes(bodies, path, tolerance),
-        _ => Ok(export_exact(bodies, path)?
-            .into_iter()
-            .map(|path| ExportFile {
-                path,
-                triangles: None,
-            })
-            .collect()),
-    }
+    Ok(())
 }
 
 pub fn export_exact(bodies: &[Body], path: &Path) -> Result<Vec<String>> {

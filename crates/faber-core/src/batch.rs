@@ -343,6 +343,19 @@ impl Project {
     pub fn batch(&mut self, operations: Vec<Edit>) -> Result<()> {
         self.batch_operations(to_operations(operations), false)
     }
+    /// Apply a result calculated from one project revision.
+    pub fn batch_at_revision(&mut self, revision: u64, edits: Vec<Edit>) -> Result<()> {
+        self.sync()?;
+        if self.data.revision != revision {
+            return Err(format!(
+                "The project revision changed from {revision} to {}.",
+                self.data.revision
+            ));
+        }
+        let operations = to_operations(edits);
+        self.refuse_generated_operations(&operations)?;
+        self.apply_history(self.candidate(operations)?, None, false)
+    }
     pub fn batch_strict(&mut self, operations: Vec<Edit>) -> Result<()> {
         self.batch_operations(to_operations(operations), true)
     }

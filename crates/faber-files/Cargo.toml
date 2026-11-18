@@ -16,5 +16,4 @@ earcutr.workspace = true
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
 
-[dev-dependencies]
 quick-xml = "0.41"

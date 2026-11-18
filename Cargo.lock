@@ -1430,6 +1430,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "faber-print"
+version = "0.1.0"
+dependencies = [
+ "faber-core",
+ "faber-geometry",
+ "faber-model",
+ "faber-ports",
+ "glam",
+ "rayon",
+ "serde",
+]
+
+[[package]]
 name = "faber-render"
 version = "0.1.0"
 dependencies = [
@@ -1468,6 +1481,9 @@ dependencies = [
 [[package]]
 name = "faber-std"
 version = "0.1.0"
+dependencies = [
+ "faber-model",
+]
 
 [[package]]
 name = "faber-viewer"
@@ -1480,6 +1496,7 @@ dependencies = [
  "faber-expr",
  "faber-model",
  "faber-ports",
+ "faber-print",
  "faber-render",
  "faber-scene",
  "faber-std",
@@ -1502,6 +1519,7 @@ dependencies = [
  "faber-kernel-occt",
  "faber-model",
  "faber-ports",
+ "faber-print",
  "faber-render",
  "faber-scene",
  "faber-sim",

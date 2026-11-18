@@ -276,6 +276,20 @@ pub fn plain(id: &str, placement: &Placement<Scalar>) -> Result<Placement> {
     })
 }
 
+/// Resolve the placement of each part for an assembly export.
+pub fn resolved(data: &ProjectData) -> Result<std::collections::BTreeMap<String, Placement>> {
+    let values = faber_expr::resolve(&data.params)?;
+    data.parts
+        .iter()
+        .map(|(id, part)| {
+            let placement = part
+                .placement
+                .map_numbers(&mut |s| crate::number(s, &values))?;
+            Ok((id.clone(), placement))
+        })
+        .collect()
+}
+
 /// Refuses a copy of a purchased part. A purchased part is a real model, so a copy must not change it.
 pub fn refuse_purchased_copy(id: &str, part: &Part<Scalar>) -> Result<()> {
     match &part.geometry {

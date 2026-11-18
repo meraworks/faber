@@ -24,6 +24,13 @@ gives displacement, von Mises stress, fixture reactions and a safety factor.
 The cell size controls the approximation at curved surfaces. Contact between
 parts, large displacement and plastic deformation are outside this study.
 
+## Print preparation
+
+Faber checks bed fit, wall thickness, support and build orientation against a
+printer profile. The viewer shows thin faces and can apply a chosen placement.
+MCP also checks cylindrical fits and tolerance stacks. A 3MF assembly keeps
+part colours and placements for the slicer. The support volume is an estimate.
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under

@@ -126,9 +126,11 @@ pub(crate) fn place_timed(
     }
     let mut lo = DVec3::splat(f64::INFINITY);
     let mut hi = DVec3::splat(f64::NEG_INFINITY);
-    for p in &mesh.vertices {
-        lo = lo.min(DVec3::from(*p));
-        hi = hi.max(DVec3::from(*p));
+    if exact_bounds.is_none() {
+        for p in mesh.triangle_vertices() {
+            lo = lo.min(DVec3::from(p));
+            hi = hi.max(DVec3::from(p));
+        }
     }
     timing.mesh = elapsed(started);
     Ok(PlacedParts {

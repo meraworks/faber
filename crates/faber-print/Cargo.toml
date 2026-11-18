@@ -1,0 +1,14 @@
+[package]
+name = "faber-print"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+faber-core = { path = "../faber-core" }
+faber-geometry = { path = "../faber-geometry" }
+faber-model = { path = "../faber-model" }
+faber-ports = { path = "../faber-ports" }
+glam.workspace = true
+rayon = "1.12"
+serde.workspace = true

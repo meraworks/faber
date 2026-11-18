@@ -1453,6 +1453,183 @@ fn ids_of(list: &Value) -> Vec<&str> {
 }
 
 #[test]
+fn set_printer_by_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::start(dir.path());
+    let profiles = session.ok("printers", json!({}));
+    assert_eq!(profiles.as_array().unwrap().len(), 5);
+    let schema = session.ok("schema", json!({"kind":"printer"}));
+    assert!(schema["definition"].to_string().contains("bed_mm"));
+    let saved = session.ok("set_printer", json!({"profile":"bambu-a1"}));
+    assert_eq!(saved["printer"]["bed_mm"], json!([256., 256., 256.]));
+    let file: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("manufacture.json")).unwrap())
+            .unwrap();
+    assert_eq!(file["printer"], saved["printer"]);
+    assert!(
+        session
+            .refused("set_printer", json!({"profile":"wrong"}))
+            .contains("Unknown printer")
+    );
+    session.finish();
+}
+
+#[test]
+fn orientation_changes_only_the_placement() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    import_screw(&mut s, dir.path());
+    s.ok(
+        "move_part",
+        json!({"id":"screw","translate":[15., 23., 80.]}),
+    );
+    let recipe = dir.path().join("parts/screw.json");
+    let before = std::fs::read(&recipe).unwrap();
+    let placed = dir.path().join("placement.json");
+    let place_before = std::fs::read(&placed).unwrap();
+    let revision = faber_files::read(dir.path()).unwrap().revision;
+    let reply = s.ok(
+        "orient_for_print",
+        json!({"part":"screw","apply":true,"expected_revision":revision}),
+    );
+    assert_eq!(reply["fits_any"], true);
+    assert_eq!(reply["revision"], revision + 1);
+    assert_eq!(before, std::fs::read(recipe).unwrap());
+    assert_ne!(place_before, std::fs::read(placed).unwrap());
+    let part = s.ok("part_info", json!({"id":"screw"}));
+    assert!(
+        part["bounds_mm"][0][2].as_f64().unwrap().abs() < 1e-6,
+        "{part}"
+    );
+    s.finish();
+}
+
+#[test]
+fn orientation_keeps_parameter_driven_coordinates() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok("set_param", json!({"name":"offset","expression":"15"}));
+    let mut part = box_part("Placed block", [4., 10., 30.], [0.; 3]);
+    part["placement"]["translation"] = json!(["offset", 20, 30]);
+    s.ok("put_part", json!({"id":"block","part":part}));
+    let reply = s.ok("orient_for_print", json!({"part":"block","apply":true}));
+    assert_eq!(reply["applied"], true);
+    let before = s.ok("part_info", json!({"id":"block"}))["bounds_mm"].clone();
+    assert!(before[0][2].as_f64().unwrap().abs() < 1e-6);
+    s.ok("set_param", json!({"name":"offset","expression":"20"}));
+    let after = s.ok("part_info", json!({"id":"block"}))["bounds_mm"].clone();
+    assert!((after[0][0].as_f64().unwrap() - before[0][0].as_f64().unwrap() - 5.).abs() < 1e-6);
+    s.finish();
+}
+
+#[test]
+fn print_example_has_a_thin_wall_and_an_island_and_exports_for_a_slicer() {
+    use faber_ports::AssetStore;
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    let root = dir.path().join("fixture");
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/print-check");
+    std::fs::create_dir_all(root.join("parts")).unwrap();
+    for name in [
+        "faber.json",
+        "placement.json",
+        "manufacture.json",
+        "parts/arch.json",
+    ] {
+        std::fs::copy(source.join(name), root.join(name)).unwrap();
+    }
+    s.ok("open", json!({"path":root}));
+    let report = s.ok("print_check", json!({}));
+    assert_eq!(report["islands"], 1, "{report}");
+    assert!(report["thin_wall_mm2"].as_f64().unwrap() > 0.);
+    let fine = s.ok("print_check", json!({"resolution_mm":0.01}));
+    assert_eq!(fine["resolution"]["requested_mm"], 0.01);
+    assert!(
+        s.refused(
+            "orient_for_print",
+            json!({"part":"arch","resolution_mm":0.00001})
+        )
+        .contains("0.001")
+    );
+    let export = s.ok(
+        "export",
+        json!({"directory":dir.path().join("out"),"format":"3mf"}),
+    );
+    let output = std::path::Path::new(export["files"][0]["path"].as_str().unwrap());
+    let mesh = faber_files::FileAssets::new(dir.path())
+        .read_mesh(output)
+        .unwrap()
+        .unwrap();
+    let height = mesh
+        .vertices
+        .iter()
+        .map(|p| p[2])
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!((height - 24.).abs() < 1e-6);
+    s.finish();
+    let output = Command::new(env!("CARGO_BIN_EXE_faber"))
+        .arg("export")
+        .arg(&root)
+        .arg(dir.path().join("cli"))
+        .args(["--format", "3mf"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(dir.path().join("cli/assembly.3mf").is_file());
+}
+
+#[test]
+fn too_large_part_is_reported_and_the_fit_uses_world_axes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"block", "part":box_part("Block",[300.;3], [0.;3])}),
+    );
+    let report = s.ok("print_check", json!({"parts":["block"]}));
+    assert_eq!(report["fits"], false);
+    let ranks = s.ok("orient_for_print", json!({"part":"block"}));
+    assert_eq!(ranks["fits_any"], false);
+    assert_eq!(ranks["size_mm"], json!([300., 300., 300.]));
+    assert!(
+        ranks["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["fits"] == false)
+    );
+    let stack = s.ok(
+        "tolerance_stack",
+        json!({"items":[{"nominal":3.,"plus":0.5,"minus":0.2,"sign":-1}]}),
+    );
+    assert_eq!(stack["worst"], json!([-3.5, -2.8]));
+    for (id, geometry) in [
+        ("pin", json!({"op":"cylinder","radius":2.5,"height":10})),
+        (
+            "socket",
+            json!({"op":"history","features":[{"id":"base","geometry":{"op":"box","size":[12,12,10]}},{"id":"bore","geometry":{"op":"hole","source":"base","diameter":5.25,"depth":12,"placement":{"translation":[6,6,-1]}}}],"output":"bore"}),
+        ),
+    ] {
+        s.ok(
+            "put_part",
+            json!({"id":id,"part":{"name":id,"colour":[30,60,90],"geometry":geometry}}),
+        );
+    }
+    assert_eq!(
+        s.ok("fit_check", json!({"a":"pin","b":"socket"}))["fits"],
+        json!([])
+    );
+    s.ok("move_part", json!({"id":"pin","translate":[6,6,0]}));
+    let fit = s.ok("fit_check", json!({"a":"pin","b":"socket"}));
+    assert_eq!(fit["fits"][0]["clearance_mm"], 0.25);
+    s.finish();
+}
+
+#[test]
 fn batch_places_and_suppresses_from_json() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = Session::start(dir.path());

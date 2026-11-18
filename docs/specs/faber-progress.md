@@ -1452,3 +1452,18 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
 - All 737 workspace tests passed. Workspace Clippy passed with warnings denied.
   The release build and silent install passed. The installed CLI opened the
   bracket and its MCP server exported the stress map at the default resolution.
+
+## Fusion parity 03: Print preparation
+
+- The optional manufacture file stores the printer. Projects without this file
+  use the 220 × 220 × 250 mm profile. A custom nozzle changes the default
+  minimum wall to twice the nozzle diameter.
+- The separate model commit passed 739 workspace tests. The print checks use
+  placed meshes for wall thickness, support estimates, islands and bed contact.
+  The orientation search can fit a 300 × 10 mm bar diagonally on a 256 mm bed.
+- The example is `examples/print-check`. A headless viewer test checks the
+  thin-wall overlay and camera focus. A second test turns the part and puts
+  its lowest point on the bed. The export window writes one 3MF assembly.
+- All 779 workspace tests passed. Workspace Clippy passed with warnings denied.
+  The release build and silent install passed. The installed CLI exported the
+  example as one object with 44 triangles and its build transform in millimetres.

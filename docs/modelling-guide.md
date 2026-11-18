@@ -951,3 +951,50 @@ from the rear face of the flange.
 A design source can set the `studies` map with `f.study`, `f.fixed` and
 `f.force` from `faber.libsonnet`. An explicit map replaces the saved studies.
 Omit the field to keep studies that you made in the project.
+
+## Print check
+
+Open `examples/print-check` and select the arch. Open **Print check**, select
+the printer and run the check. The centre fin is 0.6 mm wide. Its lower edge
+starts 13 mm above the bed. Select a finding to see its location. A wall
+below the profile limit appears in the thin-wall overlay.
+
+The report uses the placed parts. It gives the size, layer count, bed contact
+and unsupported area. Support volume is a geometric estimate in cubic mm.
+The slicer sets the actual support, layers and toolpath. Compare the ranked
+orientations. **Apply** turns the selected part about its current bounds
+centre and lowers it to the bed. Undo restores its previous placement.
+
+For MCP, use `printers` and `set_printer`. For a custom profile, read `schema`
+with `kind: "printer"`. Use `print_check` with part ids
+or omit them to check the assembly. Use `orient_for_print` with a part id.
+If all candidates exceed the build volume, the reply gives `fits_any: false`,
+the part size, bed size and candidate sizes. Use `fit_check` to find mating
+cylinders in two placed parts. Clearance is hole diameter minus shaft diameter.
+Print checks and orientation searches accept `resolution_mm` from 0.001 to
+1.0. This sets the chord error for exact solids. Imported meshes keep their
+source triangles.
+`tolerance_stack` combines signed dimensions and their positive and negative
+allowances. Worst case uses all extreme values. Root-sum-square assumes
+independent variation.
+
+| Profile | Build volume (mm) | Source |
+| --- | --- | --- |
+| Generic 220 | 220 × 220 × 250 | Faber practice profile |
+| Bambu Lab A1 | 256 × 256 × 256 | [Bambu Lab quick start](https://cdn1.bambulab.com/documentation/quick-start-a75adcb1d5d5e/Quick%20Start%20Guide%20for%20A1.pdf) |
+| Bambu Lab A1 mini | 180 × 180 × 180 | [Bambu Lab quick start](https://cdn1.bambulab.com/documentation/quick-start-f507128172bdf/Quick%20start%20guide%20-%20A1%20mini-EN.pdf) |
+| Original Prusa MK4 | 250 × 210 × 220 | [Prusa FAQ](https://help.prusa3d.com/article/faq-frequently-asked-questions_1932) |
+| Creality Ender-3 | 220 × 220 × 250 | [Creality FAQ](https://www.creality.com/resources/faq) |
+
+The profiles use a 0.4 mm nozzle and 0.2 mm layers. Faber uses practice
+limits of two nozzle widths for walls, 45 degrees from vertical for
+overhangs and 10 mm for bridges. Its example diametral clearances are
+0.00 mm for press, 0.15 mm for snug, 0.25 mm for slide and 0.40 mm for
+loose. Print a fit sample for your machine, material and orientation.
+The part size, print direction and calibration affect the result.
+[Prusa modelling guide](https://help.prusa3d.com/article/modeling-with-3d-printing-in-mind_164135).
+
+Export with **3MF** in the viewer, the MCP `export` tool with `format: "3mf"`,
+or `faber export PROJECT DIRECTORY --format 3mf`. Open `assembly.3mf` in the
+slicer. The file keeps one object per part, its display colour and its build
+placement in millimetres.

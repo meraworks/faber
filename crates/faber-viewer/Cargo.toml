@@ -11,6 +11,7 @@ faber-model = { path = "../faber-model" }
 faber-std = { path = "../faber-std" }
 faber-core = { path = "../faber-core" }
 faber-ports = { path = "../faber-ports" }
+faber-print = { path = "../faber-print" }
 faber-scene = { path = "../faber-scene" }
 faber-render = { path = "../faber-render" }
 faber-wiring = { path = "../faber-wiring" }

@@ -31,6 +31,7 @@ mod pick_tools_tests;
 mod press_pull;
 #[cfg(test)]
 mod press_pull_tests;
+mod print_check;
 mod selection;
 #[cfg(test)]
 mod selection_tests;
@@ -234,6 +235,7 @@ fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
 }
 
 pub struct Shell {
+    printing: print_check::PrintPanel,
     study: study::StudyPanel,
     window: WindowState,
     search: command_search::CommandSearch,
@@ -373,6 +375,7 @@ impl Shell {
         let modified = faber_wiring::project_fingerprint(&root).ok();
         Self {
             project_loaded: true,
+            printing: Default::default(),
             study: Default::default(),
             recent_file: None,
             dialog: None,
@@ -869,6 +872,7 @@ impl Shell {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.export_format,"step".into(),"STEP solids");
                     ui.selectable_value(&mut self.export_format,"stl".into(),"STL meshes");
+                    ui.selectable_value(&mut self.export_format,"3mf".into(),"3MF assembly");
                 });
                 ui.checkbox(&mut self.export_force,"Export despite check findings");
                 ui.label(format!("Revision {} · {} bodies · mm",self.data.revision,self.bodies.len()));
@@ -901,7 +905,7 @@ impl Shell {
             let format = self.export_format.clone();
             let force = self.export_force;
             let bodies = self.bodies.clone();
-            let contacts = self.data.contacts.clone();
+            let data = self.data.clone();
             let revision = self.data.revision;
             let ctx = ctx.clone();
             let (tx, rx) = mpsc::channel();
@@ -909,9 +913,15 @@ impl Shell {
             self.export_pending = Some(rx);
             self.export_message = None;
             std::thread::spawn(move || {
-                let result =
-                    faber_wiring::export_checked(&bodies, &contacts, &path, &format, force)
-                        .map(|files| (revision, files));
+                let result = faber_wiring::export_project_with(
+                    &data,
+                    &bodies,
+                    &path,
+                    &format,
+                    force,
+                    faber_wiring::EXPORT_TOLERANCE_MM,
+                )
+                .map(|files| (revision, files.into_iter().map(|file| file.path).collect()));
                 let _ = tx.send(result);
                 ctx.request_repaint();
             });
@@ -2410,7 +2420,11 @@ impl Shell {
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
-        if self.study_panel(ui) {
+        if self.printing.open {
+            self.print_panel(ui);
+            return;
+        }
+        if self.study_panel(ui) || self.print_panel(ui) {
             return;
         }
         self.pick_inspector(ui);
@@ -3031,7 +3045,9 @@ impl Shell {
             self.dirty = true;
         }
         let study_paint = self.study.paint.as_ref().filter(|_| self.press.is_none());
-        if study_paint.is_some() {
+        let wall_paint = self.printing.wall_paint().filter(|_| self.press.is_none());
+        let show_selection = study_paint.is_none() && wall_paint.is_none();
+        if !show_selection {
             self.gpu.hovered = None;
         }
         let display_bodies = self
@@ -3050,6 +3066,9 @@ impl Shell {
             );
             let uploaded = if let Some(p) = study_paint {
                 self.gpu.upload_stress(display_bodies, &p.part, &p.ratios)
+            } else if let Some(walls) = wall_paint {
+                self.gpu
+                    .upload_painted(display_bodies, &BTreeSet::new(), None, None, walls)
             } else {
                 let paint = self.overhang.paint(display_bodies);
                 self.gpu
@@ -3091,11 +3110,11 @@ impl Shell {
                 &self.gpu.queue,
                 self.picks
                     .iter()
-                    .filter(|_| study_paint.is_none())
+                    .filter(|_| show_selection)
                     .filter_map(Pick::face_key),
                 self.hover_pick
                     .as_ref()
-                    .filter(|_| study_paint.is_none())
+                    .filter(|_| show_selection)
                     .and_then(Pick::face_key),
             );
         }
@@ -3109,7 +3128,7 @@ impl Shell {
                 self.camera,
                 self.selected
                     .as_deref()
-                    .filter(|_| study_paint.is_none())
+                    .filter(|_| show_selection)
                     .filter(|_| {
                         self.select_filter == SelectFilter::Body
                             || matches!(self.picks.last(), Some(Pick::Body(_)))
@@ -3130,10 +3149,11 @@ impl Shell {
                 Color32::WHITE,
             );
         }
-        if study_paint.is_none() {
+        if show_selection {
             self.draw_pick_edges(ui, rect);
         }
         self.study_markers(ui, rect);
+        self.print_marker(ui, rect);
         self.view_cube(ui, rect);
         let painter = ui.painter();
         if let Some((centre, tip, grips, _, arcs, corners)) = handle {
@@ -3243,6 +3263,7 @@ impl eframe::App for Shell {
         self.poll_dialog(&ctx);
         self.poll(&ctx);
         self.poll_study(&ctx);
+        self.poll_print(&ctx);
         self.poll_press();
         self.shortcut(&ctx);
         if !self.project_loaded {

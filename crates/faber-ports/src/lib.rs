@@ -38,6 +38,73 @@ pub struct Mesh {
     pub normals: Vec<[f64; 3]>,
 }
 
+impl Mesh {
+    /// Visit the three vertices of each triangle in order.
+    pub fn triangle_vertices(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
+        self.triangles
+            .iter()
+            .flatten()
+            .map(|&i| self.vertices[i as usize])
+    }
+
+    /// Join referenced vertices on the same tolerance grid. An unused vertex maps to u32::MAX.
+    pub fn welded_vertices(&self, tolerance_mm: f64) -> Result<(Vec<[f64; 3]>, Vec<u32>)> {
+        if !tolerance_mm.is_finite() || tolerance_mm <= 0. {
+            return Err("The weld tolerance must be finite and positive.".into());
+        }
+        let mut used = vec![false; self.vertices.len()];
+        for &i in self.triangles.iter().flatten() {
+            *used
+                .get_mut(i as usize)
+                .ok_or("A triangle refers to a missing vertex.")? = true;
+        }
+        let mut remap = vec![u32::MAX; self.vertices.len()];
+        let mut points = Vec::new();
+        let mut grid = std::collections::HashMap::new();
+        let mut origin = None;
+        for (i, &p) in self.vertices.iter().enumerate() {
+            if !p.into_iter().all(f64::is_finite) {
+                return Err("Mesh coordinates must be finite.".into());
+            }
+            if !used[i] {
+                continue;
+            }
+            let base = origin.get_or_insert(p);
+            let mut key = [0i64; 3];
+            for axis in 0..3 {
+                let value = ((p[axis] - base[axis]) / tolerance_mm).round();
+                if value.abs() >= i64::MAX as f64 {
+                    return Err("Mesh coordinates exceed the welding range.".into());
+                }
+                key[axis] = value as i64;
+            }
+            if points.len() >= u32::MAX as usize {
+                return Err("The mesh has too many vertices.".into());
+            }
+            remap[i] = *grid.entry(key).or_insert_with(|| {
+                let id = points.len() as u32;
+                points.push(p);
+                id
+            });
+        }
+        Ok((points, remap))
+    }
+}
+
+/// One mesh in its local coordinates. The last three transform values give translation.
+pub struct MeshItem<'a> {
+    pub name: &'a str,
+    pub colour: [u8; 3],
+    pub mesh: &'a Mesh,
+    /// Columns of the three world axes, then the world origin of the mesh.
+    pub transform: [f64; 12],
+}
+
+pub trait MeshAssemblyExport {
+    /// Return the number of written triangles.
+    fn write_assembly(&self, items: &[MeshItem<'_>], path: &Path) -> Result<usize>;
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FaceMesh {
     pub mesh: Mesh,

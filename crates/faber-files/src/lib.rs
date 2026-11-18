@@ -5,6 +5,8 @@ mod feature_cache;
 mod history;
 pub mod layout;
 mod mesh_input;
+mod threemf;
+pub use threemf::ThreeMf;
 mod vector;
 pub use assets::FileAssets;
 pub use feature_cache::FileFeatureCache;

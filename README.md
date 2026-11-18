@@ -28,6 +28,10 @@ To try a stress study, open the PLA shelf bracket and run `shelf_load`. The resu
 
 ![Stress in the tapered shelf bracket under a 100 N load. The peak is 23.92 MPa.](docs/images/shelf-stress.png)
 
+Open the print check example to inspect a thin wall and an unsupported tooth.
+Choose a printer and orientation, then export the assembly as a 3MF file for
+your slicer. [Print check example](examples/print-check) · [Print preparation guide](docs/modelling-guide.md#print-check)
+
 ### Build from source
 
 Windows builds need the pinned OCCT SDK. See

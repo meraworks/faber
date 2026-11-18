@@ -2,6 +2,7 @@
 //! Lengths are in millimetres.
 
 pub mod materials;
+pub mod printers;
 mod table;
 
 /// Clearance hole series from ISO 273.

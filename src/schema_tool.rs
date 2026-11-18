@@ -19,6 +19,7 @@ pub enum Kind {
     Selector,
     Section,
     Study,
+    Printer,
     Edit,
 }
 
@@ -32,6 +33,7 @@ impl Kind {
             Kind::Selector => "selector",
             Kind::Section => "section",
             Kind::Study => "study",
+            Kind::Printer => "printer",
             Kind::Edit => "edit",
         }
     }
@@ -72,6 +74,7 @@ fn definition(kind: Kind) -> Value {
         }),
         Kind::Section => schema_json::<SectionAnalysis<Scalar>>(),
         Kind::Study => schema_json::<faber_model::study::Study<Scalar>>(),
+        Kind::Printer => schema_json::<faber_model::Printer>(),
         Kind::Edit => edit_schema(),
     }
 }

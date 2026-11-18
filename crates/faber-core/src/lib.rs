@@ -36,7 +36,8 @@ pub use generated::regenerate;
 use glam::DVec3;
 pub use placement::{
     AlignMode, Axis, Motion, Pivot, PivotName, PointToPoint, Rotation, RotationAxis, align_shift,
-    move_edits, refuse_purchased_copy, tidy, union_box,
+    euler_from_matrix, move_edits, refuse_purchased_copy, resolved as resolved_placements,
+    rotation_matrix, tidy, union_box,
 };
 pub use section::{CutPart, ResolvedSection, SectionReport};
 use std::collections::BTreeMap;
@@ -1051,9 +1052,9 @@ impl Builder<'_> {
         };
         let mut lo = DVec3::splat(f64::INFINITY);
         let mut hi = DVec3::splat(f64::NEG_INFINITY);
-        for p in &mesh.vertices {
-            lo = lo.min(DVec3::from(*p));
-            hi = hi.max(DVec3::from(*p));
+        for p in mesh.triangle_vertices() {
+            lo = lo.min(DVec3::from(p));
+            hi = hi.max(DVec3::from(p));
         }
         let centre = (lo + hi) / 2.;
         let volume: f64 = mesh

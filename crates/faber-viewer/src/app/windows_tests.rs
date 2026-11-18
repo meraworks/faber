@@ -335,6 +335,32 @@ fn failed_export_reports_only_to_the_window_that_started_it() {
 }
 
 #[test]
+fn export_design_writes_the_assembly_as_one_3mf_file() {
+    let (_dir, mut h) = fixture(1440., 1000.);
+    let out = tempfile::tempdir().unwrap();
+    open(&mut h, ToolWindow::Export);
+    h.state_mut().export_path = out.path().display().to_string();
+    h.get_by_label("3MF assembly").click();
+    h.step();
+    h.get_by_label("Write files").click();
+    h.step();
+    let start = std::time::Instant::now();
+    while h.state().export_pending.is_some() {
+        assert!(start.elapsed() < std::time::Duration::from_secs(30));
+        std::thread::sleep(std::time::Duration::from_millis(8));
+        h.step();
+    }
+    let files = std::fs::read_dir(out.path())
+        .unwrap()
+        .collect::<std::io::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(files.len(), 1, "{:?}", h.state().export_message);
+    let path = files[0].path();
+    assert_eq!(path.extension().unwrap(), "3mf");
+    assert!(std::fs::read(path).unwrap().starts_with(b"PK"));
+}
+
+#[test]
 fn export_result_survives_a_project_switch() {
     let (_dir, mut h) = fixture(1440., 1000.);
     let tx = pending_export(&mut h);
