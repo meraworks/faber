@@ -37,6 +37,12 @@ Part histories support ribs, webs, bosses, snap hooks, lips and grooves.
 The snap check estimates the strain from the deflection of a rectangular
 beam. The material limit, when supplied, applies to a short deflection.
 
+## Mesh parts
+
+Faber inspects, repairs, reduces and cuts imported triangle meshes. A closed
+mesh can become an exact solid with editable features. Coplanar faces can
+merge during conversion. A curved mesh surface keeps its flat facets.
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under

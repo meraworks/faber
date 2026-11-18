@@ -3,6 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 
+extern "C" int faber_solid_from_mesh(const double* vertices, std::size_t vertex_count,
+    const std::uint32_t* triangles, std::size_t triangle_count, int merge_planar,
+    void** result, char* error, std::size_t capacity) noexcept;
+
 // Keep this signature for existing callers.
 extern "C" void faber_mesh_data(
     const void* mesh, const double** vertices, std::size_t* vertex_count,

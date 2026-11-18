@@ -12,6 +12,7 @@ faber-clash = { path = "../faber-clash" }
 parry3d-f64 = "0.31.1"
 faber-core = { path = "../faber-core" }
 faber-model = { path = "../faber-model" }
+faber-meshtools = { path = "../faber-meshtools" }
 faber-ports = { path = "../faber-ports" }
 faber-print = { path = "../faber-print" }
 faber-build = { path = "../faber-build" }

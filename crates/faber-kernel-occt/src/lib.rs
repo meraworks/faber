@@ -1,6 +1,7 @@
 //! Exact solid adapter.
 
 use faber_model::{Geometry, Placement};
+pub use faber_ports::SOLID_TRIANGLE_LIMIT;
 use faber_ports::{Combine, Kernel, Mesh, PathSample, PathSamples, Properties, Result, Shape};
 use glam::{DMat3, DVec3};
 use std::{
@@ -489,6 +490,16 @@ unsafe extern "C" {
         error: *mut c_char,
         capacity: usize,
     ) -> i32;
+    fn faber_solid_from_mesh(
+        vertices: *const f64,
+        vertex_count: usize,
+        triangles: *const u32,
+        triangle_count: usize,
+        merge_planar: i32,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
     fn faber_box(
         size: *const f64,
         result: *mut *mut c_void,
@@ -726,6 +737,53 @@ impl OcctKernel {
 }
 
 impl Kernel for OcctKernel {
+    fn solid_from_mesh(&self, mesh: &Mesh, merge_planar: bool) -> Result<Shape> {
+        let count = mesh.triangles.len();
+        if count > SOLID_TRIANGLE_LIMIT {
+            return Err(format!(
+                "The mesh has {count} triangles. The limit for a solid is {SOLID_TRIANGLE_LIMIT}. Reduce the mesh first."
+            ));
+        }
+        if count == 0 {
+            return Err("A solid needs a closed mesh with faces.".into());
+        }
+        let (points, map) = mesh.welded_vertices(1e-6)?;
+        let mut edges = std::collections::HashMap::new();
+        let mut triangles = Vec::with_capacity(count);
+        for face in &mesh.triangles {
+            let triangle = face.map(|i| map[i as usize]);
+            let [a, b, c] = triangle.map(|i| DVec3::from_array(points[i as usize]));
+            let area = (b - a).cross(c - a).length_squared();
+            if !area.is_finite() || area <= 1e-28 {
+                return Err("The mesh contains a degenerate face. Repair the mesh first.".into());
+            }
+            for (i, j) in [
+                (triangle[0], triangle[1]),
+                (triangle[1], triangle[2]),
+                (triangle[2], triangle[0]),
+            ] {
+                let (n, direction) = edges.entry((i.min(j), i.max(j))).or_insert((0_u32, 0_i32));
+                *n += 1;
+                *direction += if i < j { 1 } else { -1 };
+            }
+            triangles.push(triangle);
+        }
+        if edges.values().any(|&(n, d)| n != 2 || d != 0) {
+            return Err("A solid needs a closed manifold mesh with consistent winding. Repair the mesh first.".into());
+        }
+        shape_call(|out, error, len| unsafe {
+            faber_solid_from_mesh(
+                points.as_ptr().cast(),
+                points.len(),
+                triangles.as_ptr().cast(),
+                count,
+                i32::from(merge_planar),
+                out,
+                error,
+                len,
+            )
+        })
+    }
     fn face_sources(
         &self,
         shape: &Shape,

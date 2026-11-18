@@ -2,6 +2,29 @@ use faber_files::FileAssets;
 use faber_ports::AssetStore;
 
 #[test]
+fn example_assets_match_their_saved_keys_after_checkout() {
+    let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut count = 0;
+    for entry in std::fs::read_dir(examples).unwrap() {
+        let root = entry.unwrap().path();
+        let directory = root.join("assets");
+        if !directory.is_dir() {
+            continue;
+        }
+        let assets = FileAssets::new(&root);
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            let key = path.file_name().unwrap().to_str().unwrap();
+            assets
+                .resolve(key)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            count += 1;
+        }
+    }
+    assert!(count > 0);
+}
+
+#[test]
 fn assets_preserve_bytes_deduplicate_and_refuse_changed_content() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("source.model");

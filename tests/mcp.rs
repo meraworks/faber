@@ -1890,3 +1890,58 @@ fn preview_render_sends_no_image_by_default() {
     assert_eq!(inline["content"][1]["mimeType"], "image/png", "{inline}");
     s.finish();
 }
+
+#[test]
+fn mesh_report_is_small() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("open.obj");
+    std::fs::write(
+        &path,
+        b"v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 3 2\nf 1 2 4\nf 2 3 4\n",
+    )
+    .unwrap();
+    let mut s = Session::start(dir.path());
+    let imported = s.ok(
+        "import_part",
+        json!({"id":"cube","name":"Mesh","path":path}),
+    );
+    let orig = imported["revision"].as_u64().unwrap();
+    let report = s.ok("mesh_report", json!({"part":"cube"}));
+    assert!(serde_json::to_string(&report).unwrap().len() < 1500);
+    assert_eq!(report["open_edges"], 3);
+    let repaired = s.ok(
+        "repair_mesh",
+        json!({"part":"cube","expected_revision":orig,"options":{"fill_holes":true}}),
+    );
+    assert_eq!(repaired["revision"], orig + 1);
+    assert_eq!(repaired["log"]["filled_holes"], 1);
+    assert_eq!(repaired["changed"][0]["id"], "cube");
+    let stale = s.refused(
+        "reduce_mesh",
+        json!({"part":"cube","triangles":9,"expected_revision":orig}),
+    );
+    assert!(stale.to_ascii_lowercase().contains("revision"), "{stale}");
+    let two = s.refused(
+        "reduce_mesh",
+        json!({"part":"cube","ratio":0.5,"triangles":9,"expected_revision":orig+1}),
+    );
+    assert!(two.contains("one"), "{two}");
+    let reduced = s.ok(
+        "reduce_mesh",
+        json!({"part":"cube","triangles":9,"expected_revision":orig+1}),
+    );
+    assert_eq!(reduced["revision"], orig + 1);
+    let cut=s.ok("cut_mesh",json!({"part":"cube","plane":{"origin":[0,0,5],"normal":[0,0,1]},"keep":"both","copy_as":"top","expected_revision":orig+1}));
+    assert_eq!(ids_of(&cut["changed"]), ["cube", "top"]);
+    let exact = s.ok(
+        "mesh_to_solid",
+        json!({"part":"top","copy_as":"exact","merge_planar":true,"expected_revision":orig+2}),
+    );
+    assert_eq!(ids_of(&exact["changed"]), ["exact"]);
+    assert!(
+        s.ok("mesh_report", json!({"part":"top"}))["watertight"]
+            .as_bool()
+            .unwrap()
+    );
+    s.finish();
+}

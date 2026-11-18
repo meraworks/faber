@@ -4,6 +4,28 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 pub(crate) type Paths = BTreeMap<String, PathBuf>;
 
+impl crate::Project {
+    /// Read the imported triangle surface before the part placement.
+    pub fn imported_mesh(&self, id: &str) -> Result<&faber_ports::Mesh> {
+        let local = self
+            .locals
+            .get(id)
+            .ok_or_else(|| format!("Unknown part: {id}"))?;
+        if local.shape.is_some() || !matches!(local.geometry, Geometry::Imported { .. }) {
+            return Err(format!("Part {id} must be an imported mesh."));
+        }
+        Ok(&local.mesh)
+    }
+
+    /// Identify a temporary source file before its part recipe is built.
+    pub fn asset_key(&self, source: &std::path::Path) -> Result<String> {
+        self.assets
+            .as_deref()
+            .ok_or("Asset storage is not available")?
+            .key(source)
+    }
+}
+
 pub(crate) fn mesh(
     geometry: &Geometry,
     store: Option<&dyn AssetStore>,
@@ -18,6 +40,14 @@ pub(crate) fn mesh(
 }
 
 pub(crate) fn resolve(data: &ProjectData, store: Option<&dyn AssetStore>) -> Result<Paths> {
+    resolve_with(data, store, Paths::new())
+}
+
+pub(crate) fn resolve_with(
+    data: &ProjectData,
+    store: Option<&dyn AssetStore>,
+    mut paths: Paths,
+) -> Result<Paths> {
     fn visit(
         geometry: &Geometry<Scalar>,
         store: Option<&dyn AssetStore>,
@@ -41,7 +71,6 @@ pub(crate) fn resolve(data: &ProjectData, store: Option<&dyn AssetStore>) -> Res
         }
         Ok(())
     }
-    let mut paths = Paths::new();
     for part in data.parts.values() {
         visit(&part.geometry, store, &mut paths)?;
     }

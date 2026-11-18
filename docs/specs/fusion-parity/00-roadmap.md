@@ -1,8 +1,8 @@
 # Fusion parity roadmap
 
-Status: chunks 17, 01, 18, 02, 03 and 04 supply viewer controls, shared
+Status: chunks 17, 01, 18, 02, 03, 04 and 05 supply viewer controls, shared
 geometry tools, direct manipulation, static stress studies, print preparation
-and plastic features. Chunk 05 is next.
+and plastic features, with repair and editing for imported meshes. Chunk 06 is next.
 See `docs/specs/faber-progress.md` for the checks for each finished chunk.
 
 This file is the index and the specification for eighteen plans. Each plan is one

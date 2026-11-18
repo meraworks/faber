@@ -1412,6 +1412,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "faber-meshtools"
+version = "0.1.0"
+dependencies = [
+ "earcutr",
+ "faber-geometry",
+ "faber-ports",
+ "glam",
+ "rayon",
+ "schemars",
+ "serde",
+ "spade",
+]
+
+[[package]]
 name = "faber-model"
 version = "0.1.0"
 dependencies = [
@@ -1517,6 +1531,7 @@ dependencies = [
  "faber-files",
  "faber-geometry",
  "faber-kernel-occt",
+ "faber-meshtools",
  "faber-model",
  "faber-ports",
  "faber-print",

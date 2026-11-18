@@ -3,6 +3,23 @@ use super::*;
 use egui_kittest::kittest::Queryable;
 
 #[test]
+fn view_cube_home_fits_one_button_row() {
+    let (_dir, mut h) = two_blocks();
+    h.state_mut().camera.set_view(faber_scene::View::Iso);
+    h.step();
+    let home = h.get_by_label("Home").rect();
+    let normal_height = h.get_by_label("Checks").rect().height();
+    assert!(
+        home.height() <= normal_height + 1.,
+        "Home wraps over the cube: {:.1} pt high for a {:.1} pt button.",
+        home.height(),
+        normal_height
+    );
+    let top = h.get_by_label("View cube Top").rect();
+    assert!(home.bottom() < top.top());
+}
+
+#[test]
 fn cube_face_click_gives_the_face_view() {
     let (_dir, mut h) = two_blocks();
     h.state_mut().camera.set_view(faber_scene::View::Iso);

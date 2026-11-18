@@ -3,6 +3,10 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
+#include <BOPAlgo_BuilderSolid.hxx>
+#include <BRepAlgoAPI_Check.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <BRepBndLib.hxx>
@@ -197,6 +201,71 @@ extern "C" int faber_face_sources(const void* input,const void* const* sources,s
 
 extern "C" int faber_box(const double* size,void** result,char* error,size_t capacity) noexcept {
     return protect(error,capacity,[&]{publish(BRepPrimAPI_MakeBox(size[0],size[1],size[2]).Shape(),result);});
+}
+
+extern "C" int faber_solid_from_mesh(const double* vertices,size_t vertex_count,
+    const uint32_t* triangles,size_t triangle_count,int merge_planar,void** result,
+    char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&] {
+        BRepBuilderAPI_Sewing stitch(1e-7);
+        for(size_t i=0;i<triangle_count;++i) {
+            BRepBuilderAPI_MakePolygon outline;
+            for(size_t corner=0;corner<3;++corner) {
+                const auto id=triangles[3*i+corner];
+                if(id>=vertex_count) throw std::runtime_error("Invalid triangle vertex");
+                const double* p=vertices+3*id;
+                outline.Add(gp_Pnt(p[0],p[1],p[2]));
+            }
+            outline.Close();
+            if(!outline.IsDone()) throw std::runtime_error("Cannot build a triangle boundary");
+            BRepBuilderAPI_MakeFace facet(outline.Wire(),true);
+            if(!facet.IsDone()) throw std::runtime_error("Cannot build a triangle face");
+            stitch.Add(facet.Face());
+        }
+        stitch.Perform();
+        const auto sewn=stitch.SewedShape();
+        if(sewn.IsNull() || stitch.NbFreeEdges()!=0 || stitch.NbMultipleEdges()!=0)
+            throw std::runtime_error("Cannot join the triangle faces into closed shells");
+        TopTools_ListOfShape faces;
+        for(TopExp_Explorer e(sewn,TopAbs_FACE);e.More();e.Next()) faces.Append(e.Current());
+        if(static_cast<size_t>(faces.Extent())!=triangle_count)
+            throw std::runtime_error("Joining the mesh lost a triangle face");
+        // Closed shells with inward winding define cavities inside their enclosing solid.
+        BOPAlgo_BuilderSolid builder;
+        builder.SetShapes(faces);
+        builder.SetAvoidInternalShapes(true);
+        builder.Perform();
+        if(builder.HasErrors() || builder.HasWarnings() || builder.Areas().IsEmpty())
+            throw std::runtime_error("Cannot make solids from the closed shells. Check the mesh winding");
+        TopoDS_Shape shape;
+        if(builder.Areas().Extent()==1) {
+            shape=builder.Areas().First();
+        } else {
+            BRep_Builder b;
+            TopoDS_Compound compound;
+            b.MakeCompound(compound);
+            for(TopTools_ListIteratorOfListOfShape it(builder.Areas());it.More();it.Next())
+                b.Add(compound,it.Value());
+            shape=compound;
+        }
+        TopTools_IndexedMapOfShape used;
+        TopExp::MapShapes(shape,TopAbs_FACE,used);
+        if(static_cast<size_t>(used.Extent())!=triangle_count)
+            throw std::runtime_error("Some mesh faces do not bound a solid. Check the mesh winding");
+        if(merge_planar) {
+            ShapeUpgrade_UnifySameDomain merge(shape,true,true,false);
+            merge.SetLinearTolerance(1e-7);
+            merge.SetAngularTolerance(1e-9);
+            merge.Build();
+            shape=merge.Shape();
+        }
+        BRepAlgoAPI_Check check(shape,false,true);
+        if(!check.IsValid()) throw std::runtime_error("Mesh faces intersect. Repair the mesh before conversion");
+        GProp_GProps properties;
+        BRepGProp::VolumeProperties(shape,properties);
+        if(!(properties.Mass()>0.)) throw std::runtime_error("The mesh does not enclose positive volume");
+        publish(shape,result);
+    });
 }
 
 extern "C" int faber_offset(const void* input,double distance,void** result,char* error,size_t capacity) noexcept {

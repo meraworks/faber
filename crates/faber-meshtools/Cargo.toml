@@ -1,0 +1,15 @@
+[package]
+name = "faber-meshtools"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+faber-geometry = { path = "../faber-geometry" }
+faber-ports = { path = "../faber-ports" }
+earcutr.workspace = true
+glam.workspace = true
+rayon = "1.12"
+serde.workspace = true
+schemars.workspace = true
+spade = "2.15"

@@ -12,6 +12,10 @@ pub mod vector;
 pub type Result<T> = std::result::Result<T, String>;
 
 pub trait AssetStore: Send + Sync {
+    /// Return the content key without publishing the asset.
+    fn key(&self, _source: &Path) -> Result<String> {
+        Err("Staged assets are not available.".into())
+    }
     fn put(&self, source: &Path) -> Result<String>;
     fn resolve(&self, key: &str) -> Result<std::path::PathBuf>;
     /// Read a polygon surface. None means the asset needs an exact shape reader.
@@ -165,7 +169,13 @@ pub struct PathSamples {
     pub samples: Vec<PathSample>,
 }
 
+pub const SOLID_TRIANGLE_LIMIT: usize = 200_000;
+
 pub trait Kernel: Send + Sync {
+    /// Make a solid from closed, consistently wound triangles. Optionally merge coplanar faces.
+    fn solid_from_mesh(&self, _mesh: &Mesh, _merge_planar: bool) -> Result<Shape> {
+        Err("Mesh to solid conversion is not available.".into())
+    }
     /// Grow a wall from a line to the next face. Offset ranges from -1 to 1.
     fn linear_form(
         &self,

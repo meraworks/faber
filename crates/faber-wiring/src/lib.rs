@@ -1,6 +1,7 @@
 //! Adapter composition.
 
 pub mod archive;
+pub mod mesh_edit;
 pub mod study;
 pub mod study_image;
 pub use faber_core::plastic::{HookCheck, checked_hook, hook_check};

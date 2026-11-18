@@ -345,6 +345,13 @@ impl Project {
     }
     /// Apply a result calculated from one project revision.
     pub fn batch_at_revision(&mut self, revision: u64, edits: Vec<Edit>) -> Result<()> {
+        self.check_edit_revision(revision)?;
+        let operations = to_operations(edits);
+        self.refuse_generated_operations(&operations)?;
+        self.apply_history(self.candidate(operations)?, None, false)
+    }
+
+    pub fn check_edit_revision(&mut self, revision: u64) -> Result<()> {
         self.sync()?;
         if self.data.revision != revision {
             return Err(format!(
@@ -352,9 +359,40 @@ impl Project {
                 self.data.revision
             ));
         }
+        Ok(())
+    }
+
+    /// Build with temporary asset files before publishing the files and the revision.
+    pub fn batch_with_assets(
+        &mut self,
+        revision: u64,
+        edits: Vec<Edit>,
+        sources: std::collections::BTreeMap<String, std::path::PathBuf>,
+    ) -> Result<()> {
+        self.check_edit_revision(revision)?;
+        self.refuse_broken_source()?;
         let operations = to_operations(edits);
         self.refuse_generated_operations(&operations)?;
-        self.apply_history(self.candidate(operations)?, None, false)
+        let candidate = self.candidate(operations)?;
+        if candidate == self.data {
+            return Ok(());
+        }
+        let store = self
+            .assets
+            .as_deref()
+            .ok_or("Asset storage is not available")?;
+        for (key, path) in &sources {
+            if store.key(path)? != *key {
+                return Err("A staged asset changed before the build.".into());
+            }
+        }
+        let prepared = self.prepare_with_assets(candidate, false, sources.clone())?;
+        for (key, path) in sources {
+            if store.put(&path)? != key {
+                return Err("A staged asset changed during the build.".into());
+            }
+        }
+        self.save_prepared(prepared, None)
     }
     pub fn batch_strict(&mut self, operations: Vec<Edit>) -> Result<()> {
         self.batch_operations(to_operations(operations), true)

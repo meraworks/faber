@@ -1483,3 +1483,28 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
 - All 815 workspace tests passed. Workspace Clippy passed with warnings denied.
   The release build and silent install passed. The installed CLI opened both
   parts and reproduced the print and interference results.
+
+## Fusion parity 05: Mesh tools
+
+- The mesh repair example has four open edges. Repair closes the missing
+  face of the 10 mm cube. A cut at Z = 4 mm gives closed parts with volumes
+  of 400 and 600 mm³. The original asset keeps its content hash.
+- A headless MCP run reduced a 20 mm diameter sphere from 20,000 to 2,000
+  triangles in 0.61 s on the test PC. The largest distance from an original
+  vertex to the result was 0.039 mm. The mesh stayed closed and its volume
+  decreased by 0.20%.
+- The cut uses the cached Spade 2.15.1 crate (MIT or Apache-2.0). Constraints
+  keep each contour edge in the cap, including the inner edges of a tube.
+- The mesh action row moved 106 points when the report arrived. After the
+  fix, the row moved 0 points over 21 frames at each test width (860 and
+  1440 points). The camera and viewport bounds stayed fixed.
+- The wheel now zooms over a section handle. The headless test drags the
+  offset in ten steps, checks the handle on release and compares viewport
+  pixels over three subsequent frames.
+- The view cube keeps its Home button on one line. The inspector help stays
+  below the section controls when the panel scrolls. A checkout test checks
+  the stored example assets against their content hashes on disk.
+- All 871 workspace tests passed. Workspace Clippy passed with warnings denied.
+  The release build and silent install passed. The installed CLI repaired,
+  split and converted the example. The installed viewer rendered 19 local
+  example projects without a window.

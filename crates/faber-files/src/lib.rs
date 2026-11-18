@@ -3,6 +3,8 @@
 mod assets;
 mod feature_cache;
 mod history;
+mod indexed_mesh;
+pub use indexed_mesh::write_indexed_mesh;
 pub mod layout;
 mod mesh_input;
 mod threemf;

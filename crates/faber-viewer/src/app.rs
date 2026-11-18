@@ -23,6 +23,9 @@ mod marking_menu;
 mod material;
 #[cfg(test)]
 mod material_tests;
+mod mesh_tools;
+#[cfg(test)]
+mod mesh_tools_tests;
 mod motion_relations;
 mod move_tool;
 mod pick_tools;
@@ -241,6 +244,7 @@ fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
 }
 
 pub struct Shell {
+    mesh_tool: Option<mesh_tools::Panel>,
     printing: print_check::PrintPanel,
     study: study::StudyPanel,
     window: WindowState,
@@ -381,6 +385,7 @@ impl Shell {
         let modified = faber_wiring::project_fingerprint(&root).ok();
         Self {
             project_loaded: true,
+            mesh_tool: None,
             printing: Default::default(),
             study: Default::default(),
             recent_file: None,
@@ -2033,6 +2038,7 @@ impl Shell {
     }
 
     fn body_menu(&mut self, ui: &mut egui::Ui) {
+        self.mesh_menu(ui);
         // Hide, isolate and delete act on the whole selection.
         let ids = self.selection();
         if let Some(id) = self.selected.clone() {
@@ -2462,6 +2468,10 @@ impl Shell {
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
+        if self.mesh_tool.is_some() {
+            self.mesh_panel(ui);
+            return;
+        }
         if self.printing.open {
             self.print_panel(ui);
             return;
@@ -2630,22 +2640,19 @@ impl Shell {
                 .small()
                 .color(MUTED),
         );
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            ui.add_space(12.);
-            ui.label(
-                RichText::new("F  Fit view     S  Commands     Shift+S  Section")
-                    .small()
-                    .color(MUTED),
-            );
-            ui.label(
-                RichText::new(
-                    "Drag empty space to select. Middle drag to pan. Right drag for commands.\nShift + middle drag or Alt + left drag to orbit. Scroll to zoom.",
-                )
-                    .small()
-                    .color(MUTED),
-            );
-
-        });
+        ui.add_space(12.);
+        ui.label(
+            RichText::new(
+                "Drag empty space to select. Middle drag to pan. Right drag for commands.\nShift + middle drag or Alt + left drag to orbit. Scroll to zoom.",
+            )
+            .small()
+            .color(MUTED),
+        );
+        ui.label(
+            RichText::new("F  Fit view     S  Commands     Shift+S  Section")
+                .small()
+                .color(MUTED),
+        );
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
@@ -2655,8 +2662,9 @@ impl Shell {
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::Role::Unknown, ui.is_enabled(), "Model viewport")
         });
-        if response.hovered()
-            && let Some(pos) = response.hover_pos()
+        // Section handles share the viewport layer and accept the same wheel gesture.
+        if ui.ctx().rect_contains_pointer(ui.layer_id(), hit)
+            && let Some(pos) = ui.ctx().pointer_hover_pos()
         {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0. {
@@ -3306,6 +3314,7 @@ impl eframe::App for Shell {
         self.poll(&ctx);
         self.poll_study(&ctx);
         self.poll_print(&ctx);
+        self.poll_mesh_panel();
         self.poll_press();
         self.shortcut(&ctx);
         if !self.project_loaded {
@@ -4241,6 +4250,116 @@ mod tests {
             view.contains(handle.min) && view.contains(handle.max),
             "Handle {handle:?} is outside the view {view:?}"
         );
+        // A slider step changes the cut while its model-space centre is outside the view.
+        let camera = harness.state().camera;
+        let id = egui::Id::unique("section_offset_handle");
+        let control =
+            |h: &egui_kittest::Harness<'_, Shell>| h.ctx.read_response(id).unwrap().rect.center();
+        // A live change can arrive between frames, before the next cap is available.
+        harness.state_mut().plane.offset = 200.5;
+        harness.step();
+        let live = harness.state().section_anchor.unwrap();
+        harness.step();
+        let project = |p| {
+            let ndc = matrix.project_point3(p);
+            egui::vec2(ndc.x * view.width(), -ndc.y * view.height()) * 0.5
+        };
+        let frame_shift =
+            (project(live) - project(harness.state().section_anchor.unwrap())).length();
+        assert!(
+            frame_shift < 0.25,
+            "Live offset moved the handle {frame_shift:.2} px on repaint."
+        );
+        harness
+            .get_by_role_and_label(egui::Role::Slider, "Offset")
+            .set_value_accesskit(201.);
+        harness.step();
+        assert!((harness.state().plane.offset - 201.).abs() < 0.01);
+        let first = control(&harness);
+        for _ in 0..5 {
+            harness.step();
+            let drift = first.distance(control(&harness));
+            assert!(
+                drift < 0.25,
+                "The offset handle jumped {drift:.2} px on a stationary frame."
+            );
+            assert_eq!(harness.state().camera, camera);
+            assert_eq!(harness.get_by_label("Model viewport").rect(), view);
+        }
+        let tip = control(&harness);
+        harness.hover_at(tip);
+        harness.step();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0., 28.),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+            source: egui::MouseWheelSource::Unknown,
+        });
+        for _ in 0..8 {
+            harness.step();
+        }
+        assert!(
+            harness.state().camera.distance < camera.distance - 0.01,
+            "Scrolling over the section handle must zoom the viewport."
+        );
+        let rect = view.expand2(Vec2::new(5., 0.));
+        let state = harness.state();
+        let projected = state
+            .camera
+            .matrix(rect.aspect_ratio())
+            .project_point3(state.section_anchor.unwrap());
+        let centre = rect.center()
+            + Vec2::new(projected.x * rect.width(), -projected.y * rect.height()) * 0.5;
+        let tip = control(&harness);
+        let axis = (tip - centre).normalized();
+        let camera = harness.state().camera;
+        harness.drag_at(tip);
+        harness.step();
+        let mut last = harness.state().plane.offset;
+        for i in 1..=10 {
+            harness.hover_at(tip + axis * (i as f32 * 2.));
+            harness.step();
+            let next = harness.state().plane.offset;
+            assert!(
+                next > last,
+                "A forward drag stopped or moved backwards: {last} -> {next}"
+            );
+            assert_eq!(harness.state().camera, camera);
+            assert_eq!(harness.get_by_label("Model viewport").rect(), view);
+            last = next;
+        }
+        harness.drop_at(tip + axis * 20.);
+        harness.step();
+        let released = control(&harness);
+        for _ in 0..5 {
+            harness.step();
+            assert!(released.distance(control(&harness)) < 0.25);
+        }
+        harness.hover_at(view.left_bottom() + Vec2::new(10., -8.));
+        for _ in 0..4 {
+            harness.step();
+        }
+        let viewport_sample = |h: &mut egui_kittest::Harness<'_, Shell>| {
+            let image = h.render().unwrap();
+            let mut pixels = Vec::new();
+            for y in ((view.top() as u32 + 16)..(view.bottom() as u32 - 16)).step_by(4) {
+                for x in ((view.left() as u32 + 16)..(view.right() as u32 - 16)).step_by(4) {
+                    pixels.push(*image.get_pixel(x, y));
+                }
+            }
+            pixels
+        };
+        let settled = viewport_sample(&mut harness);
+        assert!(settled.windows(2).any(|p| p[0] != p[1]));
+        for _ in 0..3 {
+            harness.step();
+            let next = viewport_sample(&mut harness);
+            assert!(
+                settled == next,
+                "Visible pixels changed after the drag settled."
+            );
+        }
     }
 
     #[test]

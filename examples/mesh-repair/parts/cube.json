@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "name": "Open cube",
+  "colour": [
+    107,
+    151,
+    161
+  ],
+  "geometry": {
+    "op": "imported",
+    "asset": "c7dbd21ee6d42e90e7f04c10eba80fea04dcb8c6ea0e46fa6196147ea3c7ebd3"
+  }
+}

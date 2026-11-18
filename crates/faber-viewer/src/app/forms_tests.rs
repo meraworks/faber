@@ -193,3 +193,60 @@ fn an_untyped_parameter_does_not_claim_a_length_unit() {
     }
     assert!(h.query_by_label("= 90").is_some());
 }
+
+#[test]
+fn inspector_help_clears_the_section_controls_at_each_scroll_position() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/fastener-check");
+    let (data, bodies) = faber_wiring::read(&root).unwrap();
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1440., 920.))
+        .with_step_dt(1. / 60.)
+        .wgpu_setup(crate::gpu_setup())
+        .build_eframe(move |cc| Shell::new(cc, root, data, bodies, None));
+    const HELP: &str = "Drag empty space to select.";
+    for size in [egui::vec2(1440., 920.), egui::vec2(860., 600.)] {
+        h.set_size(size);
+        for _ in 0..6 {
+            h.step();
+        }
+        let canvas = super::controls_fixture::canvas(&h);
+        for target in ["initial", "Reverse direction", HELP] {
+            if target != "initial" {
+                h.get_by_label_contains(target).scroll_to_me();
+                for _ in 0..20 {
+                    h.step();
+                }
+            }
+            let help = h.get_by_label_contains(HELP).rect();
+            let keys = h.get_by_label_contains("Shift+S  Section").rect();
+            for label in [
+                "Show hatching",
+                "Custom cut colour",
+                "Reverse direction",
+                "The cut changes the view only.",
+            ] {
+                let control = h.get_by_label(label).rect();
+                assert!(
+                    help.top() >= control.bottom() && keys.top() >= control.bottom(),
+                    "{size:?} after {target}: {label} {control:?}, mouse help {help:?}, keys {keys:?}"
+                );
+            }
+            assert!(
+                keys.top() >= help.bottom(),
+                "Keyboard and mouse help overlap"
+            );
+            if target == HELP {
+                assert!(
+                    help.center().y > 0. && help.center().y < size.y,
+                    "Cannot scroll to {help:?}"
+                );
+            }
+            assert_eq!(
+                canvas,
+                super::controls_fixture::canvas(&h),
+                "Scrolling the inspector resized the viewport"
+            );
+        }
+    }
+}

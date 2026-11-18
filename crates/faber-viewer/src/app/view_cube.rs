@@ -56,16 +56,18 @@ impl Shell {
         if canvas.width() < 140. || canvas.height() < 150. {
             return;
         }
-        let centre = canvas.right_top() + Vec2::new(-62., 77.);
-        let bounds = egui::Rect::from_center_size(centre, Vec2::splat(104.));
-        let home = egui::Rect::from_center_size(centre - Vec2::new(0., 61.), Vec2::new(49., 22.));
-        if ui
+        let home = egui::Rect::from_min_size(
+            canvas.right_top() + Vec2::new(-98., 5.),
+            Vec2::new(72., ui.spacing().interact_size.y),
+        );
+        let home = ui
             .put(home, egui::Button::new("Home"))
-            .on_hover_text("Fit the isometric view")
-            .clicked()
-        {
+            .on_hover_text("Fit the isometric view");
+        if home.clicked() {
             self.run_command(ui.ctx(), keys::Command::Iso);
         }
+        let centre = home.rect.center_bottom() + Vec2::new(0., 56.);
+        let bounds = egui::Rect::from_center_size(centre, Vec2::splat(104.));
         let eye = (self.camera.eye() - self.camera.target).normalize();
         let (right, up) = self.camera.screen_axes();
         let point = |v: Vec3| centre + Vec2::new(v.dot(right), -v.dot(up)) * 29.;

@@ -1,11 +1,13 @@
 //! Stdio tools call the same project operations as the CLI.
 
+mod mesh_tools;
 use crate::input::Checked;
 use crate::schema_tool;
 use base64::Engine;
 use faber_core::{PartInfo, Project, Reading};
 use faber_model::{Edit, Feature, Geometry, Part, ProjectData, Scalar};
 use faber_ports::Body;
+use mesh_tools::{ConvertMesh, CutMesh, MeshRead, ReduceMesh, RepairMesh};
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
@@ -1126,6 +1128,35 @@ impl Faber {
 
 #[tool_router]
 impl Faber {
+    #[tool(description = "Inspect a mesh. Report defects and size in part coordinates.")]
+    fn mesh_report(&self, Parameters(Checked(a)): Parameters<Checked<MeshRead>>) -> CallToolResult {
+        self.with(|p| Ok(json!(faber_wiring::mesh_edit::report(p, &a.part)?)))
+    }
+    #[tool(description = "Repair a mesh and report the changes.")]
+    fn repair_mesh(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<RepairMesh>>,
+    ) -> CallToolResult {
+        self.with(|p| mesh_tools::repair(p, a))
+    }
+    #[tool(description = "Reduce a mesh. Set one of triangles, ratio or max_error_mm.")]
+    fn reduce_mesh(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<ReduceMesh>>,
+    ) -> CallToolResult {
+        self.with(|p| mesh_tools::reduce(p, a))
+    }
+    #[tool(description = "Cut a mesh with a world plane. Keep above, below or both.")]
+    fn cut_mesh(&self, Parameters(Checked(a)): Parameters<Checked<CutMesh>>) -> CallToolResult {
+        self.with(|p| mesh_tools::cut(p, a))
+    }
+    #[tool(description = "Convert a closed mesh to an editable solid.")]
+    fn mesh_to_solid(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<ConvertMesh>>,
+    ) -> CallToolResult {
+        self.with(|p| mesh_tools::solid(p, a))
+    }
     #[tool(
         description = "Open a project. Use an absolute path. Set create to true to create a project if it does not exist."
     )]

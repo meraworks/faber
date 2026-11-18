@@ -1042,3 +1042,43 @@ The hooks enter the two side windows when the lid is turned over. Use
 strain estimate. The constant-section beam estimate uses
 `1.5 × thickness × undercut / length²`. It does not model layer adhesion or
 stress at the root fillet.
+
+## Mesh parts
+
+Open the [mesh repair example](../examples/mesh-repair/faber.json).
+Right-click **Open cube** in the body list and select **Mesh report**.
+This 10 mm cube has one open face and four open edges. The report uses
+part coordinates. It counts shells, boundary edges, non-manifold edges,
+duplicate triangles, triangles with zero area and winding errors. A closed
+mesh has a signed volume. Negative volume indicates inward winding.
+
+| Imported cube with four open edges | Repaired cube with a volume of 1000 mm³ |
+| --- | --- |
+| ![The inner walls are visible through the missing face.](images/mesh-repair-before.png) | ![Two triangles close the top face.](images/mesh-repair-after.png) |
+
+Select **Repair** and **Apply repair**. With the default settings, the tool
+welds coincident vertices, removes duplicate and degenerate triangles,
+corrects winding and fills the missing face. The repaired cube has a volume
+of 1000 mm³. Reduce **Maximum edges per hole** to keep larger openings.
+Inspect the remaining defects after repair. A shared non-manifold edge needs
+a modelling decision. Purchased parts permit inspection only.
+
+| Tool | Input and result |
+| --- | --- |
+| Reduce | Select a triangle target, a fraction of the original count, or a maximum error in millimetres. Use a closed mesh. A target above the existing count keeps the same asset and revision. |
+| Plane cut | Enter the origin in world millimetres and a non-zero world normal. The normal points towards the upper side. Select one side or both. **Cap cut faces** closes the cut loops. When keeping both, the lower side keeps the original id and the upper side gets a new id. |
+| Convert to solid | Convert a closed mesh with up to 200,000 triangles. **Merge coplanar faces** makes one face from adjacent triangles on the same plane. Add a hole, fillet or other solid feature to the new exact body. |
+
+Each edit creates an asset and one undo step when the geometry changes. Use
+**Undo** to restore its previous asset. For a one-sided cut or a conversion,
+enter a new part id to keep the original mesh beside the result in the tree.
+
+For MCP, call `mesh_report` with `part`. Read the current project revision
+from `status`. Pass it as `expected_revision` to `repair_mesh`,
+`reduce_mesh`, `cut_mesh` or `mesh_to_solid`. A changing call returns a
+log, changed part summaries and the new revision. This cut keeps both sides
+of the cube and stores the upper half as `top`.
+
+```json
+{"part":"cube","expected_revision":2,"plane":{"origin":[0,0,5],"normal":[0,0,1]},"keep":"both","cap":true,"copy_as":"top"}
+```

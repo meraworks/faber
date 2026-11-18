@@ -549,12 +549,21 @@ impl Project {
         if action.is_none() && unchanged == self.data {
             return Ok(());
         }
+        let prepared = self.prepare(next, strict)?;
+        self.save_prepared(prepared, action)
+    }
+
+    fn save_prepared(
+        &mut self,
+        prepared: Prepared,
+        action: Option<faber_ports::HistoryMove>,
+    ) -> Result<()> {
         let Prepared {
             data: next,
             bodies,
             histories,
             locals,
-        } = self.prepare(next, strict)?;
+        } = prepared;
         match action {
             Some(action) => self.store.save_history(&self.data, &next, action)?,
             None => self.store.save_checked(&self.data, &next)?,
@@ -567,14 +576,23 @@ impl Project {
         Ok(())
     }
 
-    fn prepare(&self, mut next: ProjectData, strict: bool) -> Result<Prepared> {
+    fn prepare(&self, next: ProjectData, strict: bool) -> Result<Prepared> {
+        self.prepare_with_assets(next, strict, Default::default())
+    }
+
+    fn prepare_with_assets(
+        &self,
+        mut next: ProjectData,
+        strict: bool,
+        staged: assets::Paths,
+    ) -> Result<Prepared> {
         next.revision = self
             .data
             .revision
             .checked_add(1)
             .ok_or("Revision limit reached")?;
         validate_data(&next)?;
-        let paths = assets::resolve(&next, self.assets.as_deref())?;
+        let paths = assets::resolve_with(&next, self.assets.as_deref(), staged)?;
         let values = faber_expr::resolve(&next.params)?;
         let old_values = faber_expr::resolve(&self.data.params)?;
         let mut bodies = Vec::with_capacity(next.parts.len());
