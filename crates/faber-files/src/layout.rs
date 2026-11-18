@@ -5,7 +5,7 @@
 //! `parts/<id>.json`: schema 1, the recipe of one part. No placement.
 //! `placement.json`: schema 1, the placement of each part.
 //! `assembly.json`: schema 1, motion and contacts. Absent when empty.
-//! `analysis.json`: schema 1, saved sections. Absent when empty.
+//! `analysis.json`: schema 1, saved sections and studies. Absent when empty.
 //!
 //! A schema 1 `faber.json` holds the whole project in one file. It still opens.
 
@@ -76,6 +76,9 @@ struct AssemblyFile {
 #[serde(deny_unknown_fields)]
 struct AnalysisFile {
     schema: u32,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    studies: BTreeMap<String, faber_model::study::Study<Scalar>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     sections: BTreeMap<String, SectionAnalysis<Scalar>>,
 }
 
@@ -139,15 +142,16 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         }
         None => Default::default(),
     };
-    let sections = match read_optional::<AnalysisFile>(root, "analysis.json")? {
+    let (sections, studies) = match read_optional::<AnalysisFile>(root, "analysis.json")? {
         Some(file) => {
             check_schema(&file.schema, "analysis.json")?;
-            file.sections
+            (file.sections, file.studies)
         }
         None => Default::default(),
     };
     Ok(ProjectData {
         materials: manifest.materials,
+        studies,
         schema: ONE_FILE_SCHEMA,
         revision: manifest.revision,
         motion,
@@ -197,12 +201,13 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
         };
         put(root, "assembly.json", &file, &mut changed)?;
     }
-    if data.sections.is_empty() {
+    if data.sections.is_empty() && data.studies.is_empty() {
         remove(root.join("analysis.json"), &mut changed)?;
     } else {
         let file = AnalysisFile {
             schema: FILE_SCHEMA,
             sections: data.sections.clone(),
+            studies: data.studies.clone(),
         };
         put(root, "analysis.json", &file, &mut changed)?;
     }

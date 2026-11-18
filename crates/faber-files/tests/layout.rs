@@ -429,3 +429,21 @@ fn unchanged_project_files_keep_their_original_line_endings_and_layout() {
     assert_eq!(fs::read_to_string(&path).unwrap(), original);
     assert_eq!(layout::fingerprint(dir.path()).unwrap(), before);
 }
+#[test]
+fn study_and_section_share_the_analysis_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut data = fixture();
+    assert!(data.studies.is_empty());
+    let study=serde_json::from_value(serde_json::json!({
+        "part":"base","fixtures":[{"kind":"fixed","face":{"normal":[0,0,-1],"tolerance":0.001,"expect":1}}],
+        "loads":[{"kind":"pressure","face":{"normal":[0,0,1],"tolerance":0.001,"expect":1},"mpa":"width / 10"}],
+        "material":"pla","resolution_mm":2
+    })).unwrap();
+    data.studies.insert("pressure".into(), study);
+    layout::write(dir.path(), &data).unwrap();
+    let file: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.path().join("analysis.json")).unwrap()).unwrap();
+    assert_eq!(file["studies"]["pressure"]["loads"][0]["mpa"], "width / 10");
+    assert!(file["sections"].get("mid").is_some());
+    assert_eq!(layout::read(dir.path()).unwrap(), data);
+}

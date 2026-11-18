@@ -150,6 +150,14 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             data.contacts.retain(|_, c| c.a != id && c.b != id);
             crate::section::detach_part(data, &id)?;
         }
+        Edit::SetStudy { id, study } => {
+            data.studies.insert(id, study);
+        }
+        Edit::RemoveStudy { id } => {
+            data.studies
+                .remove(&id)
+                .ok_or_else(|| format!("Unknown study: {id}"))?;
+        }
         Edit::SetMotion { study } => data.motion = study,
         Edit::SetSection { id, section } => {
             crate::section::check_refs(data, &id, &section)?;

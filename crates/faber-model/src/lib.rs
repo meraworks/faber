@@ -2,6 +2,7 @@
 
 mod material;
 pub mod motion;
+pub mod study;
 pub use material::{MaterialClass, MaterialData};
 
 use schemars::JsonSchema;
@@ -11,6 +12,13 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Edit {
+    SetStudy {
+        id: String,
+        study: study::Study<Scalar>,
+    },
+    RemoveStudy {
+        id: String,
+    },
     SetMotion {
         study: motion::MotionStudy,
     },
@@ -1040,6 +1048,8 @@ pub struct Part<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectData {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub studies: BTreeMap<String, study::Study<Scalar>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub materials: BTreeMap<String, MaterialData>,
     pub schema: u32,

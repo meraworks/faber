@@ -338,6 +338,7 @@ impl Shell {
 
     pub fn welcome(cc: &eframe::CreationContext<'_>) -> Self {
         let data = ProjectData {
+            studies: Default::default(),
             materials: Default::default(),
             schema: 1,
             revision: 0,

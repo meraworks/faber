@@ -734,6 +734,17 @@ fn validate_data(data: &ProjectData) -> Result<()> {
         return Err("Project name is empty".into());
     }
     materials::validate(data)?;
+    for (id, study) in &data.studies {
+        if !valid_id(id) {
+            return Err(format!("Invalid study id: {id}"));
+        }
+        if !data.parts.contains_key(&study.part) {
+            return Err(format!(
+                "Study {id} refers to an unknown part: {}",
+                study.part
+            ));
+        }
+    }
     if data.parts.len() > 2000 {
         return Err("Project has more than 2000 parts".into());
     }
