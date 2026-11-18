@@ -599,6 +599,38 @@ fn pointer(shape: &Shape) -> Result<*const c_void> {
         .ok_or_else(|| "Shape belongs to another adapter".into())
 }
 
+/// Writes a shape as OCCT binary bytes, without a tag.
+fn encode_plain(shape: &Shape) -> Result<Vec<u8>> {
+    let shape = pointer(shape)?;
+    let _guard = gate();
+    let mut buffer = [0; 1024];
+    let mut data = std::ptr::null_mut();
+    let mut length = 0;
+    error(
+        unsafe {
+            faber_encode(
+                shape,
+                &mut data,
+                &mut length,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+            )
+        },
+        &buffer,
+    )?;
+    let data = NonNull::new(data).ok_or("Shape encoding returned no data")?;
+    let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), length) }.to_vec();
+    unsafe { faber_free_bytes(data.as_ptr()) };
+    Ok(bytes)
+}
+
+/// Reads OCCT binary bytes that `encode_plain` wrote.
+fn decode_plain(bytes: &[u8]) -> Result<Shape> {
+    shape_call(|out, error, len| unsafe {
+        faber_decode(bytes.as_ptr().cast(), bytes.len(), out, error, len)
+    })
+}
+
 fn check_edges(edges: &[u32]) -> Result<()> {
     if edges.is_empty() {
         return Err("Select at least one edge".into());
@@ -2035,32 +2067,25 @@ impl Kernel for OcctKernel {
         )
     }
     fn encode_shape(&self, shape: &Shape) -> Result<Vec<u8>> {
-        let shape = pointer(shape)?;
-        let _guard = gate();
-        let mut buffer = [0; 1024];
-        let mut data = std::ptr::null_mut();
-        let mut length = 0;
-        error(
-            unsafe {
-                faber_encode(
-                    shape,
-                    &mut data,
-                    &mut length,
-                    buffer.as_mut_ptr(),
-                    buffer.len(),
-                )
-            },
-            &buffer,
-        )?;
-        let data = NonNull::new(data).ok_or("Shape encoding returned no data")?;
-        let bytes =
-            unsafe { std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), length) }.to_vec();
-        unsafe { faber_free_bytes(data.as_ptr()) };
+        // The first byte tells whether the shape carries the text marker.
+        let (tag, plain) = match shape.get::<sketch_text::TextRegions>() {
+            Some(marked) => (sketch_text::TEXT_TAG, &marked.0),
+            None => (sketch_text::PLAIN_TAG, shape),
+        };
+        let mut bytes = vec![tag];
+        bytes.extend(encode_plain(plain)?);
         Ok(bytes)
     }
     fn decode_shape(&self, bytes: &[u8]) -> Result<Shape> {
-        shape_call(|out, error, len| unsafe {
-            faber_decode(bytes.as_ptr().cast(), bytes.len(), out, error, len)
+        let (tag, body) = bytes.split_first().ok_or("Cannot decode shape: no data")?;
+        if *tag != sketch_text::PLAIN_TAG && *tag != sketch_text::TEXT_TAG {
+            return Err("Cannot decode shape: unknown format".into());
+        }
+        let shape = decode_plain(body)?;
+        Ok(if *tag == sketch_text::TEXT_TAG {
+            sketch_text::marked(shape)
+        } else {
+            shape
         })
     }
     fn face_count(&self, shape: &Shape) -> Result<u32> {
@@ -2079,6 +2104,7 @@ impl Kernel for OcctKernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use faber_model::{SketchLoop, SketchProfile, TextAlign};
 
     #[test]
     fn cache_version_names_occt_the_crate_and_the_adapter_source() {
@@ -2091,5 +2117,64 @@ mod tests {
         );
         assert_eq!(env!("FABER_ADAPTER_HASH").len(), 64);
         assert!(version.ends_with(env!("FABER_ADAPTER_HASH")), "{version}");
+    }
+
+    fn square(x: f64) -> SketchProfile {
+        SketchProfile {
+            outer: SketchLoop::Polygon {
+                points: vec![[x, 0.], [x + 10., 0.], [x + 10., 10.], [x, 10.]],
+                corner_radius: None,
+            },
+            holes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn encoded_text_keeps_its_regions_and_a_plain_shape_stays_plain() {
+        let kernel = OcctKernel;
+        let placement = Placement::default();
+        let text = SketchProfile {
+            outer: SketchLoop::Text {
+                text: "Hi".into(),
+                height: 10.,
+                at: [0., 0.],
+                align: TextAlign::Left,
+                angle_deg: None,
+                font: None,
+            },
+            holes: Vec::new(),
+        };
+        let shape = sketch_text::sketch(&kernel, &text, &placement).unwrap();
+        let bytes = kernel.encode_shape(&shape).unwrap();
+        assert_eq!(bytes[0], sketch_text::TEXT_TAG);
+        let decoded = kernel.decode_shape(&bytes).unwrap();
+        let solids = sketch_text::extrude_regions(&kernel, &decoded, [0., 0., 1.]).unwrap();
+        assert!(solids.is_some(), "the decoded text lost its regions");
+
+        let plain = kernel.sketch(&square(0.), &placement).unwrap();
+        let bytes = kernel.encode_shape(&plain).unwrap();
+        assert_eq!(bytes[0], sketch_text::PLAIN_TAG);
+        let decoded = kernel.decode_shape(&bytes).unwrap();
+        let solids = sketch_text::extrude_regions(&kernel, &decoded, [0., 0., 1.]).unwrap();
+        assert!(solids.is_none());
+    }
+
+    #[test]
+    fn entries_without_a_tag_and_unknown_tags_are_refused() {
+        let kernel = OcctKernel;
+        let plain = kernel.sketch(&square(0.), &Placement::default()).unwrap();
+        // An old entry is the bare OCCT stream. Its first byte is not a tag.
+        let old = encode_plain(&plain).unwrap();
+        assert!(
+            old[0] > sketch_text::TEXT_TAG,
+            "old entry starts with {}",
+            old[0]
+        );
+        assert!(kernel.decode_shape(&old).is_err());
+        assert!(kernel.decode_shape(&[]).is_err());
+        let mut unknown = kernel.encode_shape(&plain).unwrap();
+        unknown[0] = 9;
+        let error = kernel.decode_shape(&unknown).err().unwrap();
+        assert!(error.to_string().contains("unknown format"), "{error}");
     }
 }

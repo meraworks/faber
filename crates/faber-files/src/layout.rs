@@ -202,7 +202,9 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
     // Last, after the placement. A part file without a placement entry reads with
     // the identity placement, so a stop before this point still reads.
     for id in part_ids(root)? {
-        if !data.parts.contains_key(&id) {
+        // On a case-insensitive file system a stale name can be the live file of another id.
+        let live = data.parts.keys().any(|key| key.eq_ignore_ascii_case(&id));
+        if !live {
             remove(root.join(format!("parts/{id}.json")), &mut changed)?;
         }
     }

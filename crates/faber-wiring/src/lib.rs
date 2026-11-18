@@ -235,7 +235,8 @@ pub fn design_source() -> Arc<dyn faber_ports::source::DesignSource> {
 
 /// Reads the saved project. A generated project builds first when an input
 /// changed. A failed build does not fail the call. It sets the source error,
-/// and the project keeps its last good state.
+/// and the project keeps its last good state. Without a build record, a read
+/// does not build when the source would remove or change a part. `build` accepts that.
 pub fn refresh(path: &Path, project: &mut Project) -> Result<()> {
     project.sync()?;
     let source = design_source();
@@ -245,13 +246,39 @@ pub fn refresh(path: &Path, project: &mut Project) -> Result<()> {
             .then(|| source.file_name().to_string()),
     );
     project.set_source_error(None);
-    if project.source().is_some()
-        && faber_build::needs_build(path)
-        && let Err(error) = faber_build::build_project(path, project)
-    {
-        project.set_source_error(Some(error));
+    if project.source().is_none() || !faber_build::needs_build(path) {
+        return Ok(());
+    }
+    match unaccepted_replacements(path, project) {
+        Ok(ids) if ids.is_empty() => {
+            if let Err(error) = faber_build::build_project(path, project) {
+                project.set_source_error(Some(error));
+            }
+        }
+        Ok(ids) => project.set_source_error(Some(format!(
+            "{} would replace parts: {}. Call build to accept.",
+            source.file_name(),
+            ids.join(", ")
+        ))),
+        Err(error) => project.set_source_error(Some(error)),
     }
     Ok(())
+}
+
+/// The ids of the parts that a first build would remove or change. The list is
+/// empty when a build record exists, because the source was built before.
+fn unaccepted_replacements(path: &Path, project: &Project) -> Result<Vec<String>> {
+    if faber_build::has_record(path) {
+        return Ok(Vec::new());
+    }
+    let candidate = faber_build::evaluate(path, &project.data)?;
+    Ok(project
+        .data
+        .parts
+        .iter()
+        .filter(|(id, part)| candidate.data.parts.get(*id) != Some(*part))
+        .map(|(id, _)| id.clone())
+        .collect())
 }
 
 /// Builds the design source now. The project then reads the new files.

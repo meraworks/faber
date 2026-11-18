@@ -108,3 +108,82 @@ fn undo_with_a_broken_source_is_refused_and_builds_again_after_the_fix() {
     );
     assert!(dir.path().join(".faber/build.json").is_file());
 }
+
+#[test]
+fn source_added_to_a_project_with_parts_keeps_them_on_a_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut project = faber_wiring::open(dir.path(), true, Some("Hand".into())).unwrap();
+    project.put_part("a".into(), box_part("A")).unwrap();
+    project.put_part("b".into(), box_part("B")).unwrap();
+    write(dir.path(), "design.jsonnet", ONE_PART);
+    faber_wiring::refresh(dir.path(), &mut project).unwrap();
+    assert_eq!(
+        project.source_error(),
+        Some("design.jsonnet would replace parts: b. Call build to accept.")
+    );
+    assert!(project.data.parts.contains_key("b"));
+    assert_eq!(faber_files::read(dir.path()).unwrap().parts.len(), 2);
+    assert!(!dir.path().join(".faber/build.json").exists());
+    faber_wiring::build_source(dir.path(), &mut project).unwrap();
+    assert_eq!(project.data.parts.keys().collect::<Vec<_>>(), vec!["a"]);
+}
+
+#[test]
+fn source_cannot_change_a_purchased_part() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut project = faber_wiring::open(dir.path(), true, Some("Purchased".into())).unwrap();
+    let hash = "f940c8dadc7ad6fe0337a3802cafe12cc716e64c1c519f432a01dea892f6c25e";
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/fastener-check/assets")
+        .join(hash);
+    project
+        .import_with_record(
+            "screw".into(),
+            "Screw".into(),
+            &source,
+            true,
+            Some(faber_model::Purchased {
+                source: "FreeCAD-library".into(),
+                licence: "CC BY 3.0".into(),
+                designation: "M3 x 10".into(),
+                mass_g: None,
+            }),
+        )
+        .unwrap();
+    let message = "Part screw is a purchased part. The design source cannot change it.";
+    write(
+        dir.path(),
+        "design.jsonnet",
+        "{ parts: { screw: { name: 'Screw', colour: [1, 1, 1], geometry: { op: 'box', size: [3, 3, 10] } } } }",
+    );
+    faber_wiring::refresh(dir.path(), &mut project).unwrap();
+    assert!(project.source_error().is_some_and(|e| e.contains("screw")));
+    assert_eq!(
+        faber_wiring::build_source(dir.path(), &mut project).unwrap_err(),
+        message
+    );
+    // A source that leaves the purchased part out removes it. That is refused too.
+    write(
+        dir.path(),
+        "design.jsonnet",
+        "{ parts: { other: { name: 'Other', colour: [1, 1, 1], geometry: { op: 'box', size: [3, 3, 10] } } } }",
+    );
+    assert_eq!(
+        faber_wiring::build_source(dir.path(), &mut project).unwrap_err(),
+        message
+    );
+    assert!(matches!(
+        faber_files::read(dir.path()).unwrap().parts["screw"].geometry,
+        faber_model::Geometry::Imported { .. }
+    ));
+}
+
+#[test]
+fn failed_first_build_writes_no_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "design.jsonnet", BROKEN);
+    let error = faber_wiring::design_source().build(dir.path()).unwrap_err();
+    assert!(!error.is_empty());
+    assert!(!dir.path().join("faber.json").exists());
+    assert!(!dir.path().join("placement.json").exists());
+}

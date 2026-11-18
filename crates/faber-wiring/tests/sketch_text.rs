@@ -267,3 +267,24 @@ fn documented_raised_and_engraved_examples_build() {
     // Both examples use the same letters at the same depth.
     assert!((raised_volume + engraved_volume - 8000.).abs() < 1e-3);
 }
+
+#[test]
+fn text_extrude_edit_after_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut project =
+        faber_wiring::open(directory.path(), true, Some("Text reopen edit".into())).unwrap();
+    put!(
+        project,
+        label(text("Hi", [0., 0.], "left", 0.), [0., 0., 1.])
+    );
+    let volume = project.bodies[0].volume;
+    drop(project);
+    // The sketch now comes from the cache. Its text regions must still extrude region by region.
+    let mut project = faber_wiring::open(directory.path(), false, None).unwrap();
+    put!(
+        project,
+        label(text("Hi", [0., 0.], "left", 0.), [0., 0., 2.])
+    );
+    assert_eq!(solids(&project.bodies), 3);
+    assert!((project.bodies[0].volume - 2. * volume).abs() < 1e-3);
+}

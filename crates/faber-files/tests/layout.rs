@@ -1,5 +1,6 @@
-use faber_files::layout;
+use faber_files::{FileStore, layout};
 use faber_model::{Placement, ProjectData, Scalar};
+use faber_ports::{HistoryMove, ProjectStore};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -284,4 +285,129 @@ fn newer_manifest_schema_is_refused() {
     fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     let error = layout::read(dir.path()).unwrap_err();
     assert!(error.contains("Unsupported project schema 3"), "{error}");
+}
+
+fn layout_bytes(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    LAYOUT_FILES
+        .iter()
+        .filter(|file| root.join(file).exists())
+        .map(|file| (file.to_string(), fs::read(root.join(file)).unwrap()))
+        .collect()
+}
+
+fn set_readonly(path: &Path, readonly: bool) {
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_readonly(readonly);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+#[test]
+fn interrupted_save_with_a_new_parameter_still_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::open(dir.path()).unwrap();
+    store.save(None, &fixture()).unwrap();
+    let old_manifest = fs::read(dir.path().join("faber.json")).unwrap();
+    let expected = store.load().unwrap();
+    let mut data = expected.clone();
+    data.revision += 1;
+    data.params.insert("depth".into(), "6".into());
+    data.parts.get_mut("pin").unwrap().placement.translation[2] =
+        Scalar::Expression("depth".into());
+    store.save_checked(&expected, &data).unwrap();
+    // Stop the save after the part and placement files. The manifest keeps the old revision.
+    fs::write(dir.path().join("faber.json"), old_manifest).unwrap();
+    drop(store);
+    let store = FileStore::open(dir.path()).unwrap();
+    let opened = store.load().unwrap();
+    assert_eq!(opened.revision, 5);
+    assert_eq!(opened.params["depth"], "6");
+    assert_eq!(opened, data);
+}
+
+// Windows refuses to replace a read-only file. Other systems rename over it.
+#[cfg(windows)]
+#[test]
+fn failed_layout_write_restores_the_old_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::open(dir.path()).unwrap();
+    store.save(None, &fixture()).unwrap();
+    let first = store.load().unwrap();
+    let mut second = first.clone();
+    second.revision += 1;
+    second.parts.get_mut("base").unwrap().name = "Base, first".into();
+    store.save_checked(&first, &second).unwrap();
+    let expected = store.load().unwrap();
+    let before = layout_bytes(dir.path());
+    let mut changed = expected.clone();
+    changed.revision += 1;
+    changed.parts.get_mut("base").unwrap().name = "Base, second".into();
+    changed.parts.get_mut("pin").unwrap().placement.translation[0] = Scalar::Number(9.);
+    // A read-only file cannot be replaced on Windows. The write of placement.json fails.
+    let placement = dir.path().join("placement.json");
+    set_readonly(&placement, true);
+    let result = store.save_checked(&expected, &changed);
+    set_readonly(&placement, false);
+    let error = result.unwrap_err();
+    assert!(error.to_string().contains("placement.json"), "{error}");
+    assert_eq!(layout_bytes(dir.path()), before);
+    assert_eq!(store.load().unwrap(), expected);
+    assert!(!dir.path().join(".faber/history/6.json").exists());
+    let undone = store.history_target(HistoryMove::Undo).unwrap();
+    assert_eq!(undone, first);
+}
+
+#[test]
+fn stale_journal_after_branch_change_does_not_overwrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::open(dir.path()).unwrap();
+    store.save(None, &fixture()).unwrap();
+    let first = store.load().unwrap();
+    let mut second = first.clone();
+    second.revision += 1;
+    second.parts.get_mut("base").unwrap().name = "Base, first".into();
+    store.save_checked(&first, &second).unwrap();
+    drop(store);
+    // Another branch is checked out. Its files match neither state of the journal record.
+    let mut other = first.clone();
+    other.parts.get_mut("lid").unwrap().name = "Elsewhere".into();
+    layout::write(dir.path(), &other).unwrap();
+    let before = layout_bytes(dir.path());
+    let store = FileStore::open(dir.path()).unwrap();
+    assert_eq!(layout_bytes(dir.path()), before);
+    assert_eq!(store.load().unwrap(), other);
+    // The record is kept. It is not deleted.
+    assert!(dir.path().join(".faber/history/5.json").exists());
+}
+
+// Windows refuses to replace a read-only file. Other systems rename over it.
+#[cfg(windows)]
+#[test]
+fn failed_regenerate_write_restores_the_old_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::open(dir.path()).unwrap();
+    store.save(None, &fixture()).unwrap();
+    let first = store.load().unwrap();
+    let mut second = first.clone();
+    second.revision += 1;
+    second.parts.get_mut("base").unwrap().name = "Base, first".into();
+    store.save_checked(&first, &second).unwrap();
+    let expected = store.load().unwrap();
+    let before = layout_bytes(dir.path());
+    let mut regenerated = expected.clone();
+    regenerated.parts.get_mut("base").unwrap().name = "Base, regenerated".into();
+    regenerated
+        .parts
+        .get_mut("pin")
+        .unwrap()
+        .placement
+        .translation[0] = Scalar::Number(9.);
+    let placement = dir.path().join("placement.json");
+    set_readonly(&placement, true);
+    let result = store.save_regenerated(&expected, &regenerated);
+    set_readonly(&placement, false);
+    let error = result.unwrap_err();
+    assert!(error.to_string().contains("placement.json"), "{error}");
+    assert_eq!(layout_bytes(dir.path()), before);
+    assert_eq!(store.load().unwrap(), expected);
+    assert_eq!(store.history_target(HistoryMove::Undo).unwrap(), first);
 }

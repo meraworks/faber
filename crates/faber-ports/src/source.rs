@@ -1,5 +1,4 @@
-//! A design source: a text file that generates the project files, for
-//! example a Jsonnet design.
+//! A design source: a text file that generates the project files.
 
 use crate::Result;
 use serde::Serialize;
@@ -21,9 +20,9 @@ pub struct Report {
     pub inputs: Vec<String>,
 }
 
-/// Generates the project files. The source owns `faber.json` and the part files.
+/// Generates the project files. The source owns the manifest and the part files.
 pub trait DesignSource: Send + Sync {
-    /// The file name of the source in a project folder, for example `design.jsonnet`.
+    /// The file name of the source in a project folder.
     fn file_name(&self) -> &str;
     /// True when the project folder has a source.
     fn has_source(&self, root: &Path) -> bool {

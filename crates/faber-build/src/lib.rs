@@ -82,6 +82,11 @@ fn record(root: &Path) -> Option<BuildRecord> {
     serde_json::from_str(&text).ok()
 }
 
+/// True when the folder has a build record. A record is kept by the last accepted build.
+pub fn has_record(root: &Path) -> bool {
+    record(root).is_some()
+}
+
 /// True when the folder has a source and the build record is missing, stale
 /// or incomplete.
 pub fn needs_build(root: &Path) -> bool {
@@ -144,12 +149,23 @@ pub fn build(kernel: Arc<dyn Kernel>, root: &Path) -> Result<Report> {
         empty_project(root)
     };
     evaluate(root, &current)?;
-    if !manifest {
-        store.save(None, &current)?;
+    if manifest {
+        let mut project =
+            Project::open_with_cache(store, kernel, Some(Arc::new(FileAssets::new(root))), None)?;
+        return build_project(root, &mut project);
     }
+    // The first build writes an empty project to open it. A failed build removes that project.
+    store.save(None, &current)?;
     let mut project =
         Project::open_with_cache(store, kernel, Some(Arc::new(FileAssets::new(root))), None)?;
-    build_project(root, &mut project)
+    let result = build_project(root, &mut project);
+    if result.is_err() {
+        for file in ["faber.json", "placement.json"] {
+            let _ = std::fs::remove_file(root.join(file));
+        }
+        let _ = std::fs::remove_file(root.join(".faber/history/0.json"));
+    }
+    result
 }
 
 /// Saves the project that the source gives. The save is one undo step. The

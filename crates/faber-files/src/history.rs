@@ -14,6 +14,56 @@ struct Record {
     redo: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct Revision {
+    revision: u64,
+}
+
+fn read_journal(path: &std::path::Path) -> Result<Record> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let record: Record =
+        serde_json::from_slice(&bytes).map_err(|e| format!("Cannot read history: {e}"))?;
+    if record.schema != 1 {
+        return Err("Unsupported history schema".into());
+    }
+    Ok(record)
+}
+
+/// Puts a journal file back as it was. Without an earlier file, removes it.
+/// A failure here is ignored. The caller returns the error of the save.
+fn restore_journal(journal: &std::path::Path, previous: Option<Vec<u8>>) {
+    match previous {
+        Some(bytes) => {
+            let _ = atomic_write(journal, &bytes);
+        }
+        None => {
+            let _ = std::fs::remove_file(journal);
+        }
+    }
+}
+
+/// True when the files on disk are the old state or a partial write of the new state.
+/// The manifest is written last, so it holds the old name, params and revision.
+/// Each part and each optional file must equal its old or its new value.
+fn continues(disk: &ProjectData, old: &ProjectData, new: &ProjectData) -> bool {
+    if disk.revision != old.revision || disk.name != old.name || disk.params != old.params {
+        return false;
+    }
+    let parts_ok = old
+        .parts
+        .keys()
+        .chain(new.parts.keys())
+        .chain(disk.parts.keys())
+        .all(|id| {
+            let on_disk = disk.parts.get(id);
+            on_disk == old.parts.get(id) || on_disk == new.parts.get(id)
+        });
+    parts_ok
+        && (disk.motion == old.motion || disk.motion == new.motion)
+        && (disk.contacts == old.contacts || disk.contacts == new.contacts)
+        && (disk.sections == old.sections || disk.sections == new.sections)
+}
+
 impl FileStore {
     pub(super) fn checkpoint_path(&self, name: &str) -> Result<PathBuf> {
         if name.is_empty()
@@ -40,13 +90,68 @@ impl FileStore {
         if !path.exists() {
             return Ok(None);
         }
-        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-        let record: Record =
-            serde_json::from_slice(&bytes).map_err(|e| format!("Cannot read history: {e}"))?;
-        if record.schema != 1 {
-            return Err("Unsupported history schema".into());
-        }
+        let record = read_journal(&path)?;
         Ok((record.current == *current).then_some(record))
+    }
+
+    /// Ends a save that stopped after its journal record. The record at revision + 1
+    /// holds the new state, and the record at the manifest revision holds the old state.
+    /// The save is completed only when the files on disk continue the old state.
+    /// Otherwise the files stay as they are, and the record stays.
+    pub(super) fn complete_interrupted_save(&self) -> Result<()> {
+        if !self.root.join("faber.json").exists() {
+            return Ok(());
+        }
+        let bytes = std::fs::read(self.root.join("faber.json")).map_err(|e| e.to_string())?;
+        let Revision { revision } =
+            serde_json::from_slice(&bytes).map_err(|e| format!("Cannot read faber.json: {e}"))?;
+        let Some(next) = revision.checked_add(1) else {
+            return Ok(());
+        };
+        let next_path = self.journal_path(next);
+        if !next_path.exists() {
+            return Ok(());
+        }
+        let Ok(new) = read_journal(&next_path) else {
+            return Ok(());
+        };
+        let Ok(old) = read_journal(&self.journal_path(revision)) else {
+            return Ok(());
+        };
+        if new.current.revision != next || old.current.revision != revision {
+            return Ok(());
+        }
+        let Ok(disk) = super::layout::read(&self.root) else {
+            return Ok(());
+        };
+        if !continues(&disk, &old.current, &new.current) {
+            return Ok(());
+        }
+        super::layout::write(&self.root, &new.current).map(|_| ())
+    }
+
+    /// Writes the layout of `data`. When a file write fails, writes `expected` back
+    /// and restores the journal record of `data` as it was. Returns the original error.
+    fn write_layout(
+        &self,
+        expected: Option<&ProjectData>,
+        data: &ProjectData,
+        journal: &std::path::Path,
+        previous: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let Err(error) = super::layout::write(&self.root, data) else {
+            return Ok(());
+        };
+        let restored = match expected {
+            Some(old) => super::layout::write(&self.root, old).is_ok(),
+            None => true,
+        };
+        // When the restore fails, the record stays. Open then completes the save
+        // when the files are a partial write of it.
+        if restored {
+            restore_journal(journal, previous);
+        }
+        Err(error)
     }
 
     fn snapshot(&self, data: &ProjectData) -> Result<String> {
@@ -107,11 +212,13 @@ impl FileStore {
             .record(expected)?
             .ok_or("History does not match the current file")?;
         record.current = data.clone();
+        let journal = self.journal_path(data.revision);
+        let previous = std::fs::read(&journal).ok();
         atomic_write(
-            &self.journal_path(data.revision),
+            &journal,
             &serde_json::to_vec(&record).map_err(|e| e.to_string())?,
         )?;
-        super::layout::write(&self.root, data).map(|_| ())
+        self.write_layout(Some(expected), data, &journal, previous)
     }
 
     pub(super) fn commit_history(
@@ -169,15 +276,27 @@ impl FileStore {
             }
         }
         record.current = data.clone();
+        let journal = self.journal_path(data.revision);
+        let previous = std::fs::read(&journal).ok();
         atomic_write(
-            &self.journal_path(data.revision),
+            &journal,
             &serde_json::to_vec(&record).map_err(|e| e.to_string())?,
         )?;
-        if let Some(expected) = expected
-            && self.load()? != *expected
-        {
-            return Err("Project changed before save".into());
+        let unchanged = match expected {
+            Some(expected) => self.load().map(|now| now == *expected),
+            None => Ok(true),
+        };
+        match unchanged {
+            Ok(true) => {}
+            Ok(false) => {
+                restore_journal(&journal, previous);
+                return Err("Project changed before save".into());
+            }
+            Err(error) => {
+                restore_journal(&journal, previous);
+                return Err(error);
+            }
         }
-        super::layout::write(&self.root, data).map(|_| ())
+        self.write_layout(expected, data, &journal, previous)
     }
 }

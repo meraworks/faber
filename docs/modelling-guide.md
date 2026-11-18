@@ -13,7 +13,7 @@ Follow these six steps for each change.
 3. Write the edits as one `batch` array named `operations`. Each item is flat.
 4. Send the same `operations` array to `preview_batch`. Check the candidate. Nothing is saved.
 5. Send the same `operations` array to `batch`. Set `expected_revision` to `base_revision`. Faber saves the change.
-6. Call `render` to check the saved model. If the result is wrong, call `undo`.
+6. Call `render` to check the saved model. It writes a PNG and returns its path. Set `inline: true` to also get the image. If the result is wrong, call `undo`.
 
 ### Worked example: box with a fillet
 
@@ -745,7 +745,7 @@ To capture a pose, run `faber-viewer shot PROJECT --joint input 15 --out pose.pn
 
 ## Move and align parts
 
-Call `move_part` with exactly one mode. The call refuses zero or several modes.
+Call `move_part` with exactly one mode. The call refuses zero or several modes. Set `id` for one part. Set `ids` to a list of part ids to move a group. The group moves by one motion.
 
 - `translate`: move by `[dx, dy, dz]` in mm. The move is relative.
 - `rotate`: set `axis` to `"x"`, `"y"`, `"z"` or a vector. Set `angle_deg`. Set `about` to `"centre"`, `"origin"` or a world point. The default is `"centre"`, the centre of the bounding box.
@@ -790,7 +790,7 @@ The source evaluates to an object with these keys:
 
 If the project has a source, the tools refuse changes to parts, features and parameters. Edit the source, then call `build`. Placement, contact, section and motion tools still work.
 
-Call `build` to write the files. A build that fails writes no file. If an input changed, the MCP server builds the source before the next tool call. The build report lists the written files and the added or removed parts. A removed part loses its placement. An undo of a build regenerates the same recipes from the source.
+Call `build` to write the files. A build that fails writes no file. If an input changed, the MCP server builds the source before the next tool call. The build report lists the written files and the added or removed parts. A removed part loses its placement. An undo of a build regenerates the same recipes from the source. A build before the next tool call raises the revision. An `expected_revision` from before the source edit is refused. Call `status` and read the revision again.
 
 Imports look first in the folder of the importing file. Then they look in `lib/` of the project folder. `import 'faber.libsonnet'` gives these helpers:
 

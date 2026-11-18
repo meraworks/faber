@@ -15,7 +15,7 @@
     },
     "mid_bracket": {
       "translation": [
-        0.0,
+        60.0,
         0.0,
         0.0
       ],
@@ -27,7 +27,7 @@
     },
     "right_bracket": {
       "translation": [
-        0.0,
+        120.0,
         0.0,
         0.0
       ],

@@ -5,7 +5,7 @@
 
 use crate::batch::Operation;
 use crate::{Project, section};
-use faber_model::{Edit, Part, ProjectData, Scalar};
+use faber_model::{Edit, Geometry, Part, ProjectData, Scalar};
 use faber_ports::Result;
 use std::collections::BTreeMap;
 
@@ -18,6 +18,23 @@ pub fn regenerate(
     params: BTreeMap<String, String>,
     parts: BTreeMap<String, Part<Scalar>>,
 ) -> Result<ProjectData> {
+    for (id, old) in &current.parts {
+        let purchased = matches!(
+            old.geometry,
+            Geometry::Imported {
+                purchased: Some(_),
+                ..
+            }
+        );
+        let kept = parts
+            .get(id)
+            .is_some_and(|part| part.geometry == old.geometry);
+        if purchased && !kept {
+            return Err(format!(
+                "Part {id} is a purchased part. The design source cannot change it."
+            ));
+        }
+    }
     let mut next = current.clone();
     next.name = name;
     next.params = params;

@@ -113,7 +113,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
         json!({"name":"preview_batch","arguments":{
             "expected_revision":base_revision,
             "operations":[{"tool":"put_part","id":"base","part":proposed}],
-            "render":{"path":section_path,"width":128,"height":96,"view":"front",
+            "render":{"path":section_path,"width":128,"height":96,"view":"front","inline":true,
                 "section":{"normal":[0,0,1],"offset":40,"reverse":false}}
         }}),
     );
@@ -1639,5 +1639,32 @@ fn set_motion_still_refuses_an_unknown_field_with_verbose() {
     let mut s = Session::start(dir.path());
     let text = s.refused("set_motion", json!({"verbose":true,"bogus":1}));
     assert!(text.contains("bogus"), "{text}");
+    s.finish();
+}
+
+#[test]
+fn preview_render_sends_no_image_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    let proposed = box_part("Box", [10., 10., 10.], [0., 0., 0.]);
+    let png = dir.path().join("preview.png").display().to_string();
+    let plain = s.rpc(
+        "tools/call",
+        json!({"name":"preview_batch","arguments":{
+            "operations":[{"tool":"put_part","id":"box","part":proposed}],
+            "render":{"path":png,"width":128,"height":96}
+        }}),
+    );
+    assert_ne!(plain["isError"], true, "{plain}");
+    assert_eq!(plain["content"].as_array().unwrap().len(), 1, "{plain}");
+    assert!(std::path::Path::new(&png).is_file());
+    let inline = s.rpc(
+        "tools/call",
+        json!({"name":"preview_batch","arguments":{
+            "operations":[{"tool":"put_part","id":"box","part":proposed}],
+            "render":{"path":png,"width":128,"height":96,"inline":true}
+        }}),
+    );
+    assert_eq!(inline["content"][1]["mimeType"], "image/png", "{inline}");
     s.finish();
 }

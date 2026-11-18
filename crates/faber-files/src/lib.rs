@@ -33,10 +33,12 @@ impl FileStore {
             .map_err(|e| e.to_string())?;
         lock.try_lock()
             .map_err(|_| "Another writer has this project open".to_string())?;
-        Ok(Self {
+        let store = Self {
             root: root.to_path_buf(),
             _lock: lock,
-        })
+        };
+        store.complete_interrupted_save()?;
+        Ok(store)
     }
 }
 

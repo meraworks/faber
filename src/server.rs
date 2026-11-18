@@ -26,7 +26,7 @@ Follow this loop for each change:
 2. Call status, params or part_info to read the current state.
 3. Send the edits as one operations array to preview_batch. Nothing is saved.
 4. Send the same operations to batch with expected_revision set to base_revision. Faber saves the change.
-5. Call measure and part_info to check the result. Call render to see the model.
+5. Call measure and part_info to check the result. Call render to write a PNG. It returns the path. Set inline to true to get the image.
 
 Call the schema tool to read the shape of a recipe. Use kind geometry with no op for the list of ops. Add op to read one op.
 Call the guide tool to read the modelling guide. Call guide with no topic to list the topics.
@@ -1095,7 +1095,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Build a candidate from ordered edits without saving or changing undo history. Return its bounds and volumes with the base revision. Optional render accepts path, width, height and section and returns a PNG image. To save the design, send the same operations to batch with expected_revision set to base_revision. Strict checks are optional."
+        description = "Build a candidate from ordered edits without saving or changing undo history. Return its bounds and volumes with the base revision. Optional render accepts path, width, height, section and inline. The PNG file is always written. Set inline to true to also send the image. To save the design, send the same operations to batch with expected_revision set to base_revision. Strict checks are optional."
     )]
     fn preview_batch(
         &self,
@@ -1122,7 +1122,9 @@ impl Faber {
                     render.height,
                     render.view,
                 )?;
-                image = Some(std::fs::read(&render.path).map_err(|e| e.to_string())?);
+                if render.inline {
+                    image = Some(std::fs::read(&render.path).map_err(|e| e.to_string())?);
+                }
             }
             Ok(json!({"schema":1,"saved":false,"base_revision":base_revision,"candidate":report(&data,&bodies)}))
         });

@@ -5,7 +5,17 @@ use skrifa::{
 };
 
 /// A shape that `sketch` built from text regions. Only this shape extrudes region by region.
-pub(crate) struct TextRegions(Shape);
+pub(crate) struct TextRegions(pub(crate) Shape);
+
+/// First byte of an encoded shape with no text marker.
+pub(crate) const PLAIN_TAG: u8 = 0;
+/// First byte of an encoded text shape. The bytes after it are the plain shape.
+pub(crate) const TEXT_TAG: u8 = 1;
+
+/// Gives a shape the text marker.
+pub(crate) fn marked(shape: Shape) -> Shape {
+    Shape::new(TextRegions(shape))
+}
 
 /// Returns the shape under a text marker, or the shape itself.
 pub(crate) fn unmarked(shape: &Shape) -> &Shape {
@@ -49,7 +59,7 @@ pub(crate) fn sketch<K: Kernel>(
         });
     }
     let shape = shape.ok_or("Text has no visible outline")?;
-    Ok(Shape::new(TextRegions(shape)))
+    Ok(marked(shape))
 }
 
 /// Extrudes each face of a multi-region text sketch and fuses the solids.
@@ -424,7 +434,13 @@ mod tests {
         let right = kernel.sketch(&square(20.), &placement).unwrap();
         let faces = kernel.combine(&left, &right, Combine::Union).unwrap();
         assert_eq!(kernel.face_count(&faces).unwrap(), 2);
-        assert!(kernel.extrude_shape(&faces, [0., 0., 1.]).is_err());
+        let error = kernel.extrude_shape(&faces, [0., 0., 1.]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Extrusion source must be a sketch face"),
+            "{error}"
+        );
     }
 
     #[test]
