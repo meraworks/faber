@@ -17,7 +17,10 @@ fn curved_examples_build_through_stdio_and_keep_exact_geometry() {
         "open",
         json!({"path":directory.path(),"create":true,"name":"Curves"}),
     );
-    let report = client.tool("batch", json!({"operations":curves::operations()}));
+    let report = client.tool(
+        "batch",
+        json!({"verbose":true,"operations":curves::operations()}),
+    );
     assert_eq!(report["part_count"], 3);
     let parts = report["parts"].as_array().unwrap();
     let volume = |id: &str| {

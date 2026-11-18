@@ -220,7 +220,7 @@ mod tests {
             version: "v1",
             builds: AtomicUsize::new(0),
         };
-        let shape = build(
+        let (shape, _) = build(
             &features,
             "base",
             &same,
@@ -271,6 +271,20 @@ impl Cache {
     pub(crate) fn placement(&self, id: &str) -> Option<faber_model::Placement> {
         self.0.get(id).and_then(|entry| match &entry.value {
             Built::Plane(placement) => Some(placement.clone()),
+            _ => None,
+        })
+    }
+    /// The origin and direction of a reference axis feature, in part coordinates.
+    pub(crate) fn axis(&self, id: &str) -> Option<([f64; 3], [f64; 3])> {
+        self.0.get(id).and_then(|entry| match &entry.value {
+            Built::Axis { origin, direction } => Some((*origin, *direction)),
+            _ => None,
+        })
+    }
+    /// The position of a reference point feature, in part coordinates.
+    pub(crate) fn point(&self, id: &str) -> Option<[f64; 3]> {
+        self.0.get(id).and_then(|entry| match &entry.value {
+            Built::Point(position) => Some(*position),
             _ => None,
         })
     }
@@ -515,7 +529,7 @@ pub(crate) fn output_error(features: &[Feature], output: &str, error: String) ->
 }
 
 /// Returns the operation kind as a snake case name, such as `fillet`.
-fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
+pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
     match geometry {
         Geometry::Imported { .. } => "imported",
         Geometry::Mirror { .. } => "mirror",
@@ -705,7 +719,7 @@ pub(crate) fn build(
     cache: &mut Cache,
     paths: &crate::assets::Paths,
     persist: Option<&dyn FeatureCache>,
-) -> Result<Shape> {
+) -> Result<(Shape, Option<String>)> {
     if features.is_empty() || features.len() > 2000 {
         return Err("A history needs between 1 and 2000 features".into());
     }
@@ -1285,7 +1299,8 @@ pub(crate) fn build(
     match result {
         Built::Shape(shape) => {
             cache.0 = next;
-            Ok(shape)
+            // The key is set only when the persistent cache is active.
+            Ok((shape, keys.get(output).cloned()))
         }
         _ => Err("A reference cannot be the part output".into()),
     }

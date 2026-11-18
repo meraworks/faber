@@ -1,12 +1,11 @@
 //! Moves and aligns placed parts. The math is pure. Project methods save one change.
 
 use crate::{Project, valid_id};
-use faber_model::{Geometry, Part, Placement, Scalar};
+use faber_model::{Edit, Geometry, Part, Placement, ProjectData, Scalar};
 use faber_ports::Result;
 use glam::{DMat3, DVec3};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::collections::BTreeMap;
 
 /// Keeps nine decimal places. Removes float noise such as 1e-17.
 const DECIMALS: f64 = 1e9;
@@ -289,6 +288,102 @@ pub fn refuse_purchased_copy(id: &str, part: &Part<Scalar>) -> Result<()> {
     }
 }
 
+/// The edit that moves a part. `bounds` is the world box of the part before the move.
+/// With `copy_as`, the edit adds the moved part under a new id and keeps the source.
+pub fn move_edit(
+    data: &ProjectData,
+    id: &str,
+    motion: &Motion,
+    bounds: [[f64; 3]; 2],
+    copy_as: Option<&str>,
+) -> Result<Edit> {
+    let part = part_of(data, id)?;
+    let placement = motion.apply(&plain(id, &part.placement)?, bounds)?;
+    placed_edit(data, id, part, placement, copy_as)
+}
+
+/// The edit that aligns a part with a target part or with "origin". Only the listed axes move.
+/// `bounds` reads the world box of a part id.
+pub fn align_edit(
+    data: &ProjectData,
+    id: &str,
+    target: &str,
+    axes: &[Axis],
+    mode: AlignMode,
+    gap_mm: f64,
+    mut bounds: impl FnMut(&str) -> Result<[[f64; 3]; 2]>,
+) -> Result<Edit> {
+    if axes.is_empty() {
+        return Err("Give at least one axis.".into());
+    }
+    for (index, axis) in axes.iter().enumerate() {
+        if axes[..index].contains(axis) {
+            return Err(format!("Axis listed twice: {}", axis.name()));
+        }
+    }
+    if !gap_mm.is_finite() {
+        return Err("gap_mm must be a finite number.".into());
+    }
+    let gap_applies = matches!(mode, AlignMode::MinToMax | AlignMode::MaxToMin);
+    if gap_mm != 0. && !gap_applies {
+        return Err("gap_mm applies only to min_to_max and max_to_min.".into());
+    }
+    if target == id {
+        return Err("A part cannot align to itself.".into());
+    }
+    let part = part_of(data, id)?;
+    let moving = bounds(id)?;
+    let fixed = if target == ORIGIN {
+        [[0.; 3]; 2]
+    } else {
+        bounds(target)?
+    };
+    let mut delta = DVec3::ZERO;
+    for axis in axes {
+        delta[axis.index()] = align_shift(moving, fixed, *axis, mode, gap_mm);
+    }
+    let placement = translated(&plain(id, &part.placement)?, delta);
+    placed_edit(data, id, part, placement, None)
+}
+
+fn part_of<'a>(data: &'a ProjectData, id: &str) -> Result<&'a Part<Scalar>> {
+    data.parts
+        .get(id)
+        .ok_or_else(|| format!("Unknown part: {id}"))
+}
+
+/// The edit that stores a placed part. With `copy_as`, the copy gets a new id.
+fn placed_edit(
+    data: &ProjectData,
+    id: &str,
+    part: &Part<Scalar>,
+    placement: Placement,
+    copy_as: Option<&str>,
+) -> Result<Edit> {
+    let mut part = part.clone();
+    part.placement = Placement {
+        translation: placement.translation.map(Scalar::Number),
+        rotation: placement.rotation.map(Scalar::Number),
+    };
+    let target = match copy_as {
+        None => id,
+        Some(new_id) => {
+            refuse_purchased_copy(id, &part)?;
+            if !valid_id(new_id) {
+                return Err(format!("Invalid part id: {new_id}"));
+            }
+            if data.parts.contains_key(new_id) {
+                return Err(format!("Part already exists: {new_id}"));
+            }
+            new_id
+        }
+    };
+    Ok(Edit::PutPart {
+        id: target.to_string(),
+        part,
+    })
+}
+
 fn vector(values: [f64; 3]) -> Result<DVec3> {
     if values.iter().all(|value| value.is_finite()) {
         Ok(DVec3::from(values))
@@ -315,9 +410,9 @@ impl Project {
     /// The change is one undo step.
     pub fn move_part(&mut self, id: &str, motion: Motion, copy_as: Option<&str>) -> Result<()> {
         self.sync()?;
-        let part = self.part_of(id)?.clone();
-        let placement = motion.apply(&plain(id, &part.placement)?, self.world_bounds(id)?)?;
-        self.store_placement(id, part, placement, copy_as)
+        let bounds = self.world_bounds(id)?;
+        let edit = move_edit(&self.data, id, &motion, bounds, copy_as)?;
+        self.batch(vec![edit])
     }
 
     /// Aligns a part with a target part or with "origin". Only the listed axes move.
@@ -331,44 +426,10 @@ impl Project {
         gap_mm: f64,
     ) -> Result<()> {
         self.sync()?;
-        if axes.is_empty() {
-            return Err("Give at least one axis.".into());
-        }
-        for (index, axis) in axes.iter().enumerate() {
-            if axes[..index].contains(axis) {
-                return Err(format!("Axis listed twice: {}", axis.name()));
-            }
-        }
-        if !gap_mm.is_finite() {
-            return Err("gap_mm must be a finite number.".into());
-        }
-        let gap_applies = matches!(mode, AlignMode::MinToMax | AlignMode::MaxToMin);
-        if gap_mm != 0. && !gap_applies {
-            return Err("gap_mm applies only to min_to_max and max_to_min.".into());
-        }
-        if target == id {
-            return Err("A part cannot align to itself.".into());
-        }
-        let part = self.part_of(id)?.clone();
-        let moving = self.world_bounds(id)?;
-        let fixed = if target == ORIGIN {
-            [[0.; 3]; 2]
-        } else {
-            self.world_bounds(target)?
-        };
-        let mut delta = DVec3::ZERO;
-        for axis in axes {
-            delta[axis.index()] = align_shift(moving, fixed, *axis, mode, gap_mm);
-        }
-        let placement = translated(&plain(id, &part.placement)?, delta);
-        self.store_placement(id, part, placement, None)
-    }
-
-    fn part_of(&self, id: &str) -> Result<&Part<Scalar>> {
-        self.data
-            .parts
-            .get(id)
-            .ok_or_else(|| format!("Unknown part: {id}"))
+        let edit = align_edit(&self.data, id, target, axes, mode, gap_mm, |part| {
+            self.world_bounds(part)
+        })?;
+        self.batch(vec![edit])
     }
 
     fn world_bounds(&self, id: &str) -> Result<[[f64; 3]; 2]> {
@@ -377,32 +438,6 @@ impl Project {
             .find(|body| body.id == id)
             .map(|body| body.bounds)
             .ok_or_else(|| format!("Unknown part: {id}"))
-    }
-
-    fn store_placement(
-        &mut self,
-        id: &str,
-        mut part: Part<Scalar>,
-        placement: Placement,
-        copy_as: Option<&str>,
-    ) -> Result<()> {
-        part.placement = Placement {
-            translation: placement.translation.map(Scalar::Number),
-            rotation: placement.rotation.map(Scalar::Number),
-        };
-        match copy_as {
-            None => self.put_parts(BTreeMap::from([(id.to_string(), part)])),
-            Some(new_id) => {
-                refuse_purchased_copy(id, &part)?;
-                if !valid_id(new_id) {
-                    return Err(format!("Invalid part id: {new_id}"));
-                }
-                if self.data.parts.contains_key(new_id) {
-                    return Err(format!("Part already exists: {new_id}"));
-                }
-                self.put_parts(BTreeMap::from([(new_id.to_string(), part)]))
-            }
-        }
     }
 }
 

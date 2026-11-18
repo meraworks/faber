@@ -103,7 +103,9 @@ pub(crate) fn expand(text: &SketchLoop) -> Result<Vec<SketchProfile>> {
         return Err("Text must be one line".into());
     }
     if !(1e-6..=1e6).contains(height) {
-        return Err("Text height must be between 0.000001 and 1000000 mm".into());
+        return Err(format!(
+            "Text height {height} mm must be between 0.000001 and 1000000 mm."
+        ));
     }
     let angle_deg = angle_deg.unwrap_or(0.);
     if at

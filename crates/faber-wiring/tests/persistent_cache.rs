@@ -38,16 +38,23 @@ struct Counting {
     hits: AtomicUsize,
 }
 
+/// Mesh entries of the unplaced body cache. The counters below count feature entries only.
+fn is_mesh(key: &str) -> bool {
+    key.starts_with("mesh03")
+}
+
 impl FeatureCache for Counting {
     fn get(&self, key: &str) -> Option<Vec<u8>> {
         let bytes = self.inner.get(key);
-        if bytes.is_some() {
+        if bytes.is_some() && !is_mesh(key) {
             self.hits.fetch_add(1, Ordering::Relaxed);
         }
         bytes
     }
     fn put(&self, key: &str, bytes: &[u8]) -> Result<()> {
-        self.puts.fetch_add(1, Ordering::Relaxed);
+        if !is_mesh(key) {
+            self.puts.fetch_add(1, Ordering::Relaxed);
+        }
         self.inner.put(key, bytes)
     }
 }

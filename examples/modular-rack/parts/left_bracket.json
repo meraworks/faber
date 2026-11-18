@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "name": "Bracket",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "plate",
+        "geometry": {
+          "op": "box",
+          "size": [
+            40.0,
+            30.0,
+            3.0
+          ]
+        }
+      },
+      {
+        "id": "bore_tool",
+        "geometry": {
+          "op": "cylinder",
+          "radius": 2.5,
+          "height": 9.0
+        }
+      },
+      {
+        "id": "bore",
+        "geometry": {
+          "op": "transform",
+          "source": "bore_tool",
+          "placement": {
+            "translation": [
+              20.0,
+              15.0,
+              -3.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "bracket_body",
+        "geometry": {
+          "op": "difference",
+          "left": "plate",
+          "right": "bore"
+        }
+      }
+    ],
+    "output": "bracket_body"
+  },
+  "colour": [
+    200,
+    120,
+    60
+  ],
+  "group": "",
+  "note": ""
+}

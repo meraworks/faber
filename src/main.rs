@@ -24,8 +24,9 @@ async fn main() {
         }),
         Some("import") if args.len() == 3 => faber_wiring::archive::import(Path::new(&args[1]), Path::new(&args[2])),
         Some("migrate") if args.len() == 2 => migrate(Path::new(&args[1])),
+        Some("build") if args.len() == 2 => build(Path::new(&args[1])),
         Some("export") if args.len() >= 3 => export(&args),
-        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | status PROJECT | export PROJECT DIRECTORY [--format stl|step] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
+        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | export PROJECT DIRECTORY [--format stl|step] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -40,6 +41,16 @@ fn migrate(root: &Path) -> Result<(), String> {
     for path in faber_files::layout::write(root, &data)? {
         println!("{}", path.display());
     }
+    Ok(())
+}
+
+/// Builds the design source of a project folder and prints the report.
+fn build(root: &Path) -> Result<(), String> {
+    let report = faber_wiring::design_source().build(root)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 

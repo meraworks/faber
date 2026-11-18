@@ -108,6 +108,9 @@ impl ProjectStore for FileStore {
     ) -> Result<()> {
         self.commit_history(Some(expected), data, Some(action))
     }
+    fn save_regenerated(&self, expected: &ProjectData, data: &ProjectData) -> Result<()> {
+        self.commit_regenerated(expected, data)
+    }
 }
 
 pub struct MeshExchange;

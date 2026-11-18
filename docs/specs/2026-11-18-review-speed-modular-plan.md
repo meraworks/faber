@@ -384,6 +384,29 @@ pub trait DesignSource: Send + Sync {
 - [ ] **Step 4: Write the example** `examples/modular-rack` (a bracket block used three times with different parameters) and document the method in the guide (one section, with the example source).
 - [ ] **Step 5: Run** `cargo test --offline -j 4 -p faber-build -- --test-threads=1` and `cargo test --offline -j 4 --test mcp -- --test-threads=1`. Expected: pass.
 
+### Task 10: Multiple selection and group move in the viewer
+
+Owner request of 2026-11-18: select several parts with the mouse and move them
+together, as Fusion does. Runs in round 3 with Task 4 (different files).
+
+**Files:**
+- Modify: `crates/faber-viewer/src/app.rs` (selection state, picking, browser list), `crates/faber-viewer/src/app/move_tool.rs` (draft for several parts)
+- Modify: `crates/faber-core/src/placement.rs` (one edit list for several parts), `src/server.rs` (`move_part` accepts `ids`)
+- Test: viewer tests with `egui_kittest`, `crates/faber-wiring/tests/batch.rs`, `tests/mcp.rs`
+
+**Interfaces:**
+- Selection is a sorted set of part ids with one primary part (the last one clicked).
+- Click selects one part. Ctrl + click adds or removes a part. Shift + click in the browser list selects a range. A left drag on empty space draws a rectangle: left to right selects the parts fully inside; right to left selects the parts that the rectangle touches. Ctrl + A selects all visible parts. Escape clears the selection.
+- Move/Copy acts on the whole selection: one triad at the centre of the common bounds (pivot choices as now), one rigid motion for all parts, one preview, one revision, one undo step. Copy makes one copy of each part with the id suffix `-copy`; a purchased part in the selection refuses the copy and names the part.
+- Delete, Hide, Isolate and "Exact placement" (relative fields only) act on the whole selection.
+- `faber_core::move_edits(data, ids, motion) -> Result<Vec<Edit>>`; MCP `move_part` accepts `ids: [..]` in place of `id` and returns one entry in `changed` for each part.
+- The status line shows `<n> parts selected`.
+
+- [ ] **Step 1: Write failing tests:** `ctrl_click_adds_and_removes`, `rectangle_left_to_right_selects_inside_only`, `rectangle_right_to_left_selects_touched`, `shift_click_selects_a_range_in_the_browser`, `group_move_keeps_the_relative_positions` (two parts, translate 10 mm and turn 90 degrees about the common centre: the distance between their centres is unchanged, both saved in one revision), `group_move_is_one_undo_step`, `group_copy_with_a_purchased_part_is_refused`, `escape_clears_the_selection`, `mcp.rs::move_part_with_ids_moves_all`.
+- [ ] **Step 2: Run** `cargo test --offline -j 4 -p faber-viewer -- --test-threads=1`. Expected: fail.
+- [ ] **Step 3: Implement.** A group rotation turns each part about the common pivot: new placement = motion * old placement.
+- [ ] **Step 4: Run** the viewer tests, `cargo test --offline -j 4 -p faber-wiring --test batch -- --test-threads=1`, `cargo test --offline -j 4 --test mcp --test context_size -- --test-threads=1`. Expected: pass.
+
 ### Task 9: Close (coordinator)
 
 - [ ] Run `cargo fmt --all`, workspace Clippy and all tests in sequence.

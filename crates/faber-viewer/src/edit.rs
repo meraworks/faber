@@ -209,11 +209,12 @@ pub fn history(
     if project.data != *expected {
         return Err("Project changed. Wait for the view to reload.".into());
     }
-    if redo {
-        project.redo()?;
+    let action = if redo {
+        faber_ports::HistoryMove::Redo
     } else {
-        project.undo()?;
-    }
+        faber_ports::HistoryMove::Undo
+    };
+    faber_wiring::history_move(root, &mut project, action)?;
     Ok((project.data, project.bodies))
 }
 

@@ -1,16 +1,30 @@
-use crate::Project;
+use crate::body_cache;
+use crate::placement::{AlignMode, Axis, Motion, align_edit, move_edit};
+use crate::{Project, candidate_local, resolve_part};
 use faber_model::{Contact, Edit, Feature, Geometry, ProjectData, Scalar};
 use faber_ports::Result;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-/// One batch operation: a model edit or a metadata change.
-// The server reads each item by its tool field. This type gives the schema.
-#[derive(Clone, Debug, JsonSchema)]
-#[serde(untagged)]
+/// One batch operation: a model edit, a metadata change or a placement.
+#[derive(Clone, Debug)]
 pub enum Operation {
     SetPartInfo(PartInfoOperation),
     Edit(Box<Edit>),
+    /// Moves a part. Its box is read from the state before this operation.
+    Move {
+        id: String,
+        motion: Motion,
+        copy_as: Option<String>,
+    },
+    /// Aligns a part. The boxes are read from the state before this operation.
+    Align {
+        id: String,
+        target: String,
+        axes: Vec<Axis>,
+        mode: AlignMode,
+        gap_mm: f64,
+    },
 }
 
 impl From<Edit> for Operation {
@@ -299,7 +313,8 @@ impl Project {
         strict: bool,
     ) -> Result<(ProjectData, Vec<faber_ports::Body>)> {
         self.sync()?;
-        let candidate = candidate(&self.data, operations)?;
+        self.refuse_generated_operations(&operations)?;
+        let candidate = self.candidate(operations)?;
         let prepared = self.prepare(candidate, strict)?;
         Ok((prepared.data, prepared.bodies))
     }
@@ -311,32 +326,89 @@ impl Project {
     }
     pub fn batch_operations(&mut self, operations: Vec<Operation>, strict: bool) -> Result<()> {
         self.sync()?;
-        self.apply_history(candidate(&self.data, operations)?, None, strict)
+        self.refuse_generated_operations(&operations)?;
+        self.apply_history(self.candidate(operations)?, None, strict)
     }
 }
 
-fn operation(data: &mut ProjectData, operation: Operation) -> Result<()> {
+/// Reads the world box of a part in a candidate state. A part whose recipe did not change
+/// reuses its unplaced body. Only a changed or new part is built, without the feature cache.
+struct Boxes<'a> {
+    project: &'a Project,
+}
+
+impl Boxes<'_> {
+    fn of(&self, data: &ProjectData, id: &str) -> Result<[[f64; 3]; 2]> {
+        let part = data
+            .parts
+            .get(id)
+            .ok_or_else(|| format!("Unknown part: {id}"))?;
+        let values = faber_expr::resolve(&data.params)?;
+        let resolved = resolve_part(part, &values)?;
+        let kernel = self.project.kernel.as_ref();
+        let placed = match self
+            .project
+            .locals
+            .get(id)
+            .filter(|local| local.geometry == resolved.geometry)
+        {
+            Some(local) => body_cache::place(local, &resolved.placement, kernel)?,
+            None => {
+                let local = candidate_local(data, id, kernel, self.project.assets.as_deref())?;
+                body_cache::place(&local, &resolved.placement, kernel)?
+            }
+        };
+        Ok(placed.bounds)
+    }
+}
+
+fn operation(data: &mut ProjectData, boxes: &Boxes<'_>, operation: Operation) -> Result<()> {
     match operation {
         Operation::Edit(edit_operation) => edit(data, *edit_operation),
         Operation::SetPartInfo(PartInfoOperation::SetPartInfo(info)) => part_info(data, info),
+        Operation::Move {
+            id,
+            motion,
+            copy_as,
+        } => {
+            let bounds = boxes.of(data, &id)?;
+            let placed = move_edit(data, &id, &motion, bounds, copy_as.as_deref())?;
+            edit(data, placed)
+        }
+        Operation::Align {
+            id,
+            target,
+            axes,
+            mode,
+            gap_mm,
+        } => {
+            let current: &ProjectData = data;
+            let aligned = align_edit(current, &id, &target, &axes, mode, gap_mm, |part| {
+                boxes.of(current, part)
+            })?;
+            edit(data, aligned)
+        }
     }
 }
 
-fn candidate(data: &ProjectData, operations: Vec<Operation>) -> Result<ProjectData> {
-    if operations.is_empty() || operations.len() > 2000 {
-        return Err("Batch needs between 1 and 2000 operations".into());
+impl Project {
+    fn candidate(&self, operations: Vec<Operation>) -> Result<ProjectData> {
+        if operations.is_empty() || operations.len() > 2000 {
+            return Err("Batch needs between 1 and 2000 operations".into());
+        }
+        // One operation has no position to name. Several operations name the failing one.
+        let several = operations.len() > 1;
+        let mut next = self.data.clone();
+        let boxes = Boxes { project: self };
+        for (position, item) in operations.into_iter().enumerate() {
+            operation(&mut next, &boxes, item).map_err(|e| {
+                if several {
+                    format!("Batch operation {}: {e}", position + 1)
+                } else {
+                    e
+                }
+            })?;
+        }
+        Ok(next)
     }
-    // One operation has no position to name. Several operations name the failing one.
-    let several = operations.len() > 1;
-    let mut next = data.clone();
-    for (position, item) in operations.into_iter().enumerate() {
-        operation(&mut next, item).map_err(|e| {
-            if several {
-                format!("Batch operation {}: {e}", position + 1)
-            } else {
-                e
-            }
-        })?;
-    }
-    Ok(next)
 }

@@ -17,8 +17,13 @@ pub(crate) fn build(
     let radius = diameter / 2.;
     let bore = match wall {
         None => None,
-        Some(wall) if !wall.is_finite() || wall <= 0. || wall >= radius => {
-            return Err("Pipe wall must be more than zero and less than the radius".into());
+        Some(wall) if !wall.is_finite() || wall <= 0. => {
+            return Err(format!("Pipe wall {wall} mm must be more than zero."));
+        }
+        Some(wall) if wall >= radius => {
+            return Err(format!(
+                "Pipe wall {wall} mm must be less than the radius {radius} mm."
+            ));
         }
         Some(wall) => Some(radius - wall),
     };

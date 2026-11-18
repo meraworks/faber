@@ -3,7 +3,7 @@
 use crate::input::Checked;
 use crate::schema_tool;
 use base64::Engine;
-use faber_core::{PartInfo, Project};
+use faber_core::{PartInfo, Project, Reading};
 use faber_model::{Edit, Feature, Geometry, Part, ProjectData, Scalar};
 use faber_ports::Body;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
@@ -30,6 +30,7 @@ Follow this loop for each change:
 
 Call the schema tool to read the shape of a recipe. Use kind geometry with no op for the list of ops. Add op to read one op.
 Call the guide tool to read the modelling guide. Call guide with no topic to list the topics.
+A project with design.jsonnet is generated. Edit the source, then call build. Placement tools still work.
 If a call fails, the error names the field and the JSON path. Correct that field and send the call again.";
 
 /// A heading of the guide, with its line number and level.
@@ -113,6 +114,11 @@ pub struct PutPart {
     /// Part recipe. Read the shape with the schema tool, kind part.
     #[schemars(with = "serde_json::Value")]
     part: Part<Scalar>,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -124,6 +130,11 @@ pub struct ImportPart {
     path: String,
     #[serde(default)]
     strict: bool,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -148,6 +159,9 @@ pub struct SetPartInfo {
     note: Option<String>,
     /// Refuse the change if the project revision differs.
     expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -168,6 +182,9 @@ pub struct MovePart {
     rotate: Option<faber_core::Rotation>,
     /// Move by the vector from one world point to another.
     point_to_point: Option<faber_core::PointToPoint>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
     /// Move the bounding box centre to this world point [x, y, z] in mm.
     position: Option<[f64; 3]>,
     /// Keep the source part. Write the moved part as a new part with this id.
@@ -189,6 +206,9 @@ pub struct AlignParts {
     /// Gap in mm. Use it with min_to_max or max_to_min only.
     #[serde(default)]
     gap_mm: f64,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
     /// Refuse the change if the project revision differs.
     expected_revision: Option<u64>,
 }
@@ -217,6 +237,11 @@ pub struct PutParts {
     /// Map from part id to part recipe. Read the shape with the schema tool, kind part.
     #[schemars(with = "BTreeMap<String, serde_json::Value>")]
     parts: BTreeMap<String, Part<Scalar>>,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -226,6 +251,66 @@ pub struct SetParam {
     strict: bool,
     name: String,
     expression: String,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
+}
+
+/// Motion study input. Its fields sit beside expected_revision and verbose.
+#[derive(JsonSchema)]
+pub struct SetMotion {
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    verbose: bool,
+    #[serde(flatten)]
+    study: faber_model::motion::MotionStudy,
+}
+
+/// Reads expected_revision and verbose, then the study. The study refuses unknown fields.
+/// Serde does not apply deny_unknown_fields across flatten, so this reads the parts itself.
+impl<'de> Deserialize<'de> for SetMotion {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut fields = serde_json::Map::<String, Value>::deserialize(deserializer)?;
+        let expected_revision = match fields.remove("expected_revision") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(serde_json::from_value(value).map_err(D::Error::custom)?),
+        };
+        let verbose = match fields.remove("verbose") {
+            None => false,
+            Some(value) => serde_json::from_value(value).map_err(D::Error::custom)?,
+        };
+        let study = serde_json::from_value(Value::Object(fields)).map_err(D::Error::custom)?;
+        Ok(Self {
+            expected_revision,
+            verbose,
+            study,
+        })
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Revision {
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreCheckpoint {
+    name: String,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -255,6 +340,11 @@ pub struct SetContact {
     /// Deepest allowed overlap in millimetres. Zero allows touch only. Default 0.6.
     #[serde(default)]
     max_depth_mm: Option<f64>,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -264,6 +354,11 @@ pub struct SetSection {
     id: String,
     /// The section. It names a plane, a reference feature or a planar face.
     section: faber_model::SectionAnalysis<Scalar>,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -271,6 +366,18 @@ pub struct SetSection {
 pub struct SectionId {
     /// Section id.
     id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveSection {
+    /// Section id.
+    id: String,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -320,6 +427,9 @@ pub struct Batch {
     expected_revision: Option<u64>,
     #[serde(default)]
     strict: bool,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -335,7 +445,7 @@ pub struct PreviewBatch {
 }
 
 /// Batch tool names, in the order shown to clients.
-const BATCH_TOOLS: [&str; 11] = [
+const BATCH_TOOLS: [&str; 15] = [
     "set_motion",
     "set_section",
     "remove_section",
@@ -347,7 +457,35 @@ const BATCH_TOOLS: [&str; 11] = [
     "edit_feature",
     "delete_feature",
     "move_feature",
+    "move_part",
+    "align_parts",
+    "suppress_feature",
+    "set_contact",
 ];
+
+/// A move item in a batch. Its fields are the move_part arguments without expected_revision.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MoveItem {
+    id: String,
+    translate: Option<[f64; 3]>,
+    rotate: Option<faber_core::Rotation>,
+    point_to_point: Option<faber_core::PointToPoint>,
+    position: Option<[f64; 3]>,
+    copy_as: Option<String>,
+}
+
+/// An align item in a batch. Its fields are the align_parts arguments without expected_revision.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlignItem {
+    id: String,
+    target: String,
+    axes: Vec<faber_core::Axis>,
+    mode: faber_core::AlignMode,
+    #[serde(default)]
+    gap_mm: f64,
+}
 
 /// Reads the fields of a set_part_info item. Serde does not name
 /// the field in a type error, so each field is read here.
@@ -411,24 +549,97 @@ fn batch_operations(items: Vec<Value>) -> Result<Vec<faber_core::Operation>, Str
                 return Ok(faber_core::Operation::set_part_info(info));
             }
             if !BATCH_TOOLS.contains(&tool.as_str()) {
-                let near = schema_tool::nearest(&tool, &BATCH_TOOLS);
-                let hint = if near.is_empty() {
-                    String::new()
-                } else {
-                    format!(" Nearest: {}.", near.join(", "))
-                };
+                let known = schema_tool::unknown("tool", &tool, &BATCH_TOOLS, "");
                 return Err(format!(
-                    "Batch operation {number}: unknown tool `{tool}`.{hint} Accepted tools: {accepted}."
+                    "Batch operation {number}: {} Accepted tools: {accepted}.",
+                    known.trim_end()
                 ));
             }
-            let edit = crate::input::read::<Edit>(
-                &Value::Object(fields),
-                &format!("operations[{index}]"),
-            )
+            let path = format!("operations[{index}]");
+            if tool == "move_part" {
+                fields.remove("tool");
+                let item = crate::input::read::<MoveItem>(&Value::Object(fields), &path)
+                    .map_err(|e| format!("Batch operation {number} (tool `{tool}`): {e}"))?;
+                let motion = faber_core::Motion::from_options(
+                    item.translate,
+                    item.rotate,
+                    item.point_to_point,
+                    item.position,
+                )
+                .map_err(|e| format!("Batch operation {number} (tool `{tool}`): {e}"))?;
+                return Ok(faber_core::Operation::Move {
+                    id: item.id,
+                    motion,
+                    copy_as: item.copy_as,
+                });
+            }
+            if tool == "align_parts" {
+                fields.remove("tool");
+                let item = crate::input::read::<AlignItem>(&Value::Object(fields), &path)
+                    .map_err(|e| format!("Batch operation {number} (tool `{tool}`): {e}"))?;
+                return Ok(faber_core::Operation::Align {
+                    id: item.id,
+                    target: item.target,
+                    axes: item.axes,
+                    mode: item.mode,
+                    gap_mm: item.gap_mm,
+                });
+            }
+            if tool == "suppress_feature" {
+                // Read as the set_suppressed edit. Suppression is the default, as in the tool.
+                fields.insert("tool".into(), json!("set_suppressed"));
+                fields.entry("suppressed").or_insert(json!(true));
+            }
+            let edit = crate::input::read::<Edit>(&Value::Object(fields), &path)
             .map_err(|e| format!("Batch operation {number} (tool `{tool}`): {e}"))?;
             Ok(faber_core::Operation::from(edit))
         })
         .collect()
+}
+
+/// The parts before a change. It finds the parts that the change touched.
+struct Before {
+    parts: BTreeMap<String, Part<Scalar>>,
+    summaries: BTreeMap<String, Value>,
+}
+
+impl Before {
+    fn of(project: &Project) -> Self {
+        Self {
+            parts: project.data.parts.clone(),
+            summaries: project
+                .bodies
+                .iter()
+                .map(|body| (body.id.clone(), part_summary(body)))
+                .collect(),
+        }
+    }
+
+    /// Summaries of the parts whose recipe or solid changed.
+    fn changed(&self, project: &Project) -> Vec<Value> {
+        project
+            .bodies
+            .iter()
+            .filter_map(|body| {
+                let summary = part_summary(body);
+                let differs = self.parts.get(&body.id) != project.data.parts.get(&body.id)
+                    || self.summaries.get(&body.id) != Some(&summary);
+                differs.then_some(summary)
+            })
+            .collect()
+    }
+}
+
+fn part_summary(body: &Body) -> Value {
+    json!({"id":body.id,"volume_mm3":body.volume,"bounds_mm":body.bounds,"triangles":body.mesh.triangles.len()})
+}
+
+/// The reply of a changing tool. It lists the changed parts. Verbose gives every part.
+fn changed_reply(before: &Before, project: &Project, verbose: bool) -> Value {
+    if verbose {
+        return report(&project.data, &project.bodies);
+    }
+    json!({"schema":1,"revision":project.data.revision,"changed":before.changed(project),"part_count":project.bodies.len()})
 }
 
 fn check_revision(project: &Project, expected: Option<u64>) -> Result<(), String> {
@@ -455,6 +666,11 @@ pub struct AddFeature {
     before: Option<String>,
     #[serde(default)]
     make_output: bool,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -467,6 +683,11 @@ pub struct EditFeature {
     /// Geometry of the feature. Read the shape with the schema tool, kind geometry.
     #[schemars(with = "serde_json::Value")]
     geometry: Geometry<Scalar>,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -476,6 +697,11 @@ pub struct FeatureId {
     strict: bool,
     part: String,
     id: String,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -486,6 +712,42 @@ pub struct MoveFeature {
     part: String,
     id: String,
     before: Option<String>,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
+}
+
+/// Feature read input.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FeatureInfoArgs {
+    /// Part id.
+    part: String,
+    /// Feature id in the part history.
+    feature: String,
+}
+
+/// How part_info lists the features of a history.
+#[derive(Deserialize, JsonSchema, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum FeatureView {
+    /// Every feature recipe.
+    #[default]
+    Full,
+    /// Only the feature ids.
+    Ids,
+}
+
+/// Part read input.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PartInfoArgs {
+    id: String,
+    /// "full" (default) gives every feature recipe. "ids" gives only the feature ids.
+    #[serde(default)]
+    features: FeatureView,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -493,12 +755,6 @@ pub struct MoveFeature {
 pub struct GuideArgs {
     /// A topic from the list. Omit it to list the topics.
     topic: Option<String>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Remove {
-    id: String,
 }
 
 fn suppress_by_default() -> bool {
@@ -520,6 +776,9 @@ pub struct SuppressFeature {
     cascade: bool,
     /// Refuse the change if the project revision differs.
     expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -539,6 +798,11 @@ pub struct RemovePart {
     id: String,
     #[serde(default)]
     strict: bool,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+    /// Return every part, not only the changed parts.
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -567,6 +831,9 @@ pub struct Render {
     width: u32,
     #[serde(default = "image_height")]
     height: u32,
+    /// Send the image in the reply. The file is always written.
+    #[serde(default)]
+    inline: bool,
 }
 
 /// A section for render. It is a saved section id or an inline plane.
@@ -630,27 +897,32 @@ pub fn report(data: &ProjectData, bodies: &[Body]) -> Value {
     json!({"schema":1,"name":data.name,"revision":data.revision,"part_count":bodies.len(),"parts":bodies.iter().map(|b| json!({"id":b.id,"name":b.name,"group":b.group,"volume_mm3":b.volume,"bounds_mm":b.bounds,"triangles":b.mesh.triangles.len()})).collect::<Vec<_>>()})
 }
 
-/// Reads the placement, world bounds and revision of one part after a move.
-fn placed_reply(p: &Project, id: &str) -> Result<Value, String> {
-    let part = p
-        .data
-        .parts
-        .get(id)
-        .ok_or_else(|| format!("Unknown part: {id}"))?;
-    let body = p
-        .bodies
-        .iter()
-        .find(|body| body.id == id)
-        .ok_or("Part has no built body")?;
-    Ok(
-        json!({"schema":1,"id":id,"placement":part.placement,"bounds_mm":body.bounds,"revision":p.data.revision}),
-    )
+/// The reply of a placement tool. Each changed part also gives its placement.
+fn placed_reply(before: &Before, project: &Project, verbose: bool) -> Value {
+    let mut reply = changed_reply(before, project, verbose);
+    if let Some(changed) = reply["changed"].as_array_mut() {
+        for entry in changed {
+            let id = entry["id"].as_str().unwrap_or_default().to_string();
+            entry["placement"] = json!(project.data.parts.get(&id).map(|part| &part.placement));
+        }
+    }
+    reply
 }
 
 /// Add the resolved absolute project path to the open reply.
-fn open_reply(data: &ProjectData, bodies: &[Body], path: &Path) -> Value {
-    let mut value = report(data, bodies);
+fn open_reply(project: &Project, path: &Path) -> Value {
+    let mut value = report(&project.data, &project.bodies);
     value["path"] = json!(display_path(path));
+    value["source"] = json!(project.source());
+    with_source_error(value, project)
+}
+
+/// Adds `source_error` to a reply when the last design source build failed.
+/// The reply then describes the last good state.
+fn with_source_error(mut value: Value, project: &Project) -> Value {
+    if let (Some(error), Some(map)) = (project.source_error(), value.as_object_mut()) {
+        map.insert("source_error".into(), json!(error));
+    }
     value
 }
 
@@ -684,9 +956,24 @@ impl Faber {
     fn with(&self, op: impl FnOnce(&mut Project) -> Result<Value, String>) -> CallToolResult {
         let mut guard = self.project.lock().unwrap_or_else(|p| p.into_inner());
         result((|| {
-            let project = &mut guard.as_mut().ok_or("Open a project first")?.project;
-            project.sync()?;
-            op(project)
+            let open = guard.as_mut().ok_or("Open a project first")?;
+            faber_wiring::refresh(&open.path, &mut open.project)?;
+            let value = op(&mut open.project)?;
+            Ok(with_source_error(value, &open.project))
+        })())
+    }
+
+    /// Like `with`, and the operation also gets the project folder. A history step needs it.
+    fn with_folder(
+        &self,
+        op: impl FnOnce(&Path, &mut Project) -> Result<Value, String>,
+    ) -> CallToolResult {
+        let mut guard = self.project.lock().unwrap_or_else(|p| p.into_inner());
+        result((|| {
+            let open = guard.as_mut().ok_or("Open a project first")?;
+            faber_wiring::refresh(&open.path, &mut open.project)?;
+            let value = op(&open.path, &mut open.project)?;
+            Ok(with_source_error(value, &open.project))
         })())
     }
 }
@@ -706,16 +993,12 @@ impl Faber {
             if let Some(current) = guard.as_mut()
                 && std::fs::canonicalize(requested).ok().as_ref() == Some(&current.path)
             {
-                current.project.sync()?;
-                return Ok(open_reply(
-                    &current.project.data,
-                    &current.project.bodies,
-                    &current.path,
-                ));
+                faber_wiring::refresh(&current.path, &mut current.project)?;
+                return Ok(open_reply(&current.project, &current.path));
             }
             let project = faber_wiring::open(requested, args.create, args.name)?;
             let path = std::fs::canonicalize(requested).map_err(|e| e.to_string())?;
-            let value = open_reply(&project.data, &project.bodies, &path);
+            let value = open_reply(&project, &path);
             *guard = Some(OpenProject { path, project });
             Ok(value)
         })())
@@ -759,7 +1042,26 @@ impl Faber {
 
     #[tool(description = "Read part bounds, volume and triangle counts.")]
     fn status(&self) -> CallToolResult {
-        self.with(|p| Ok(report(&p.data, &p.bodies)))
+        self.with(|p| {
+            let mut value = report(&p.data, &p.bodies);
+            value["source"] = json!(p.source());
+            Ok(value)
+        })
+    }
+
+    #[tool(
+        description = "Build the design source of the open project. Read the written files and the added or removed parts. Placement of kept parts stays."
+    )]
+    fn build(&self) -> CallToolResult {
+        let mut guard = self.project.lock().unwrap_or_else(|p| p.into_inner());
+        result((|| {
+            let open = guard.as_mut().ok_or("Open a project first")?;
+            let built = faber_wiring::build_source(&open.path, &mut open.project)?;
+            let mut value = serde_json::to_value(built).map_err(|e| e.to_string())?;
+            value["schema"] = json!(1);
+            value["revision"] = json!(open.project.data.revision);
+            Ok(value)
+        })())
     }
 
     #[tool(
@@ -782,8 +1084,9 @@ impl Faber {
     fn batch(&self, Parameters(Checked(args)): Parameters<Checked<Batch>>) -> CallToolResult {
         self.with(|p| {
             check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             p.batch_operations(batch_operations(args.operations)?, args.strict)?;
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -849,12 +1152,14 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<ImportPart>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
             let path = Path::new(&args.path);
             if !path.is_absolute() {
                 return Err("Import needs an absolute source path".into());
             }
+            let before = Before::of(p);
             p.import_with_record(args.id, args.name, path, args.strict, args.purchased)?;
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -863,21 +1168,25 @@ impl Faber {
     )]
     fn restore(
         &self,
-        Parameters(Checked(args)): Parameters<Checked<Checkpoint>>,
+        Parameters(Checked(args)): Parameters<Checked<RestoreCheckpoint>>,
     ) -> CallToolResult {
-        self.with(|p| {
-            p.restore(&args.name)?;
-            Ok(report(&p.data, &p.bodies))
+        self.with_folder(|path, p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
+            faber_wiring::restore(path, p, &args.name)?;
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
     #[tool(
         description = "Undo the last saved change. Refuse if the current file differs from its recorded state."
     )]
-    fn undo(&self) -> CallToolResult {
-        self.with(|p| {
-            p.undo()?;
-            Ok(report(&p.data, &p.bodies))
+    fn undo(&self, Parameters(Checked(args)): Parameters<Checked<Revision>>) -> CallToolResult {
+        self.with_folder(|path, p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
+            faber_wiring::history_move(path, p, faber_ports::HistoryMove::Undo)?;
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -886,11 +1195,13 @@ impl Faber {
     )]
     fn set_motion(
         &self,
-        Parameters(Checked(study)): Parameters<Checked<faber_model::motion::MotionStudy>>,
+        Parameters(Checked(args)): Parameters<Checked<SetMotion>>,
     ) -> CallToolResult {
         self.with(|p| {
-            p.batch(vec![faber_model::Edit::SetMotion { study }])?;
-            Ok(json!({"revision":p.data.revision,"motion":p.data.motion}))
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
+            p.batch(vec![faber_model::Edit::SetMotion { study: args.study }])?;
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -942,10 +1253,12 @@ impl Faber {
     }
 
     #[tool(description = "Redo a saved change after undo. A new edit clears the redo branch.")]
-    fn redo(&self) -> CallToolResult {
-        self.with(|p| {
-            p.redo()?;
-            Ok(report(&p.data, &p.bodies))
+    fn redo(&self, Parameters(Checked(args)): Parameters<Checked<Revision>>) -> CallToolResult {
+        self.with_folder(|path, p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
+            faber_wiring::history_move(path, p, faber_ports::HistoryMove::Redo)?;
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -997,12 +1310,60 @@ impl Faber {
         })
     }
 
-    #[tool(description = "Read a part recipe, ordered features, placement, bounds and volume.")]
-    fn part_info(&self, Parameters(Checked(args)): Parameters<Checked<Remove>>) -> CallToolResult {
+    #[tool(
+        description = "Read a part recipe, ordered features, placement, bounds and volume. Set features to ids to read only the feature ids."
+    )]
+    fn part_info(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<PartInfoArgs>>,
+    ) -> CallToolResult {
         self.with(|p| {
             let recipe = p.data.parts.get(&args.id).ok_or_else(|| format!("Unknown part: {}", args.id))?;
             let body = p.bodies.iter().find(|b| b.id == args.id).ok_or("Part has no built body")?;
+            let mut recipe = serde_json::to_value(recipe).map_err(|e| e.to_string())?;
+            if args.features == FeatureView::Ids
+                && let Some(Value::Array(features)) = recipe.pointer_mut("/geometry/features")
+            {
+                let ids: Vec<Value> = features.iter().map(|feature| feature["id"].clone()).collect();
+                *features = ids;
+            }
             Ok(json!({"schema":1,"id":args.id,"recipe":recipe,"bounds_mm":body.bounds,"volume_mm3":body.volume,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(
+        description = "Read one feature of a part in part coordinates. A solid gives volume, bounds, faces, edges, suppression and depends_on. A plane, axis or point gives its frame. The project stays unchanged."
+    )]
+    fn feature_info(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<FeatureInfoArgs>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            let info = p.feature_info(&args.part, &args.feature)?;
+            let mut reply = json!({"schema":1,"part":args.part,"feature":args.feature,"kind":info.kind,"revision":p.data.revision});
+            match info.reading {
+                Reading::Solid { volume_mm3, bounds_mm, faces, edges, suppressed, depends_on } => {
+                    reply["volume_mm3"] = json!(volume_mm3);
+                    reply["bounds_mm"] = json!(bounds_mm);
+                    reply["faces"] = json!(faces);
+                    reply["edges"] = json!(edges);
+                    reply["suppressed"] = json!(suppressed);
+                    reply["depends_on"] = json!(depends_on);
+                }
+                Reading::Plane { origin, x, y, normal } => {
+                    reply["origin"] = json!(origin);
+                    reply["x"] = json!(x);
+                    reply["y"] = json!(y);
+                    reply["normal"] = json!(normal);
+                }
+                Reading::Axis { origin, direction } => {
+                    reply["origin"] = json!(origin);
+                    reply["direction"] = json!(direction);
+                }
+                Reading::Suppressed => reply["suppressed"] = json!(true),
+                Reading::Point { point } => reply["point"] = json!(point),
+            }
+            Ok(reply)
         })
     }
 
@@ -1019,6 +1380,8 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<AddFeature>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             if args.strict {
                 p.batch_strict(vec![faber_model::Edit::AddFeature {
                     part: args.part,
@@ -1034,7 +1397,7 @@ impl Faber {
                     args.make_output,
                 )?;
             }
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1046,6 +1409,8 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<EditFeature>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             if args.strict {
                 p.batch_strict(vec![faber_model::Edit::EditFeature {
                     part: args.part,
@@ -1055,7 +1420,7 @@ impl Faber {
             } else {
                 p.edit_feature(&args.part, &args.id, args.geometry)?;
             }
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1067,6 +1432,8 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<FeatureId>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             if args.strict {
                 p.batch_strict(vec![faber_model::Edit::DeleteFeature {
                     part: args.part,
@@ -1075,7 +1442,7 @@ impl Faber {
             } else {
                 p.delete_feature(&args.part, &args.id)?;
             }
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1087,6 +1454,8 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<MoveFeature>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             if args.strict {
                 p.batch_strict(vec![faber_model::Edit::MoveFeature {
                     part: args.part,
@@ -1096,7 +1465,7 @@ impl Faber {
             } else {
                 p.move_feature(&args.part, &args.id, args.before.as_deref())?;
             }
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1109,6 +1478,7 @@ impl Faber {
     ) -> CallToolResult {
         self.with(|p| {
             check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             if args.strict {
                 p.batch_strict(vec![faber_model::Edit::SetSuppressed {
                     part: args.part,
@@ -1119,7 +1489,7 @@ impl Faber {
             } else {
                 p.set_suppressed(&args.part, &args.id, args.suppressed, args.cascade)?;
             }
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1129,14 +1499,32 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<SetParam>>,
     ) -> CallToolResult {
         self.with(|p| {
-            if args.strict { p.batch_strict(vec![faber_model::Edit::SetParam { name: args.name, expression: args.expression }])?; } else { p.set_params(BTreeMap::from([(args.name, args.expression)]))?; }
-            Ok(json!({"schema":1,"expressions":p.data.params,"values":p.params()?,"revision":p.data.revision}))
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
+            let (name, expression) = (args.name.clone(), args.expression.clone());
+            if args.strict {
+                p.batch_strict(vec![faber_model::Edit::SetParam {
+                    name: args.name,
+                    expression: args.expression,
+                }])?;
+            } else {
+                p.set_params(BTreeMap::from([(args.name, args.expression)]))?;
+            }
+            let param = json!({"name":name,"expression":expression,"value":p.params()?.get(&name)});
+            if args.verbose {
+                let mut reply = report(&p.data, &p.bodies);
+                reply["param"] = param;
+                return Ok(reply);
+            }
+            Ok(json!({"revision":p.data.revision,"param":param,"changed":before.changed(p)}))
         })
     }
 
     #[tool(description = "Add or replace a part. Build the solid before saving the project.")]
     fn put_part(&self, Parameters(Checked(args)): Parameters<Checked<PutPart>>) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             if args.strict {
                 p.batch_strict(vec![faber_model::Edit::PutPart {
                     id: args.id,
@@ -1145,7 +1533,7 @@ impl Faber {
             } else {
                 p.put_part(args.id, args.part)?;
             }
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1158,6 +1546,7 @@ impl Faber {
     ) -> CallToolResult {
         self.with(|p| {
             check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             p.set_part_info(PartInfo {
                 id: args.id,
                 name: args.name,
@@ -1165,7 +1554,7 @@ impl Faber {
                 group: args.group,
                 note: args.note,
             })?;
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1177,6 +1566,8 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<PutParts>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             if args.strict {
                 p.batch_strict(
                     args.parts
@@ -1187,12 +1578,12 @@ impl Faber {
             } else {
                 p.put_parts(args.parts)?;
             }
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
     #[tool(
-        description = "Move or turn a part. Give exactly one mode: translate, rotate, point_to_point or position. Set copy_as to keep the source part. In rotate, origin is the world origin. Returns the placement, bounds and revision. The change is one undo step."
+        description = "Move or turn a part. Give exactly one mode: translate, rotate, point_to_point or position. Set copy_as to keep the source part. In rotate, origin is the world origin. Reply lists the changed parts with placement and bounds. The change is one undo step."
     )]
     fn move_part(
         &self,
@@ -1206,14 +1597,14 @@ impl Faber {
                 args.point_to_point,
                 args.position,
             )?;
-            let target = args.copy_as.clone().unwrap_or_else(|| args.id.clone());
+            let before = Before::of(p);
             p.move_part(&args.id, motion, args.copy_as.as_deref())?;
-            placed_reply(p, &target)
+            Ok(placed_reply(&before, p, args.verbose))
         })
     }
 
     #[tool(
-        description = "Move a part so its bounding box lines up with a target part or with the origin. Translation only. Use mode min_to_max to stack a part on its target. Returns the placement, bounds and revision. The change is one undo step."
+        description = "Move a part so its bounding box lines up with a target part or with the origin. Translation only. Use mode min_to_max to stack a part on its target. Reply lists the changed parts with placement and bounds. The change is one undo step."
     )]
     fn align_parts(
         &self,
@@ -1221,8 +1612,9 @@ impl Faber {
     ) -> CallToolResult {
         self.with(|p| {
             check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             p.align_part(&args.id, &args.target, &args.axes, args.mode, args.gap_mm)?;
-            placed_reply(p, &args.id)
+            Ok(placed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1232,12 +1624,14 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<RemovePart>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             if args.strict {
                 p.batch_strict(vec![faber_model::Edit::RemovePart { id: args.id }])?;
             } else {
                 p.remove_part(&args.id)?;
             }
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1249,6 +1643,8 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<SetContact>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             p.batch_operations(
                 vec![faber_core::Operation::from(faber_model::Edit::SetContact {
                     a: args.a,
@@ -1259,7 +1655,7 @@ impl Faber {
                 })],
                 false,
             )?;
-            Ok(report(&p.data, &p.bodies))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1271,14 +1667,16 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<SetSection>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             p.batch_operations(
                 vec![faber_core::Operation::from(faber_model::Edit::SetSection {
-                    id: args.id.clone(),
+                    id: args.id,
                     section: args.section,
                 })],
                 false,
             )?;
-            Ok(json!({"schema":1,"revision":p.data.revision,"id":args.id}))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1287,18 +1685,18 @@ impl Faber {
     )]
     fn remove_section(
         &self,
-        Parameters(Checked(args)): Parameters<Checked<SectionId>>,
+        Parameters(Checked(args)): Parameters<Checked<RemoveSection>>,
     ) -> CallToolResult {
         self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let before = Before::of(p);
             p.batch_operations(
                 vec![faber_core::Operation::from(
-                    faber_model::Edit::RemoveSection {
-                        id: args.id.clone(),
-                    },
+                    faber_model::Edit::RemoveSection { id: args.id },
                 )],
                 false,
             )?;
-            Ok(json!({"schema":1,"revision":p.data.revision,"id":args.id}))
+            Ok(changed_reply(&before, p, args.verbose))
         })
     }
 
@@ -1428,7 +1826,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Render the model without a window. Set part to frame only that part. Set view to iso, front, back, left, right, top or bottom. An optional section cuts the view and fills the cut faces. Set section to a saved section id or to an inline plane. A saved section with parts draws only those parts. Source geometry stays unchanged."
+        description = "Render the model without a window to a PNG file at path. Set part to frame only that part. Set view to iso, front, back, left, right, top or bottom. Set section to a saved section id or to an inline plane. Set inline to true to also send the image. Source geometry stays unchanged."
     )]
     fn render(&self, Parameters(Checked(args)): Parameters<Checked<Render>>) -> CallToolResult {
         let mut response=self.with(|p| {
@@ -1436,7 +1834,7 @@ impl Faber {
             faber_wiring::render_view(&bodies,Path::new(&args.path),section,args.width,args.height,args.view)?;
             Ok(json!({"schema":1,"path":args.path,"width":args.width,"height":args.height,"view":args.view,"part":args.part,"revision":p.data.revision}))
         });
-        if response.is_error != Some(true) {
+        if args.inline && response.is_error != Some(true) {
             match std::fs::read(&args.path) {
                 Ok(bytes) => response.content.push(ContentBlock::image(
                     base64::prelude::BASE64_STANDARD.encode(bytes),

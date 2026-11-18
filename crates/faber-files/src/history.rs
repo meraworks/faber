@@ -94,6 +94,26 @@ impl FileStore {
         self.read_snapshot(stack.last().ok_or("No history step is available")?)
     }
 
+    /// Writes regenerated parts as the current state. The undo and redo stacks stay unchanged.
+    pub(super) fn commit_regenerated(
+        &self,
+        expected: &ProjectData,
+        data: &ProjectData,
+    ) -> Result<()> {
+        if self.load()? != *expected {
+            return Err("Project changed before save".into());
+        }
+        let mut record = self
+            .record(expected)?
+            .ok_or("History does not match the current file")?;
+        record.current = data.clone();
+        atomic_write(
+            &self.journal_path(data.revision),
+            &serde_json::to_vec(&record).map_err(|e| e.to_string())?,
+        )?;
+        super::layout::write(&self.root, data).map(|_| ())
+    }
+
     pub(super) fn commit_history(
         &self,
         expected: Option<&ProjectData>,

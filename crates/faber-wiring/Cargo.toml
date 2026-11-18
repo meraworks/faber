@@ -12,6 +12,7 @@ parry3d-f64 = "0.31.1"
 faber-core = { path = "../faber-core" }
 faber-model = { path = "../faber-model" }
 faber-ports = { path = "../faber-ports" }
+faber-build = { path = "../faber-build" }
 faber-files = { path = "../faber-files" }
 faber-geometry = { path = "../faber-geometry" }
 faber-kernel-occt = { path = "../faber-kernel-occt" }

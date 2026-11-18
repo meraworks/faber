@@ -6,6 +6,8 @@ use std::any::Any;
 use std::path::Path;
 use std::sync::Arc;
 
+pub mod source;
+
 pub type Result<T> = std::result::Result<T, String>;
 
 pub trait AssetStore: Send + Sync {
@@ -429,6 +431,10 @@ pub trait ProjectStore: Send + Sync {
         _data: &ProjectData,
         _action: HistoryMove,
     ) -> Result<()> {
+        Err("History is not available".into())
+    }
+    /// Saves parts that a design source gives again. The undo steps stay as they are.
+    fn save_regenerated(&self, _expected: &ProjectData, _data: &ProjectData) -> Result<()> {
         Err("History is not available".into())
     }
 }

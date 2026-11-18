@@ -133,7 +133,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
         let rendered = request(
             "tools/call",
             json!({"name":"render","arguments":{
-                "path":dir.path().join(format!("{view}.png")),"width":128,"height":96,"view":view
+                "path":dir.path().join(format!("{view}.png")),"width":128,"height":96,"view":view,"inline":true
             }}),
         );
         assert_ne!(rendered["isError"], true, "{rendered}");
@@ -195,7 +195,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
     let expression_part = json!({"name":"Base","geometry":{"op":"extrude","profile":{"outer":[[0,0],[10,0],[10,20],[0,20]]},"height":"height"},"colour":[80,100,120]});
     let updated = request(
         "tools/call",
-        json!({"name":"put_part","arguments":{"id":"base","part":expression_part}}),
+        json!({"name":"put_part","arguments":{"id":"base","part":expression_part,"verbose":true}}),
     );
     assert_ne!(updated["isError"], true, "{updated}");
     let report: Value =
@@ -310,7 +310,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
     assert_eq!(restored["values"]["height"], 40.);
     let changed = request(
         "tools/call",
-        json!({"name":"batch","arguments":{"operations":[
+        json!({"name":"batch","arguments":{"verbose":true,"operations":[
             {"tool":"set_param","name":"height","expression":"60"},
             {"tool":"edit_feature","part":"base","id":"box","geometry":{"op":"box","size":[10,20,"height"]}}
         ]}}),
@@ -319,7 +319,10 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
     let report: Value =
         serde_json::from_str(changed["content"][0]["text"].as_str().unwrap()).unwrap();
     assert!((report["parts"][0]["volume_mm3"].as_f64().unwrap() - 12000.).abs() < 1e-6);
-    let undone = request("tools/call", json!({"name":"undo","arguments":{}}));
+    let undone = request(
+        "tools/call",
+        json!({"name":"undo","arguments":{"verbose":true}}),
+    );
     assert_ne!(undone["isError"], true, "{undone}");
     let report: Value =
         serde_json::from_str(undone["content"][0]["text"].as_str().unwrap()).unwrap();
@@ -825,8 +828,14 @@ fn stdio_move_part_translates_turns_and_refuses_bad_modes() {
         json!({"id":"block","part":box_part("Block", [10., 20., 30.], [0., 0., 0.])}),
     );
     let moved = s.ok("move_part", json!({"id":"block","translate":[5.,0.,2.]}));
-    assert_near(&moved["bounds_mm"], &[5., 0., 2., 15., 20., 32.]);
-    assert_eq!(moved["placement"]["translation"], json!([5., 0., 2.]));
+    assert_near(
+        &moved["changed"][0]["bounds_mm"],
+        &[5., 0., 2., 15., 20., 32.],
+    );
+    assert_eq!(
+        moved["changed"][0]["placement"]["translation"],
+        json!([5., 0., 2.])
+    );
 
     // Turn the block 90 degrees about Z. The centre of the box is (5, 10, 15).
     s.ok(
@@ -837,9 +846,18 @@ fn stdio_move_part_translates_turns_and_refuses_bad_modes() {
         "move_part",
         json!({"id":"turned","rotate":{"axis":"z","angle_deg":90}}),
     );
-    assert_near(&turned["bounds_mm"], &[-5., 5., 0., 15., 15., 30.]);
-    assert_eq!(turned["placement"]["rotation"], json!([0., 0., 90.]));
-    assert_near(&turned["placement"]["translation"], &[15., 5., 0.]);
+    assert_near(
+        &turned["changed"][0]["bounds_mm"],
+        &[-5., 5., 0., 15., 15., 30.],
+    );
+    assert_eq!(
+        turned["changed"][0]["placement"]["rotation"],
+        json!([0., 0., 90.])
+    );
+    assert_near(
+        &turned["changed"][0]["placement"]["translation"],
+        &[15., 5., 0.],
+    );
 
     s.ok(
         "put_part",
@@ -849,10 +867,16 @@ fn stdio_move_part_translates_turns_and_refuses_bad_modes() {
         "move_part",
         json!({"id":"slide","point_to_point":{"from":[0.,0.,0.],"to":[100.,0.,0.]}}),
     );
-    assert_near(&slid["bounds_mm"], &[100., 0., 0., 110., 20., 30.]);
+    assert_near(
+        &slid["changed"][0]["bounds_mm"],
+        &[100., 0., 0., 110., 20., 30.],
+    );
 
     let placed = s.ok("move_part", json!({"id":"slide","position":[0.,0.,0.]}));
-    assert_near(&placed["bounds_mm"], &[-5., -10., -15., 5., 10., 15.]);
+    assert_near(
+        &placed["changed"][0]["bounds_mm"],
+        &[-5., -10., -15., 5., 10., 15.],
+    );
 
     let none = s.refused("move_part", json!({"id":"slide"}));
     assert!(none.contains("Found 0"), "{none}");
@@ -890,8 +914,11 @@ fn stdio_move_part_copy_keeps_the_source() {
         "move_part",
         json!({"id":"src","translate":[0.,0.,50.],"copy_as":"copy"}),
     );
-    assert_eq!(copy["id"], "copy");
-    assert_near(&copy["bounds_mm"], &[0., 0., 50., 10., 20., 80.]);
+    assert_eq!(copy["changed"][0]["id"], "copy");
+    assert_near(
+        &copy["changed"][0]["bounds_mm"],
+        &[0., 0., 50., 10., 20., 80.],
+    );
     let source = s.ok("part_info", json!({"id":"src"}));
     assert_near(&source["bounds_mm"], &[0., 0., 0., 10., 20., 30.]);
     let taken = s.refused(
@@ -921,7 +948,10 @@ fn stdio_move_part_refuses_a_copy_of_a_purchased_part() {
         }),
     );
     let moved = s.ok("move_part", json!({"id":"screw","translate":[12.,0.,0.]}));
-    assert_near(&moved["placement"]["translation"], &[12., 0., 0.]);
+    assert_near(
+        &moved["changed"][0]["placement"]["translation"],
+        &[12., 0., 0.],
+    );
     let refused = s.refused(
         "move_part",
         json!({"id":"screw","translate":[1.,0.,0.],"copy_as":"copy"}),
@@ -950,7 +980,10 @@ fn stdio_align_parts_stacks_with_gap_and_undo_restores() {
         "align_parts",
         json!({"id":"top","target":"base","axes":["z"],"mode":"min_to_max","gap_mm":2.}),
     );
-    assert_near(&stacked["bounds_mm"], &[0., 0., 12., 10., 10., 17.]);
+    assert_near(
+        &stacked["changed"][0]["bounds_mm"],
+        &[0., 0., 12., 10., 10., 17.],
+    );
     let base = s.ok("part_info", json!({"id":"base"}));
     assert_near(&base["bounds_mm"], &[0., 0., 0., 40., 40., 10.]);
 
@@ -1036,5 +1069,468 @@ fn stdio_suppress_feature_skips_refuses_dependants_and_undoes() {
             .get("suppressed")
             .is_none()
     );
+    s.finish();
+}
+
+#[test]
+fn changing_tools_reply_with_changed_parts_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    for (id, x) in [("a", 0.), ("b", 20.), ("c", 40.)] {
+        s.ok(
+            "put_part",
+            json!({"id":id,"part":box_part(id, [10., 10., 10.], [x, 0., 0.])}),
+        );
+    }
+    let reply = s.ok("set_part_info", json!({"id":"b","name":"Bee"}));
+    assert_eq!(reply["changed"].as_array().unwrap().len(), 1, "{reply}");
+    assert_eq!(reply["changed"][0]["id"], "b");
+    assert_eq!(reply["part_count"], 3);
+    assert!(reply.get("parts").is_none(), "{reply}");
+    let full = s.ok(
+        "set_part_info",
+        json!({"id":"b","name":"Bee again","verbose":true}),
+    );
+    assert_eq!(full["parts"].as_array().unwrap().len(), 3, "{full}");
+    s.finish();
+}
+
+#[test]
+fn every_changing_tool_checks_expected_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    for (id, x) in [("a", 0.), ("b", 20.), ("c", 40.)] {
+        s.ok(
+            "put_part",
+            json!({"id":id,"part":box_part(id, [10., 10., 10.], [x, 0., 0.])}),
+        );
+    }
+    let feature = json!({"id":"extra","geometry":{"op":"box","size":[1,1,1]}});
+    let stale = [
+        (
+            "put_part",
+            json!({"id":"d","part":box_part("d", [1., 1., 1.], [0., 0., 0.])}),
+        ),
+        (
+            "put_parts",
+            json!({"parts":{"d":box_part("d", [1., 1., 1.], [0., 0., 0.])}}),
+        ),
+        (
+            "import_part",
+            json!({"id":"d","name":"D","path":dir.path().join("d.stl").display().to_string()}),
+        ),
+        ("set_param", json!({"name":"width","expression":"10"})),
+        ("add_feature", json!({"part":"a","feature":feature})),
+        (
+            "edit_feature",
+            json!({"part":"a","id":"a","geometry":{"op":"box","size":[1,1,1]}}),
+        ),
+        ("delete_feature", json!({"part":"a","id":"a"})),
+        ("move_feature", json!({"part":"a","id":"a"})),
+        ("suppress_feature", json!({"part":"a","id":"a"})),
+        ("set_part_info", json!({"id":"a","name":"A"})),
+        ("move_part", json!({"id":"a","translate":[1.,0.,0.]})),
+        (
+            "align_parts",
+            json!({"id":"a","target":"b","axes":["x"],"mode":"min"}),
+        ),
+        ("remove_part", json!({"id":"a"})),
+        ("set_contact", json!({"a":"a","b":"b","allowed":true})),
+        (
+            "set_section",
+            json!({"id":"mid","section":{"plane":{"kind":"plane","origin":[0,0,15],"normal":[0,0,1]}}}),
+        ),
+        ("remove_section", json!({"id":"mid"})),
+        ("set_motion", json!({})),
+        ("batch", json!({"operations":[]})),
+        ("restore", json!({"name":"none"})),
+        ("undo", json!({})),
+        ("redo", json!({})),
+    ];
+    for (tool, arguments) in stale {
+        let mut arguments = arguments;
+        arguments["expected_revision"] = json!(0);
+        let text = s.refused(tool, arguments);
+        assert!(text.contains("expected 0, current 3"), "{tool}: {text}");
+    }
+    s.finish();
+}
+
+#[test]
+fn feature_info_reads_a_solid_and_a_plane() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok("put_part", json!({"id":"block","part":{"name":"Block","colour":[80,100,120],"geometry":{"op":"history","features":[
+        {"id":"base","geometry":{"op":"box","size":[10,20,30]}},
+        {"id":"frame","geometry":{"op":"plane","placement":{"translation":[1,2,3],"rotation":[0,0,90]}}}
+    ],"output":"base"}}}));
+    let solid = s.ok("feature_info", json!({"part":"block","feature":"base"}));
+    assert_eq!(solid["kind"], "box", "{solid}");
+    assert!(
+        (solid["volume_mm3"].as_f64().unwrap() - 6000.).abs() < 1e-6,
+        "{solid}"
+    );
+    assert_near(&solid["bounds_mm"], &[0., 0., 0., 10., 20., 30.]);
+    assert_eq!(solid["faces"], 6);
+    assert_eq!(solid["edges"], 12);
+    assert_eq!(solid["suppressed"], false);
+    assert_eq!(solid["depends_on"], json!([]));
+    let plane = s.ok("feature_info", json!({"part":"block","feature":"frame"}));
+    assert_eq!(plane["kind"], "plane", "{plane}");
+    assert_near(&plane["origin"], &[1., 2., 3.]);
+    assert_near(&plane["x"], &[0., 1., 0.]);
+    assert_near(&plane["normal"], &[0., 0., 1.]);
+    let unknown = s.refused("feature_info", json!({"part":"block","feature":"nope"}));
+    assert!(unknown.contains("Unknown feature nope"), "{unknown}");
+    s.finish();
+}
+
+#[test]
+fn render_sends_no_image_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"box","part":box_part("Box", [10., 10., 10.], [0., 0., 0.])}),
+    );
+    let png = dir.path().join("view.png").display().to_string();
+    let plain = s.rpc(
+        "tools/call",
+        json!({"name":"render","arguments":{"path":png,"width":128,"height":96}}),
+    );
+    assert_ne!(plain["isError"], true, "{plain}");
+    assert_eq!(plain["content"].as_array().unwrap().len(), 1, "{plain}");
+    let text: Value = serde_json::from_str(plain["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(text["path"], png);
+    let inline = s.rpc(
+        "tools/call",
+        json!({"name":"render","arguments":{"path":png,"width":128,"height":96,"inline":true}}),
+    );
+    assert_eq!(inline["content"][1]["mimeType"], "image/png", "{inline}");
+    s.finish();
+}
+
+const GENERATED_SOURCE: &str = "{ name: 'Generated', parts: { base: { name: 'Base', colour: [80, 100, 120], geometry: { op: 'box', size: [10, 20, 30] } } } }";
+
+#[test]
+fn generated_project_refuses_feature_edits_and_allows_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("design.jsonnet"), GENERATED_SOURCE).unwrap();
+    let mut s = Session::start(dir.path());
+    let status = s.ok("status", json!({}));
+    assert_eq!(status["source"], "design.jsonnet", "{status}");
+    assert_eq!(status["part_count"], 1, "{status}");
+    let message =
+        "This project is generated from design.jsonnet. Edit the source, then call build.";
+    let feature = json!({"id":"hole","geometry":{"op":"box","size":[1,1,1]}});
+    let refused = s.refused("add_feature", json!({"part":"base","feature":feature}));
+    assert_eq!(refused, message);
+    let refused = s.refused("set_param", json!({"name":"width","expression":"5"}));
+    assert_eq!(refused, message);
+    let moved = s.ok("move_part", json!({"id":"base","translate":[5,0,0]}));
+    assert_eq!(
+        moved["changed"][0]["placement"]["translation"][0].as_f64(),
+        Some(5.),
+        "{moved}"
+    );
+    let status = s.ok("status", json!({}));
+    assert_eq!(status["source"], "design.jsonnet", "{status}");
+    s.finish();
+}
+
+#[test]
+fn build_tool_reports_the_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let design = dir.path().join("design.jsonnet");
+    std::fs::write(&design, GENERATED_SOURCE).unwrap();
+    let mut s = Session::start(dir.path());
+    let before = s.ok("status", json!({}))["revision"].as_u64().unwrap();
+    let extra = "{ name: 'Generated', parts: { base: { name: 'Base', colour: [80, 100, 120], geometry: { op: 'box', size: [10, 20, 30] } }, extra: { name: 'Extra', colour: [1, 2, 3], geometry: { op: 'box', size: [5, 5, 5] } } } }";
+    std::fs::write(&design, extra).unwrap();
+    let report = s.ok("build", json!({}));
+    assert_eq!(report["added_parts"], json!(["extra"]), "{report}");
+    assert_eq!(report["removed_parts"], json!([]), "{report}");
+    assert_eq!(report["parts"], 2, "{report}");
+    assert!(
+        report["written"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file == "parts/extra.json"),
+        "{report}"
+    );
+    assert!(report["revision"].as_u64().unwrap() > before, "{report}");
+    let status = s.ok("status", json!({}));
+    assert_eq!(status["part_count"], 2, "{status}");
+    std::fs::write(&design, GENERATED_SOURCE).unwrap();
+    let report = s.ok("build", json!({}));
+    assert_eq!(report["removed_parts"], json!(["extra"]), "{report}");
+    let broken = "{ parts: { base: { name: 'Base', colour: [1, 1, 1], geometry: { op: 'box', size: [-1, 2, 3] } } } }";
+    std::fs::write(&design, broken).unwrap();
+    let refused = s.refused("build", json!({}));
+    assert!(refused.contains("base"), "{refused}");
+    assert_eq!(faber_files::read(dir.path()).unwrap().parts.len(), 1);
+    let status = s.ok("status", json!({}));
+    assert!(
+        status["source_error"].as_str().unwrap().contains("base"),
+        "{status}"
+    );
+    assert_eq!(status["part_count"], 1, "{status}");
+    s.finish();
+}
+
+#[test]
+fn generated_undo_builds_the_source_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let design = dir.path().join("design.jsonnet");
+    std::fs::write(&design, GENERATED_SOURCE).unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok("move_part", json!({"id":"base","translate":[5,0,0]}));
+    let taller = "{ name: 'Generated', parts: { base: { name: 'Base', colour: [80, 100, 120], geometry: { op: 'box', size: [10, 20, 40] } } } }";
+    std::fs::write(&design, taller).unwrap();
+    s.ok("build", json!({}));
+    s.ok("undo", json!({}));
+    s.ok("undo", json!({}));
+    let info = s.ok("part_info", json!({"id":"base"}));
+    assert_eq!(info["recipe"]["geometry"]["size"][2], 40., "{info}");
+    assert_eq!(info["recipe"]["placement"]["translation"][0], 0., "{info}");
+    assert_eq!(info["recipe"]["placement"]["translation"][1], 0., "{info}");
+    s.finish();
+}
+
+#[test]
+fn set_motion_refuses_an_unknown_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    let text = s.refused("set_motion", json!({"bogus":1}));
+    assert!(text.contains("bogus"), "{text}");
+    s.finish();
+}
+
+/// A block with a fillet, a spare box, an axis and a point. The output is a plain box.
+fn suppress_block() -> Value {
+    json!({"name":"Suppress","colour":[100,140,170],"geometry":{"op":"history","output":"out","features":[
+        {"id":"base","geometry":{"op":"box","size":[10,20,30]}},
+        {"id":"round","geometry":{"op":"fillet","source":"base","edges":{"parallel":[0,0,1],"expect":4,"tolerance":0.000001},"radius":1}},
+        {"id":"extra","geometry":{"op":"box","size":[1,1,1]}},
+        {"id":"ax","geometry":{"op":"axis","origin":[1,2,3],"direction":[0,0,2]}},
+        {"id":"pt","geometry":{"op":"point","position":[4,5,6]}},
+        {"id":"out","geometry":{"op":"box","size":[10,20,30]}}
+    ]}})
+}
+
+/// Imports a purchased screw. The source file is copied into the test directory.
+fn import_screw(s: &mut Session, dir: &std::path::Path) {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/fastener-check/assets")
+        .join("f940c8dadc7ad6fe0337a3802cafe12cc716e64c1c519f432a01dea892f6c25e");
+    let step = dir.join("screw.step");
+    std::fs::copy(source, &step).unwrap();
+    s.ok(
+        "import_part",
+        json!({
+            "id": "screw",
+            "name": "Screw",
+            "path": step.display().to_string(),
+            "purchased": {"source": "FreeCAD-library", "licence": "CC BY 3.0", "designation": "M3 x 10"}
+        }),
+    );
+}
+
+fn ids_of(list: &Value) -> Vec<&str> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|part| part["id"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn batch_places_and_suppresses_from_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"base","part":box_part("Base", [40., 40., 10.], [0., 0., 0.])}),
+    );
+    s.ok(
+        "put_part",
+        json!({"id":"top","part":box_part("Top", [10., 10., 5.], [0., 0., 20.])}),
+    );
+    s.ok("put_part", json!({"id":"block","part":suppress_block()}));
+    let preview = s.ok(
+        "preview_batch",
+        json!({"operations":[
+            {"tool":"move_part","id":"top","translate":[5.,0.,0.]}
+        ]}),
+    );
+    let candidate = preview["candidate"]["parts"].as_array().unwrap();
+    let moved = candidate.iter().find(|part| part["id"] == "top").unwrap();
+    assert_near(&moved["bounds_mm"], &[5., 0., 20., 15., 10., 25.]);
+    let still = s.ok("part_info", json!({"id":"top"}));
+    assert_near(&still["bounds_mm"], &[0., 0., 20., 10., 10., 25.]);
+
+    let reply = s.ok("batch", json!({"operations":[
+        {"tool":"move_part","id":"top","translate":[0.,0.,1.]},
+        {"tool":"align_parts","id":"top","target":"base","axes":["z"],"mode":"min_to_max","gap_mm":2.},
+        {"tool":"suppress_feature","part":"block","id":"round"}
+    ]}));
+    assert_eq!(ids_of(&reply["changed"]), ["block", "top"], "{reply}");
+    let top = s.ok("part_info", json!({"id":"top"}));
+    assert_near(&top["bounds_mm"], &[0., 0., 12., 10., 10., 17.]);
+    let feature = s.ok("feature_info", json!({"part":"block","feature":"round"}));
+    assert_eq!(feature["suppressed"], true, "{feature}");
+    s.finish();
+}
+
+#[test]
+fn batch_refuses_the_whole_change_when_a_placement_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"top","part":box_part("Top", [10., 10., 5.], [0., 0., 20.])}),
+    );
+    let before = s.ok("part_info", json!({"id":"top"}));
+    let refused = s.refused(
+        "batch",
+        json!({"operations":[
+            {"tool":"move_part","id":"top","translate":[5.,0.,0.]},
+            {"tool":"align_parts","id":"top","target":"nowhere","axes":["z"],"mode":"min"}
+        ]}),
+    );
+    assert!(refused.starts_with("Batch operation 2: "), "{refused}");
+    assert!(refused.contains("nowhere"), "{refused}");
+    let after = s.ok("part_info", json!({"id":"top"}));
+    assert_eq!(after["revision"], before["revision"]);
+    assert_eq!(after["recipe"]["placement"], before["recipe"]["placement"]);
+    s.finish();
+}
+
+#[test]
+fn batch_move_copy_of_a_purchased_part_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    import_screw(&mut s, dir.path());
+    let refused = s.refused(
+        "batch",
+        json!({"operations":[
+            {"tool":"move_part","id":"screw","translate":[1.,0.,0.],"copy_as":"copy"}
+        ]}),
+    );
+    assert_eq!(
+        refused,
+        "Part screw is a purchased part. A copy is not permitted."
+    );
+    s.finish();
+}
+
+#[test]
+fn part_info_lists_feature_ids_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok("put_part", json!({"id":"block","part":suppress_block()}));
+    let ids = s.ok("part_info", json!({"id":"block","features":"ids"}));
+    assert_eq!(
+        ids["recipe"]["geometry"]["features"],
+        json!(["base", "round", "extra", "ax", "pt", "out"])
+    );
+    let full = s.ok("part_info", json!({"id":"block"}));
+    assert_eq!(full["recipe"]["geometry"]["features"][0]["id"], "base");
+    let bad = s.refused("part_info", json!({"id":"block","features":"all"}));
+    assert!(bad.contains("ids"), "{bad}");
+    s.finish();
+}
+
+#[test]
+fn feature_info_reads_suppressed_and_reference_features() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok("put_part", json!({"id":"block","part":suppress_block()}));
+    s.ok("suppress_feature", json!({"part":"block","id":"round"}));
+    s.ok("suppress_feature", json!({"part":"block","id":"extra"}));
+    let modifier = s.ok("feature_info", json!({"part":"block","feature":"round"}));
+    assert_eq!(modifier["kind"], "fillet", "{modifier}");
+    assert_eq!(modifier["suppressed"], true, "{modifier}");
+    assert!(
+        (modifier["volume_mm3"].as_f64().unwrap() - 6000.).abs() < 1e-6,
+        "{modifier}"
+    );
+    let creation = s.ok("feature_info", json!({"part":"block","feature":"extra"}));
+    assert_eq!(creation["kind"], "box", "{creation}");
+    assert_eq!(creation["suppressed"], true, "{creation}");
+    assert!(creation.get("volume_mm3").is_none(), "{creation}");
+    let axis = s.ok("feature_info", json!({"part":"block","feature":"ax"}));
+    assert_eq!(axis["kind"], "axis", "{axis}");
+    assert_near(&axis["origin"], &[1., 2., 3.]);
+    assert_near(&axis["direction"], &[0., 0., 2.]);
+    let point = s.ok("feature_info", json!({"part":"block","feature":"pt"}));
+    assert_eq!(point["kind"], "point", "{point}");
+    assert_near(&point["point"], &[4., 5., 6.]);
+    s.finish();
+}
+
+#[test]
+fn feature_info_refuses_a_purchased_part() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    import_screw(&mut s, dir.path());
+    let refused = s.refused("feature_info", json!({"part":"screw","feature":"base"}));
+    assert_eq!(refused, "Part screw has no feature history");
+    s.finish();
+}
+
+#[test]
+fn set_param_lists_only_the_parts_that_follow_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok("set_param", json!({"name":"w","expression":"10"}));
+    s.ok("put_part", json!({"id":"bar","part":{"name":"Bar","colour":[100,140,170],"geometry":{"op":"box","size":["w",10,10]}}}));
+    s.ok(
+        "put_part",
+        json!({"id":"fixed","part":box_part("Fixed", [5., 5., 5.], [50., 0., 0.])}),
+    );
+    let reply = s.ok("set_param", json!({"name":"w","expression":"20"}));
+    assert_eq!(reply["param"]["value"], 20., "{reply}");
+    assert_eq!(ids_of(&reply["changed"]), ["bar"], "{reply}");
+    s.finish();
+}
+
+#[test]
+fn move_and_align_reply_lists_the_moved_part_and_set_motion_lists_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"base","part":box_part("Base", [40., 40., 10.], [0., 0., 0.])}),
+    );
+    s.ok(
+        "put_part",
+        json!({"id":"top","part":box_part("Top", [10., 10., 5.], [0., 0., 20.])}),
+    );
+    let moved = s.ok("move_part", json!({"id":"top","translate":[1.,0.,0.]}));
+    assert_eq!(moved["part_count"], 2, "{moved}");
+    assert_eq!(ids_of(&moved["changed"]), ["top"], "{moved}");
+    let aligned = s.ok(
+        "align_parts",
+        json!({"id":"top","target":"base","axes":["z"],"mode":"min_to_max"}),
+    );
+    assert_eq!(ids_of(&aligned["changed"]), ["top"], "{aligned}");
+    assert!(aligned.get("bounds_mm").is_none(), "{aligned}");
+    let motion = s.ok(
+        "set_motion",
+        json!({"expected_revision": aligned["revision"]}),
+    );
+    assert_eq!(motion["changed"], json!([]), "{motion}");
+    assert_eq!(motion["part_count"], 2, "{motion}");
+    s.finish();
+}
+
+#[test]
+fn set_motion_still_refuses_an_unknown_field_with_verbose() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    let text = s.refused("set_motion", json!({"verbose":true,"bogus":1}));
+    assert!(text.contains("bogus"), "{text}");
     s.finish();
 }

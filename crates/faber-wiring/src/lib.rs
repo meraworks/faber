@@ -228,12 +228,82 @@ fn confirm_declared(
     Ok(())
 }
 
+/// The design source of a project folder. It checks the parts with the OCCT kernel.
+pub fn design_source() -> Arc<dyn faber_ports::source::DesignSource> {
+    Arc::new(faber_build::JsonnetSource::new(Arc::new(OcctKernel)))
+}
+
+/// Reads the saved project. A generated project builds first when an input
+/// changed. A failed build does not fail the call. It sets the source error,
+/// and the project keeps its last good state.
+pub fn refresh(path: &Path, project: &mut Project) -> Result<()> {
+    project.sync()?;
+    let source = design_source();
+    project.set_source(
+        source
+            .has_source(path)
+            .then(|| source.file_name().to_string()),
+    );
+    project.set_source_error(None);
+    if project.source().is_some()
+        && faber_build::needs_build(path)
+        && let Err(error) = faber_build::build_project(path, project)
+    {
+        project.set_source_error(Some(error));
+    }
+    Ok(())
+}
+
+/// Builds the design source now. The project then reads the new files.
+pub fn build_source(path: &Path, project: &mut Project) -> Result<faber_ports::source::Report> {
+    let report = faber_build::build_project(path, project)?;
+    project.set_source(Some(design_source().file_name().to_string()));
+    Ok(report)
+}
+
+/// Moves the history. A generated project gets the recipes of its source again.
+/// The build record is removed first. A failure then leaves the next call to build.
+pub fn history_move(
+    path: &Path,
+    project: &mut Project,
+    action: faber_ports::HistoryMove,
+) -> Result<()> {
+    if project.source().is_none() {
+        return match action {
+            faber_ports::HistoryMove::Undo => project.undo(),
+            faber_ports::HistoryMove::Redo => project.redo(),
+        };
+    }
+    faber_build::forget_build(path)?;
+    project.move_history_with(action, &|data| regenerated(path, data))?;
+    faber_build::record_build(path, &project.data)
+}
+
+/// Restores a checkpoint. A generated project gets the recipes of its source again.
+/// The build record is removed first, as for `history_move`.
+pub fn restore(path: &Path, project: &mut Project, name: &str) -> Result<()> {
+    if project.source().is_none() {
+        return project.restore(name);
+    }
+    faber_build::forget_build(path)?;
+    project.restore_with(name, &|data| regenerated(path, data))?;
+    faber_build::record_build(path, &project.data)
+}
+
+fn regenerated(path: &Path, data: ProjectData) -> Result<ProjectData> {
+    faber_build::evaluate(path, &data)
+        .map(|candidate| candidate.data)
+        .map_err(|error| format!("The design source has an error: {error}"))
+}
+
 pub fn open(path: &Path, create: bool, name: Option<String>) -> Result<Project> {
-    if !create && !path.join("faber.json").exists() {
+    let source = design_source();
+    let generated = source.has_source(path);
+    if !create && !generated && !path.join("faber.json").exists() {
         return Err("Project does not exist".into());
     }
     let store = Arc::new(FileStore::open(path)?);
-    if create && !path.join("faber.json").exists() {
+    if (create || generated) && !path.join("faber.json").exists() {
         let data = ProjectData {
             schema: 1,
             revision: 0,
@@ -247,13 +317,18 @@ pub fn open(path: &Path, create: bool, name: Option<String>) -> Result<Project> 
         faber_core::build(&data, &NativeKernel)?;
         store.save(None, &data)?;
     }
-    Ok(Project::open_with_cache(
+    let mut project = Project::open_with_cache(
         store,
         Arc::new(OcctKernel),
         Some(Arc::new(faber_files::FileAssets::new(path))),
         Some(Arc::new(faber_files::FileFeatureCache::new(path))),
     )?
-    .with_checks(Arc::new(MeshChecks)))
+    .with_checks(Arc::new(MeshChecks));
+    project.set_source(generated.then(|| source.file_name().to_string()));
+    if generated {
+        refresh(path, &mut project)?;
+    }
+    Ok(project)
 }
 
 pub fn read(path: &Path) -> Result<(ProjectData, Vec<Body>)> {

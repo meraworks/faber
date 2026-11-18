@@ -67,13 +67,20 @@ Wrong:
 Faber refuses the wrong form with `unknown field args`. These tools can be batch items:
 
 - `set_param`
+- `set_part_info`
 - `put_part`
 - `remove_part`
 - `add_feature`
 - `edit_feature`
 - `delete_feature`
 - `move_feature`
+- `suppress_feature`
+- `move_part`
+- `align_parts`
 - `set_contact`
+- `set_section`
+- `remove_section`
+- `set_motion`
 
 ## Project files
 
@@ -119,6 +126,8 @@ Each line names a mistake and the correct form.
 ## Batch and preview details
 
 Put related changes in one batch. For example, put shared parameters and their dependent part in one batch. Faber builds the final state once and saves one undo step. A batch accepts 1 to 2000 operations.
+
+A later operation sees the result of an earlier one. A `move_part` or `align_parts` after an `edit_feature` uses the new bounds. The changing tools reply with `changed`, the parts whose recipe, solid or placement changed, and `part_count`. A removed part is not listed, and `part_count` falls. Set `verbose` to `true` to get every part.
 
 To inspect a change first, send the same operations to `preview_batch`. The result has `saved: false`, `base_revision` and a candidate report. The optional `render` accepts `path`, `width`, `height` and `section`. It writes and returns a PNG of the candidate. It does not change the project or the undo list.
 
@@ -480,6 +489,14 @@ Set `kind` to `edges` or `faces` to return one list. Set `edge` or `face` to kee
 {"id":"base","kind":"faces","face":{"normal":[0,0,1],"tolerance":0.000001,"expect":1}}
 ```
 
+### Face split by an earlier feature
+
+An earlier feature can split one face into several faces. Select the piece that you need with `in_box`. Its centre must lie inside the box. Read the faces with `topology` after the split. Example:
+
+```json
+{"id":"base","kind":"faces","face":{"normal":[0,0,1],"in_box":[[0,0,9.5],[10,20,10.5]],"tolerance":0.000001,"expect":1}}
+```
+
 ### Count errors
 
 When the count differs from `expect`, the error lists the matched items, up to 5. If there are too few, it also lists up to 3 closest rejected items. Each rejected item names the filter that rejected it. Use these lines to correct the selector.
@@ -492,7 +509,7 @@ Fields of a text loop:
 
 - `text`: one line of 1 to 256 characters. A line break is refused.
 - `height`: the cap height in mm. Expressions are accepted.
-- `at`: the `[x, y]` position in sketch coordinates. It is the start of the baseline. When `align` is `centre`, it is the centre of the text.
+- `at`: the `[x, y]` start of the baseline in sketch coordinates. `align` moves the text only along x. `left` starts at `at[0]`. `centre` centres on `at[0]`. `right` ends at `at[0]`.
 - `align`: `left` (default), `centre` or `right`.
 - `angle_deg`: the turn about `at` in degrees. Positive is counter-clockwise. Absent means 0.
 - `font`: `ubuntu-light` (default) or `hack`. Faber refuses other names.
@@ -581,7 +598,7 @@ Call `render` with `view` set to `iso` to check the shape. The render shows thre
 
 `mass_properties` accepts a part id `id` and an optional `density_g_cm3`. It returns `volume_mm3`, `area_mm2` and `centre_of_mass_mm` in world coordinates. If you set `density_g_cm3`, it also returns `mass_g` and `inertia_kg_mm2`. The inertia tensor is about the centre of mass. Faber refuses a density that is zero or below. The tool uses the placed exact shape. It does not save the project.
 
-`render` writes and returns a PNG. Set `view` to one of these values. The default is `iso`.
+`render` writes a PNG to `path`. The reply has the path. Set `inline` to `true` to also send the image. Set `view` to one of these values. The default is `iso`.
 
 - `iso`
 - `front`
@@ -596,6 +613,10 @@ These are perspective views from the selected direction. Front looks from negati
 The section keeps the material on the side opposite to `normal`. Set `reverse` to `true` to keep the material on the side that `normal` points to. A view along the plane shows the cut face edge-on. To see the cut face, use a view along `normal`. For `normal: [1,0,0]`, use the `right` view.
 
 `export` writes one STL or STEP file per part into `directory`. Set `format` to `stl` or `step`. Faber refuses an export when the check finds a violation. Set `force` to `true` to export anyway. `import_part` keeps an owned STEP solid in the project and makes a new part. Use the purchased part record for catalogue hardware. Slicer settings are separate.
+
+### Feature details
+
+Call `feature_info` with `part` and `feature` to read one feature in part coordinates. A solid gives `volume_mm3`, `bounds_mm`, `faces`, `edges`, `suppressed` and `depends_on`. A plane gives `origin`, `x`, `y` and `normal`. An axis gives `origin` and `direction`. A point gives `point`. Set `features` to `ids` in `part_info` to read only the feature ids.
 
 ### Interference and contact
 
@@ -756,3 +777,39 @@ A creation feature has no input solid, such as a box, cylinder, sketch extrude, 
 Faber refuses to suppress the output when the output has no input solid. Faber refuses to unsuppress a feature whose source has no solid. Unsuppress the source first.
 
 Each suppress change is one undo step. Set `expected_revision` to refuse a stale change.
+
+## Modular design with Jsonnet
+
+A project can have a `design.jsonnet` file. Jsonnet is JSON with variables, functions and `import`. The source generates `faber.json` and the part files. Placement, assembly and analysis stay plain JSON.
+
+The source evaluates to an object with these keys:
+
+- `name`: the project name. Optional.
+- `params`: parameter expressions as strings. Optional.
+- `parts`: each part id maps to `name`, `colour`, `geometry` and, optionally, `group` and `note`.
+
+If the project has a source, the tools refuse changes to parts, features and parameters. Edit the source, then call `build`. Placement, contact, section and motion tools still work.
+
+Call `build` to write the files. A build that fails writes no file. If an input changed, the MCP server builds the source before the next tool call. The build report lists the written files and the added or removed parts. A removed part loses its placement. An undo of a build regenerates the same recipes from the source.
+
+Imports look first in the folder of the importing file. Then they look in `lib/` of the project folder. `import 'faber.libsonnet'` gives these helpers:
+
+- `part(name, features, output, colour)`: a part with a feature history.
+- `box`, `cylinder`, `transform`, `union`, `difference`, `linear_pattern` and `circular_pattern`: one feature each.
+- `feature(id, op, fields)`: a feature for any other op.
+- `merge(fragments)`: joins fragments. A part id can appear in one fragment only.
+- `prefix(fragment, text)`: puts text in front of each part id. Use it for a block that appears more than once.
+
+Example: `examples/modular-rack`. The file `lib/bracket.libsonnet` is a block. The design uses it three times:
+
+```jsonnet
+local faber = import 'faber.libsonnet';
+local bracket = import 'bracket.libsonnet';
+
+faber.merge([
+  { name: 'Modular rack' },
+  faber.prefix(bracket.bracket(40, 30, 3, 5), 'left_'),
+  faber.prefix(bracket.bracket(60, 30, 3, 5), 'mid_'),
+  faber.prefix(bracket.bracket(80, 40, 4, 6), 'right_'),
+])
+```

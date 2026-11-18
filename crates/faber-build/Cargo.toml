@@ -1,0 +1,21 @@
+[package]
+name = "faber-build"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Builds Faber project files from a modular Jsonnet design source"
+
+[dependencies]
+faber-core = { path = "../faber-core" }
+faber-files = { path = "../faber-files" }
+faber-model = { path = "../faber-model" }
+faber-ports = { path = "../faber-ports" }
+serde.workspace = true
+serde_json.workspace = true
+jrsonnet-evaluator.workspace = true
+jrsonnet-stdlib.workspace = true
+jrsonnet-gcmodule = "0.4.6"
+
+[dev-dependencies]
+faber-kernel-occt = { path = "../faber-kernel-occt" }
+tempfile.workspace = true

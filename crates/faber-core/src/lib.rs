@@ -2,10 +2,13 @@
 
 mod assets;
 mod batch;
+mod body_cache;
 mod construction;
 mod dress_variant;
 mod feature_cache;
 mod feature_edit;
+mod feature_info;
+mod generated;
 mod history;
 mod hole;
 pub mod overhang;
@@ -20,8 +23,10 @@ mod thread;
 
 pub use batch::{Operation, PartInfo, PartInfoOperation};
 use faber_model::{Part, ProjectData, Scalar};
-use faber_ports::{Body, Kernel, ProjectStore, Result};
-use glam::{DMat3, DVec3};
+use faber_ports::{Body, Kernel, ProjectStore, Result, Shape};
+pub use feature_info::{FeatureInfo, Reading};
+pub use generated::regenerate;
+use glam::DVec3;
 pub use placement::{
     AlignMode, Axis, Motion, Pivot, PivotName, PointToPoint, Rotation, RotationAxis, align_shift,
     refuse_purchased_copy, tidy,
@@ -50,12 +55,18 @@ pub struct Project {
     checks: Option<Arc<dyn faber_ports::DesignChecks>>,
     assets: Option<Arc<dyn faber_ports::AssetStore>>,
     cache: Option<Arc<dyn faber_ports::FeatureCache>>,
+    /// The design source that generates this project, if any.
+    source: Option<String>,
+    /// The error of the last design source build, if it failed.
+    source_error: Option<String>,
+    locals: BTreeMap<String, body_cache::LocalBody>,
 }
 
 struct Prepared {
     data: ProjectData,
     bodies: Vec<Body>,
     histories: BTreeMap<String, history::Cache>,
+    locals: BTreeMap<String, body_cache::LocalBody>,
 }
 
 impl Project {
@@ -84,10 +95,12 @@ impl Project {
     ) -> Result<Self> {
         let data = store.load()?;
         let mut histories = BTreeMap::new();
+        let mut locals = BTreeMap::new();
         let bodies = build_cached(
             &data,
             kernel.as_ref(),
             &mut histories,
+            &mut locals,
             assets.as_deref(),
             cache.as_deref(),
         )?;
@@ -100,6 +113,9 @@ impl Project {
             checks: None,
             assets,
             cache,
+            source: None,
+            source_error: None,
+            locals,
         })
     }
 
@@ -108,16 +124,19 @@ impl Project {
         assets::resolve(&data, self.assets.as_deref())?;
         if data != self.data {
             let mut histories = self.histories.clone();
+            let mut locals = self.locals.clone();
             let bodies = build_cached(
                 &data,
                 self.kernel.as_ref(),
                 &mut histories,
+                &mut locals,
                 self.assets.as_deref(),
                 self.cache.as_deref(),
             )?;
             self.data = data;
             self.bodies = bodies;
             self.histories = histories;
+            self.locals = locals;
         }
         Ok(())
     }
@@ -144,6 +163,7 @@ impl Project {
         strict: bool,
         purchased: Option<faber_model::Purchased>,
     ) -> Result<()> {
+        self.refuse_generated()?;
         if let Some(record) = &purchased
             && (record.source.trim().is_empty()
                 || record.licence.trim().is_empty()
@@ -194,6 +214,7 @@ impl Project {
         let mut next = self.data.clone();
         for (id, part) in parts {
             let part = part.map_numbers(|n| Ok(n.clone().into()))?;
+            self.refuse_generated_part(&id, &part)?;
             if let Some(previous) = next.parts.get(&id)
                 && matches!(
                     &previous.geometry,
@@ -220,6 +241,7 @@ impl Project {
     }
 
     pub fn set_params(&mut self, params: BTreeMap<String, String>) -> Result<()> {
+        self.refuse_generated()?;
         self.sync()?;
         let mut next = self.data.clone();
         next.params.extend(params);
@@ -352,6 +374,7 @@ impl Project {
     }
 
     pub fn remove_part(&mut self, id: &str) -> Result<()> {
+        self.refuse_generated()?;
         self.sync()?;
         let mut next = self.data.clone();
         next.parts
@@ -367,6 +390,7 @@ impl Project {
     }
 
     pub fn undo(&mut self) -> Result<()> {
+        self.refuse_plain_history()?;
         self.move_history(faber_ports::HistoryMove::Undo)
     }
     pub fn checkpoint(&mut self, name: &str) -> Result<()> {
@@ -378,6 +402,7 @@ impl Project {
     }
 
     pub fn restore(&mut self, name: &str) -> Result<()> {
+        self.refuse_plain_history()?;
         self.sync()?;
         if !valid_id(name) {
             return Err("Invalid checkpoint name".into());
@@ -386,6 +411,7 @@ impl Project {
         self.apply(target)
     }
     pub fn redo(&mut self) -> Result<()> {
+        self.refuse_plain_history()?;
         self.move_history(faber_ports::HistoryMove::Redo)
     }
 
@@ -401,6 +427,7 @@ impl Project {
         action: Option<faber_ports::HistoryMove>,
         strict: bool,
     ) -> Result<()> {
+        self.refuse_broken_source()?;
         // A change that only sets the revision is a no-op. It saves nothing and adds no undo step.
         // Undo and redo always move the history cursor, so they never take this exit.
         let unchanged = ProjectData {
@@ -414,6 +441,7 @@ impl Project {
             data: next,
             bodies,
             histories,
+            locals,
         } = self.prepare(next, strict)?;
         match action {
             Some(action) => self.store.save_history(&self.data, &next, action)?,
@@ -422,6 +450,7 @@ impl Project {
         self.data = next;
         self.bodies = bodies;
         self.histories = histories;
+        self.locals = locals;
         Ok(())
     }
 
@@ -438,6 +467,17 @@ impl Project {
         let mut bodies = Vec::with_capacity(next.parts.len());
         let mut histories = self.histories.clone();
         histories.retain(|id, _| next.parts.contains_key(id));
+        let mut locals = self.locals.clone();
+        locals.retain(|id, _| next.parts.contains_key(id));
+        let builder = Builder {
+            kernel: self.kernel.as_ref(),
+            paths: &paths,
+            persist: self.cache.as_deref(),
+        };
+        // Parts whose placement or geometry changed, and those whose geometry changed.
+        let mut changed = std::collections::BTreeSet::new();
+        let mut geometry_changed = std::collections::BTreeSet::new();
+        let mut timings = Vec::new();
         for (id, part) in &next.parts {
             let resolved = resolve_part(part, &values)?;
             check_part(id, &resolved)?;
@@ -461,29 +501,49 @@ impl Project {
                 });
                 continue;
             }
-            bodies.push(build_part(
+            if !locals
+                .get(id)
+                .is_some_and(|local| local.geometry == resolved.geometry)
+            {
+                geometry_changed.insert(id.clone());
+            }
+            changed.insert(id.clone());
+            let (body, timing) = builder.part(
                 id,
                 &resolved,
-                self.kernel.as_ref(),
                 histories.entry(id.clone()).or_default(),
-                &paths,
-                self.cache.as_deref(),
-                assets::mesh(&resolved.geometry, self.assets.as_deref(), &paths)?,
-            )?);
+                || assets::mesh(&resolved.geometry, self.assets.as_deref(), &paths),
+                &mut locals,
+            )?;
+            timings.push((id.clone(), timing));
+            bodies.push(body);
         }
-        if !next.sections.is_empty() {
-            for (id, section) in &next.sections {
-                let numbers = section.map_numbers(&mut |n| number(n, &values))?;
-                section::world_plane(
-                    self.kernel.as_ref(),
-                    &next.parts,
-                    &values,
-                    &bodies,
-                    &histories,
-                    &numbers,
-                )
-                .map_err(|e| format!("Section {id}: {e}"))?;
+        let sections_started = std::time::Instant::now();
+        for (id, section) in &next.sections {
+            let numbers = section.map_numbers(&mut |n| number(n, &values))?;
+            if self.section_kept(
+                id,
+                section,
+                &numbers,
+                &old_values,
+                &changed,
+                &geometry_changed,
+            )? {
+                continue;
             }
+            section::world_plane(
+                self.kernel.as_ref(),
+                &next.parts,
+                &values,
+                &bodies,
+                &histories,
+                &numbers,
+            )
+            .map_err(|e| format!("Section {id}: {e}"))?;
+        }
+        body_cache::report_sections(body_cache::elapsed(sections_started));
+        for (id, timing) in &timings {
+            body_cache::report(id, timing);
         }
         if strict {
             let checks = self
@@ -502,7 +562,45 @@ impl Project {
             data: next,
             bodies,
             histories,
+            locals,
         })
+    }
+
+    /// True when the stored section result still holds. The section must be unchanged, and the
+    /// parts it reads must keep their geometry. A face selection without a feature also reads
+    /// the placed shape, so its part must keep its placement too. Its resolved numbers must be equal.
+    fn section_kept(
+        &self,
+        id: &str,
+        section: &faber_model::SectionAnalysis<Scalar>,
+        numbers: &faber_model::SectionAnalysis<f64>,
+        old_values: &BTreeMap<String, f64>,
+        changed: &std::collections::BTreeSet<String>,
+        geometry_changed: &std::collections::BTreeSet<String>,
+    ) -> Result<bool> {
+        let Some(old) = self.data.sections.get(id) else {
+            return Ok(false);
+        };
+        let placed_selection = matches!(
+            &section.plane,
+            faber_model::SectionPlane::Face { feature: None, .. }
+        );
+        let reads_changed_part = section_part(&section.plane).is_some_and(|part| {
+            geometry_changed.contains(part) || (placed_selection && changed.contains(part))
+        });
+        if old != section || reads_changed_part {
+            return Ok(false);
+        }
+        Ok(old.map_numbers(&mut |n| number(n, old_values))? == *numbers)
+    }
+}
+
+/// The part that a section plane reads, if any.
+fn section_part(plane: &faber_model::SectionPlane<Scalar>) -> Option<&str> {
+    match plane {
+        faber_model::SectionPlane::Plane { .. } => None,
+        faber_model::SectionPlane::Reference { part, .. }
+        | faber_model::SectionPlane::Face { part, .. } => Some(part),
     }
 }
 
@@ -555,6 +653,11 @@ fn validate_data(data: &ProjectData) -> Result<()> {
     for (id, section) in &data.sections {
         section::check_refs(data, id, section)?;
     }
+    for id in data.motion.solve(&BTreeMap::new())?.keys() {
+        if !data.parts.contains_key(id) {
+            return Err(format!("Unknown motion part: {id}"));
+        }
+    }
     Ok(())
 }
 
@@ -570,6 +673,36 @@ pub fn build_with_assets(
     build_with_cache(data, kernel, assets, None)
 }
 
+/// The unplaced body of one part in a candidate state. A batch placement reads its box from it.
+/// It writes no feature cache.
+pub(crate) fn candidate_local(
+    data: &ProjectData,
+    id: &str,
+    kernel: &dyn Kernel,
+    assets: Option<&dyn faber_ports::AssetStore>,
+) -> Result<body_cache::LocalBody> {
+    let paths = assets::resolve(data, assets)?;
+    let values = faber_expr::resolve(&data.params)?;
+    let part = data
+        .parts
+        .get(id)
+        .ok_or_else(|| format!("Unknown part: {id}"))?;
+    let resolved = resolve_part(part, &values)?;
+    let builder = Builder {
+        kernel,
+        paths: &paths,
+        persist: None,
+    };
+    let mut timing = body_cache::Timing::default();
+    builder.local(
+        id,
+        &resolved,
+        &mut history::Cache::default(),
+        || assets::mesh(&resolved.geometry, assets, &paths),
+        &mut timing,
+    )
+}
+
 /// Builds all parts. Built features also go to `cache` when the kernel has a cache version.
 pub fn build_with_cache(
     data: &ProjectData,
@@ -577,43 +710,47 @@ pub fn build_with_cache(
     assets: Option<&dyn faber_ports::AssetStore>,
     cache: Option<&dyn faber_ports::FeatureCache>,
 ) -> Result<Vec<Body>> {
-    build_cached(data, kernel, &mut BTreeMap::new(), assets, cache)
+    build_cached(
+        data,
+        kernel,
+        &mut BTreeMap::new(),
+        &mut BTreeMap::new(),
+        assets,
+        cache,
+    )
 }
 
 fn build_cached(
     data: &ProjectData,
     kernel: &dyn Kernel,
     histories: &mut BTreeMap<String, history::Cache>,
+    locals: &mut BTreeMap<String, body_cache::LocalBody>,
     assets: Option<&dyn faber_ports::AssetStore>,
     cache: Option<&dyn faber_ports::FeatureCache>,
 ) -> Result<Vec<Body>> {
     validate_data(data)?;
-    for id in data.motion.solve(&BTreeMap::new())?.keys() {
-        if !data.parts.contains_key(id) {
-            return Err(format!("Unknown motion part: {id}"));
-        }
-    }
     let paths = assets::resolve(data, assets)?;
     histories.retain(|id, _| data.parts.contains_key(id));
+    locals.retain(|id, _| data.parts.contains_key(id));
     let values = faber_expr::resolve(&data.params)?;
+    let builder = Builder {
+        kernel,
+        paths: &paths,
+        persist: cache,
+    };
     data.parts
         .iter()
         .map(|(id, part)| {
-            let mesh = match (&part.geometry, assets) {
-                (faber_model::Geometry::Imported { asset, .. }, Some(store)) => store
-                    .read_mesh(paths.get(asset).ok_or("Asset is missing")?)
-                    .map_err(|error| format!("{id}: {error}"))?,
-                _ => None,
-            };
-            build_part(
+            let resolved = resolve_part(part, &values)?;
+            let (body, timing) = builder.part(
                 id,
-                &resolve_part(part, &values)?,
-                kernel,
+                &resolved,
                 histories.entry(id.clone()).or_default(),
-                &paths,
-                cache,
-                mesh,
-            )
+                || assets::mesh(&resolved.geometry, assets, &paths),
+                locals,
+            )?;
+            body_cache::report(id, &timing);
+            Ok(body)
         })
         .collect()
 }
@@ -653,119 +790,203 @@ fn part_error(id: &str, geometry: &faber_model::Geometry, error: String) -> Stri
     }
 }
 
-fn build_part(
-    id: &str,
-    part: &Part,
-    kernel: &dyn Kernel,
-    cache: &mut history::Cache,
-    paths: &assets::Paths,
-    persist: Option<&dyn faber_ports::FeatureCache>,
-    imported_mesh: Option<faber_ports::Mesh>,
-) -> Result<Body> {
-    check_part(id, part)?;
-    if part
-        .placement
-        .rotation
-        .iter()
-        .chain(&part.placement.translation)
-        .any(|v| !v.is_finite() || v.abs() > 1e6)
-    {
-        return Err(format!("{id}: placement is outside the supported range"));
-    }
-    let shape = if imported_mesh.is_some() {
-        Ok(None)
-    } else {
-        match &part.geometry {
-            faber_model::Geometry::History { features, output } => {
-                history::build(features, output, kernel, cache, paths, persist).map(Some)
-            }
-            faber_model::Geometry::Imported { asset, .. } => kernel
-                .read_shape(paths.get(asset).ok_or("Asset is missing")?)
-                .map(Some),
-            geometry => kernel.exact_shape(geometry),
-        }
-    }
-    .map_err(|e| format!("{id}: {e}"))?;
-    if let Some(shape) = shape {
-        let placed = kernel
-            .transform_shape(&shape, &part.placement)
-            .map_err(|error| part_error(id, &part.geometry, error))?;
-        let shape = provenance::track(kernel, placed, std::slice::from_ref(&shape), id)
-            .map_err(|error| part_error(id, &part.geometry, error))?;
-        let properties = kernel
-            .properties(&shape)
-            .map_err(|error| part_error(id, &part.geometry, error))?;
-        if !properties.valid
-            || properties.solids == 0
-            || !properties.volume.is_finite()
-            || properties.volume <= 0.
+/// Builds parts with the kernel, the asset paths and the feature cache.
+struct Builder<'a> {
+    kernel: &'a dyn Kernel,
+    paths: &'a assets::Paths,
+    persist: Option<&'a dyn faber_ports::FeatureCache>,
+}
+
+/// Tessellation tolerance of the unplaced mesh, in mm.
+const TESSELLATION_MM: f64 = 0.03;
+
+impl Builder<'_> {
+    /// Builds one part. A local body with equal geometry is placed again, not built.
+    fn part(
+        &self,
+        id: &str,
+        part: &Part,
+        cache: &mut history::Cache,
+        imported: impl FnOnce() -> Result<Option<faber_ports::Mesh>>,
+        locals: &mut BTreeMap<String, body_cache::LocalBody>,
+    ) -> Result<(Body, body_cache::Timing)> {
+        check_part(id, part)?;
+        if part
+            .placement
+            .rotation
+            .iter()
+            .chain(&part.placement.translation)
+            .any(|v| !v.is_finite() || v.abs() > 1e6)
         {
-            return Err(part_error(
-                id,
-                &part.geometry,
-                "operation did not produce a valid solid".into(),
-            ));
+            return Err(format!("{id}: placement is outside the supported range"));
         }
-        let mesh = kernel
-            .tessellate(&shape, 0.03)
+        let mut timing = body_cache::Timing::default();
+        if !locals
+            .get(id)
+            .is_some_and(|local| local.geometry == part.geometry)
+        {
+            let local = self.local(id, part, cache, imported, &mut timing)?;
+            locals.insert(id.into(), local);
+        }
+        let local = &locals[id];
+        let placed = body_cache::place_timed(local, &part.placement, self.kernel, &mut timing)
             .map_err(|error| part_error(id, &part.geometry, error))?;
-        return Ok(Body {
+        let started = std::time::Instant::now();
+        // A placement is rigid, so the placed faces keep the unplaced face origins.
+        let shape = match (placed.shape, &local.shape) {
+            (Some(shape), Some(source)) => Some(match source.face_origins() {
+                Some(origins) => shape.with_face_origins(origins.clone()),
+                None => shape,
+            }),
+            _ => None,
+        };
+        timing.track = body_cache::elapsed(started);
+        let body = Body {
             id: id.into(),
             name: part.name.clone(),
             group: part.group.clone(),
             colour: part.colour,
+            mesh: placed.mesh,
+            volume: local.volume,
+            bounds: placed.bounds,
+            shape,
+        };
+        Ok((body, timing))
+    }
+
+    /// Builds the unplaced body of one part.
+    fn local(
+        &self,
+        id: &str,
+        part: &Part,
+        cache: &mut history::Cache,
+        imported: impl FnOnce() -> Result<Option<faber_ports::Mesh>>,
+        timing: &mut body_cache::Timing,
+    ) -> Result<body_cache::LocalBody> {
+        let imported = imported().map_err(|error| format!("{id}: {error}"))?;
+        let is_imported = imported.is_some();
+        let started = std::time::Instant::now();
+        let (shape, output_key) = if is_imported {
+            (None, None)
+        } else {
+            self.shape(part, cache)
+                .map_err(|error| format!("{id}: {error}"))?
+        };
+        timing.history = body_cache::elapsed(started);
+        if let Some(shape) = shape {
+            let started = std::time::Instant::now();
+            let properties = self
+                .kernel
+                .properties(&shape)
+                .map_err(|error| part_error(id, &part.geometry, error))?;
+            if !properties.valid
+                || properties.solids == 0
+                || !properties.volume.is_finite()
+                || properties.volume <= 0.
+            {
+                return Err(part_error(
+                    id,
+                    &part.geometry,
+                    "operation did not produce a valid solid".into(),
+                ));
+            }
+            timing.properties = body_cache::elapsed(started);
+            let started = std::time::Instant::now();
+            let mesh = self
+                .tessellate(&shape, output_key.as_deref())
+                .map_err(|error| part_error(id, &part.geometry, error))?;
+            timing.tessellate = body_cache::elapsed(started);
+            return Ok(body_cache::LocalBody {
+                geometry: part.geometry.clone(),
+                shape: Some(shape),
+                mesh,
+                volume: properties.volume,
+                bounds: properties.bounds,
+            });
+        }
+        let mesh = match imported {
+            Some(mesh) => mesh,
+            None => self
+                .kernel
+                .build(&part.geometry)
+                .map_err(|e| format!("{id}: {e}"))?,
+        };
+        let mut lo = DVec3::splat(f64::INFINITY);
+        let mut hi = DVec3::splat(f64::NEG_INFINITY);
+        for p in &mesh.vertices {
+            lo = lo.min(DVec3::from(*p));
+            hi = hi.max(DVec3::from(*p));
+        }
+        let centre = (lo + hi) / 2.;
+        let volume: f64 = mesh
+            .triangles
+            .iter()
+            .map(|t| {
+                let [a, b, c] = t.map(|i| DVec3::from(mesh.vertices[i as usize]) - centre);
+                a.dot(b.cross(c)) / 6.
+            })
+            .sum();
+        let volume = if is_imported { volume.abs() } else { volume };
+        if !volume.is_finite() || (!is_imported && volume <= 0.) {
+            return Err(format!("{id}: solid has no positive volume"));
+        }
+        Ok(body_cache::LocalBody {
+            geometry: part.geometry.clone(),
+            shape: None,
             mesh,
-            volume: properties.volume,
-            bounds: properties.bounds,
-            shape: Some(shape),
-        });
-    }
-    let imported = imported_mesh.is_some();
-    let mut mesh = match imported_mesh {
-        Some(mesh) => mesh,
-        None => kernel
-            .build(&part.geometry)
-            .map_err(|e| format!("{id}: {e}"))?,
-    };
-    let [x, y, z] = part.placement.rotation.map(f64::to_radians);
-    let rotation =
-        DMat3::from_rotation_z(z) * DMat3::from_rotation_y(y) * DMat3::from_rotation_x(x);
-    let translation = DVec3::from(part.placement.translation);
-    for p in &mut mesh.vertices {
-        *p = (rotation * DVec3::from(*p) + translation).to_array();
-    }
-    for normal in &mut mesh.normals {
-        *normal = (rotation * DVec3::from(*normal))
-            .normalize_or_zero()
-            .to_array();
-    }
-    let mut lo = DVec3::splat(f64::INFINITY);
-    let mut hi = DVec3::splat(f64::NEG_INFINITY);
-    for p in &mesh.vertices {
-        lo = lo.min(DVec3::from(*p));
-        hi = hi.max(DVec3::from(*p));
-    }
-    let centre = (lo + hi) / 2.;
-    let volume: f64 = mesh
-        .triangles
-        .iter()
-        .map(|t| {
-            let [a, b, c] = t.map(|i| DVec3::from(mesh.vertices[i as usize]) - centre);
-            a.dot(b.cross(c)) / 6.
+            volume,
+            bounds: [lo.to_array(), hi.to_array()],
         })
-        .sum();
-    let volume = if imported { volume.abs() } else { volume };
-    if !volume.is_finite() || (!imported && volume <= 0.) {
-        return Err(format!("{id}: solid has no positive volume"));
     }
-    Ok(Body {
-        id: id.into(),
-        name: part.name.clone(),
-        group: part.group.clone(),
-        colour: part.colour,
-        mesh,
-        volume,
-        bounds: [lo.to_array(), hi.to_array()],
-        shape: None,
-    })
+
+    /// The exact shape of a history, asset or primitive part. A history also returns the
+    /// feature cache key of its output, when that cache is active.
+    fn shape(
+        &self,
+        part: &Part,
+        cache: &mut history::Cache,
+    ) -> Result<(Option<Shape>, Option<String>)> {
+        Ok(match &part.geometry {
+            faber_model::Geometry::History { features, output } => {
+                let (shape, key) = history::build(
+                    features,
+                    output,
+                    self.kernel,
+                    cache,
+                    self.paths,
+                    self.persist,
+                )?;
+                (Some(shape), key)
+            }
+            faber_model::Geometry::Imported { asset, .. } => (
+                Some(
+                    self.kernel
+                        .read_shape(self.paths.get(asset).ok_or("Asset is missing")?)?,
+                ),
+                None,
+            ),
+            geometry => (self.kernel.exact_shape(geometry)?, None),
+        })
+    }
+
+    /// Tessellates an unplaced shape. A history output reads its mesh from the feature cache
+    /// when the cache has it.
+    fn tessellate(&self, shape: &Shape, output_key: Option<&str>) -> Result<faber_ports::Mesh> {
+        // The cache takes letters and digits only. The prefix marks the 0.03 mm mesh.
+        let cached = match (self.persist, output_key) {
+            (Some(store), Some(key)) => Some((store, format!("mesh03{key}"))),
+            _ => None,
+        };
+        if let Some((store, name)) = &cached
+            && let Some(mesh) = store.get(name).as_deref().and_then(body_cache::decode_mesh)
+        {
+            return Ok(mesh);
+        }
+        let mesh = self.kernel.tessellate(shape, TESSELLATION_MM)?;
+        if let Some((store, name)) = &cached {
+            // A failed write only means that the next open tessellates again.
+            let _ = store.put(name, &body_cache::encode_mesh(&mesh));
+        }
+        Ok(mesh)
+    }
 }

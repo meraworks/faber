@@ -9,9 +9,20 @@ schemars = "1.2"
 glam = "0.33"
 earcutr = "0.5"
 tempfile = "3"
+jrsonnet-evaluator = { version = "0.5.0-pre98", default-features = false, features = ["ir-parser", "explaining-traces"] }
+jrsonnet-stdlib = "0.5.0-pre98"
+
+[patch.crates-io]
+# See vendor/jrsonnet-stdlib/Cargo.toml.
+jrsonnet-stdlib = { path = "vendor/jrsonnet-stdlib" }
+
+# Full debug data for about 100 test programs filled the disk (115 GB of PDB files).
+[profile.dev]
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 1
+debug = false
 
 [profile.dev.package.faber-scene]
 opt-level = 3
