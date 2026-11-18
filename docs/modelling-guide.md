@@ -242,7 +242,10 @@ Faber supports these operations:
 - chamfer
 - linear_pattern
 - circular_pattern
+- path_pattern
 - mirror
+- scale
+- pipe
 
 Read the argument schema for the fields of each operation. The pattern count includes the source. If the angle is 360 or -360 degrees, the copies divide the full circle equally. For example, count 6 and angle 360 give copies every 60 degrees. For any other angle, copy n is at n times the angle from the source.
 
@@ -254,11 +257,41 @@ Read the argument schema for the fields of each operation. The pattern count inc
 
 `point` defines a `position` in part coordinates. `place_at_point` takes `source` and the point feature id as `point`. It translates source coordinates by the point position, with no rotation. It maps the source coordinate origin to the point. It does not align the solid centre. Axis and point references cannot be part outputs. Faber refuses missing, forward and wrong-type references. The viewer References menu creates planes, axes and points in the selected part. These actions keep the current solid output. Edit reference values in the feature list. The recipe tools provide the specialised reference operations. The viewer does not yet have reference pickers for them.
 
+### Construction references
+
+These operations make a plane, an axis or a point from other references. Each one is a feature in the history. Each keeps the current solid as the part output. Faber refuses missing, forward and wrong-type inputs. A change to a source or a parameter rebuilds the reference and its dependants.
+
+`plane_at_angle` takes `axis`, an axis feature id, `from` and `angle` in degrees. `from` is `"xy"`, `"xz"`, `"yz"` or `{"plane": "<plane id>"}`. The axis must lie in the reference plane. The new plane contains the axis. Its normal turns by `angle` about the axis. The base normals are +Z for XY, +Y for XZ and +X for YZ. An angle of 30 about the X axis from XY gives the normal (0, -0.5, 0.866).
+
+`midplane` takes `first` and `second`, two plane feature ids. The planes must be parallel. The result lies halfway between them and keeps the frame of `first`. For planar faces, first create two `plane_on_face` features.
+
+`plane_through_points` takes `points`, a list of three entries. An entry is a point feature id or `[x, y, z]`. The points must be distinct. They must not lie on one line. Local X lies along the first edge.
+
+`axis_from_cylinder` takes `source` and `face`. The face selector must match exactly one cylinder face. Faber does not support cone faces.
+
+`axis_from_planes` takes `first` and `second`. The planes must not be parallel. The axis is their line of intersection. Its origin is the point on that line nearest to the world origin.
+
+`point_at_centre` takes `source` and `edge`. The edge selector must match exactly one full circle. Faber does not support arcs or spherical faces.
+
+```json
+{"id":"tilt","geometry":{"op":"plane_at_angle","axis":"x_axis","from":"xy","angle":30}}
+{"id":"mid","geometry":{"op":"midplane","first":"top","second":"bottom"}}
+{"id":"tri","geometry":{"op":"plane_through_points","points":["p1","p2",[0,10,5]]}}
+```
+
+The viewer References menu creates these references with default values. If a default is refused, the viewer shows the error and saves nothing.
+
 `helix` creates a curve path from `radius`, `pitch`, `turns` and an optional `placement`. The path starts at `[radius,0,0]`. It turns about local +Z. Pitch is the signed rise per turn. Turns must be greater than zero and at most 100. The total height must not exceed 1000000 mm. Use the helix as the path of `sweep_sketch`. The section must be normal to the starting tangent `[0,2*pi*radius,pitch]`. See Thread example. The adapter builds the 3D curve to a 0.0000001 mm approximation tolerance.
 
 `split` takes `source`, a plane `origin` and `normal` in part coordinates, and `keep`: `both` (default), `positive` or `negative`. Positive follows the normal. The plane must cut through the source. Faber refuses a tangent or outside plane. Both sides stay separate solids within one feature result. They do not become separate part records. The viewer provides Split body and side controls.
 
 `offset` takes `source` and `distance`. A positive distance expands a solid with round joins. A negative distance contracts it. Faber refuses zero. The result must stay a valid solid. This operation changes the whole solid. It does not move one selected face. The viewer provides it as Offset solid.
+
+`scale` takes `source`, a `factor` and `about`, a point in part coordinates. A number scales all axes by the same factor. An array `[x,y,z]` gives one factor for each axis. Each factor must be a finite number greater than zero. Faber refuses zero, negative and non-finite factors. Faces keep their `created_by` origin. The result must be a valid solid.
+
+`pipe` sweeps a round section along a path. Set `diameter` in millimetres. Set `path` to a `curve` or `helix` feature id. Set it to an inline curve with the fields of `curve` if no feature is needed. The circle is normal to the path start. Set `wall` to make a tube. The wall must be more than zero and less than the radius.
+
+`path_pattern` copies `source` along `path`. `count` includes the source and must be an integer from 1 to 1000. Copy 0 stays at the path start. Without `spacing`, the copies span the whole path. With `spacing`, copy n is at n times the spacing. Faber refuses a spacing that runs past the path end. Set `orient` to true to turn each copy to the path tangent. Each copy moves with the path from the start. On a closed path, use `spacing` so that the last copy does not overlap the first.
 
 `draft` takes `source`, a `faces` selector, `direction`, `origin`, `normal` and `angle`. Origin and normal define the neutral plane in part coordinates. A positive angle removes material on the direction side of that plane. A negative angle adds it. The angle is in degrees. It must be non-zero and strictly between -90 and 90. The viewer provides a Draft form with the same fields.
 
@@ -318,6 +351,38 @@ new field accepts an expression, such as `"radius": "r"`.
 Call `topology` with part `id` and source `feature` to inspect cached edges and faces in part coordinates. Without `feature`, it reports the placed final shape in world coordinates. Each result states its coordinate space and revision. Do not reuse indices for a different shape or revision.
 
 Fillet and chamfer select edges by direction, centre, length or radius. Shell selects faces by normal, centre or area. Set `tolerance` and `expect`. Faber then refuses an ambiguous selection. The adapter reports a normal only for a flat face. Use centre or area for other faces. Query the source feature, not the final placed shape, when you set a selector.
+
+### Fillet and chamfer variants
+
+A chamfer can have two distances. Set `distance2`. The first distance is `distance`.
+
+A chamfer can have a distance and an angle. Set `angle_deg` in degrees. Do not set `distance2` with `angle_deg`.
+
+Set `face` to choose the face where `distance` is measured. The face must touch each selected edge. Without `face`, Faber uses the first face that the kernel reports for each edge.
+
+A fillet can have a variable radius. Set `radius_end`. The radius changes in a straight line from `radius` at the start of the edge to `radius_end` at the end.
+
+Faber refuses a zero or negative distance, angle or radius. Faber also refuses an angle of 90 degrees or more.
+
+Two distances, with a bevel of 2 mm and 4 mm on the first face of each edge:
+
+```json
+{"id":"bevel","geometry":{"op":"chamfer","source":"body","edges":{"parallel":[0,0,1],"tolerance":0.000001,"expect":1},"distance":2,"distance2":4}}
+```
+
+A distance and an angle, with 3 mm measured on the face that has normal -Y, at 45 degrees:
+
+```json
+{"id":"bevel","geometry":{"op":"chamfer","source":"body","edges":{"parallel":[0,0,1],"tolerance":0.000001,"expect":1},"distance":3,"angle_deg":45,"face":{"normal":[0,-1,0],"tolerance":0.000001,"expect":1}}}
+```
+
+A variable fillet from 1 mm to 3 mm:
+
+```json
+{"id":"round","geometry":{"op":"fillet","source":"body","edges":{"parallel":[0,0,1],"tolerance":0.000001,"expect":1},"radius":1,"radius_end":3}}
+```
+
+Old files stay valid. A new key is written only when you set it.
 
 The `tolerance` is a distance in millimetres. Faber uses it for centre, box, length and radius checks. For an area check, it is an area difference in square millimetres. A normal check uses an exact direction. It does not use `tolerance`. Number fields such as `tolerance`, `in_box`, `length` and `radius` accept expressions. Use a whole number for `expect`.
 
@@ -393,7 +458,64 @@ Set `kind` to `edges` or `faces` to return one list. Set `edge` or `face` to kee
 
 When the count differs from `expect`, the error lists the matched items, up to 5. If there are too few, it also lists up to 3 closest rejected items. Each rejected item names the filter that rejected it. Use these lines to correct the selector.
 
+## Text and emboss
+
+A sketch loop of kind `text` makes one line of text. Faber makes the glyph outlines from a built-in font. Each glyph contour becomes a sketch loop. A letter counter, such as the hole of "O", becomes a hole.
+
+Fields of a text loop:
+
+- `text`: one line of 1 to 256 characters. A line break is refused.
+- `height`: the cap height in mm. Expressions are accepted.
+- `at`: the `[x, y]` position in sketch coordinates. It is the start of the baseline. When `align` is `centre`, it is the centre of the text.
+- `align`: `left` (default), `centre` or `right`.
+- `angle_deg`: the turn about `at` in degrees. Positive is counter-clockwise. Absent means 0.
+- `font`: `ubuntu-light` (default) or `hack`. Faber refuses other names.
+
+Text can only be the outer boundary of a sketch. A text sketch cannot have extra holes. Faber flattens each curve to line segments. The tolerance is 0.002 mm for each mm of height, so it is 0.02 mm at 10 mm height. A letter with separate parts, such as "i", gives several regions. Faber fuses the solids of the regions. A text sketch can have at most 256 outlines.
+
+Faber refuses text with no visible outline, such as a space only. Faber refuses a non-positive height.
+
+For raised or engraved text on a face, use the existing sketch route. Use `plane_on_face` for the face, `sketch_on_plane` for the letters and `extrude_sketch` for the depth. A positive vector adds material. A negative vector removes material when the result is a `difference`. Extrusion vectors use part coordinates. Faber has no separate emboss feature.
+
+Raised text on the top face of a 40 x 20 x 5 mm box:
+
+```json
+{"name":"Tag","colour":[100,140,170],"geometry":{"op":"history","output":"tag","features":[
+  {"id":"base","geometry":{"op":"box","size":[40,20,5]}},
+  {"id":"top","geometry":{"op":"plane_on_face","source":"base","face":{"normal":[0,0,1],"expect":1,"tolerance":0.000001},"offset":0}},
+  {"id":"letters","geometry":{"op":"sketch_on_plane","plane":"top","profile":{"outer":{"kind":"text","text":"LAB-01","height":6,"at":[0,-3],"align":"centre"}}}},
+  {"id":"raised","geometry":{"op":"extrude_sketch","source":"letters","vector":[0,0,1]}},
+  {"id":"tag","geometry":{"op":"union","left":"base","right":"raised"}}
+]}}
+```
+
+Engraved text, 1 mm deep, uses the same features with two changes. The vector is `[0,0,-1]`. The last feature is a `difference`:
+
+```json
+{"name":"Tag","colour":[100,140,170],"geometry":{"op":"history","output":"tag","features":[
+  {"id":"base","geometry":{"op":"box","size":[40,20,5]}},
+  {"id":"top","geometry":{"op":"plane_on_face","source":"base","face":{"normal":[0,0,1],"expect":1,"tolerance":0.000001},"offset":0}},
+  {"id":"letters","geometry":{"op":"sketch_on_plane","plane":"top","profile":{"outer":{"kind":"text","text":"LAB-01","height":6,"at":[0,-3],"align":"centre"}}}},
+  {"id":"cut","geometry":{"op":"extrude_sketch","source":"letters","vector":[0,0,-1]}},
+  {"id":"tag","geometry":{"op":"difference","left":"base","right":"cut"}}
+]}}
+```
+
+The origin of the face plane is the area centre of the face. The text `at` values are relative to that origin.
+
+Fonts and licences. Faber compiles the fonts into the program. No font file is read at run time.
+
+- `ubuntu-light` is Ubuntu Light. It comes from the `epaint_default_fonts` 0.37.0 crate. Its licence is the Ubuntu Font Licence 1.0.
+- `hack` is Hack Regular. It comes from the same crate. Its licence is the MIT License. The crate also keeps the Bitstream Vera and DejaVu notices.
+
 ## Thread example: helix and sweep_sketch
+
+Use `metric_fastener` with `{"size":"M3"}` to read coarse pitch, tap drill,
+clearance and head dimensions. Supported sizes are M1.6, M2, M2.5, M3, M4,
+M5, M6, M8, M10, M12, M16 and M20. Missing head data is returned as null.
+This query does not create a purchased part or a thread. The viewer Hole form
+has metric clearance and tap-drill presets. Clearance presets use medium fit;
+the dimensions remain editable. A tap-drill hole has no modelled thread.
 
 This example builds a helical ridge with a triangular section. It uses a helix path and a `sweep_sketch`. The section must be normal to the start of the helix.
 
@@ -447,7 +569,7 @@ These are perspective views from the selected direction. Front looks from negati
 
 The section keeps the material on the side opposite to `normal`. Set `reverse` to `true` to keep the material on the side that `normal` points to. A view along the plane shows the cut face edge-on. To see the cut face, use a view along `normal`. For `normal: [1,0,0]`, use the `right` view.
 
-`export` writes one STL or STEP file per part into `directory`. Set `format` to `stl` or `step`. Faber refuses an export when the check finds a violation. Set `force` to `true` to export anyway. `import_part` keeps an owned STEP solid in the project and makes a new part. Purchased parts and assemblies are still deferred. Slicer settings are separate.
+`export` writes one STL or STEP file per part into `directory`. Set `format` to `stl` or `step`. Faber refuses an export when the check finds a violation. Set `force` to `true` to export anyway. `import_part` keeps an owned STEP solid in the project and makes a new part. Use the purchased part record for catalogue hardware. Slicer settings are separate.
 
 ### Interference and contact
 
@@ -535,3 +657,76 @@ Draw a saved section with `render` and set `section` to its id. A render with a 
 Remove a section with `remove_section`. `set_section` and `remove_section` also work in `batch` and `preview_batch`. Each change makes one undo step.
 
 A part removal refuses while a section plane uses that part. Otherwise the part leaves every `parts` list.
+
+## Overhang analysis
+
+An overhang analysis finds faces that need support when you print a part. It never changes a solid.
+
+Each triangle has an angle to the build direction. The default build direction is up, `[0,0,1]`. The default critical angle is 45 degrees. A face that points down within this angle needs support.
+
+Run the `overhang_analysis` tool. Set `part` to one part id. Leave it out to analyse every part. Set `direction` and `critical_angle_deg` to change the rules. The critical angle goes from 0 to 90 degrees.
+
+The result gives:
+
+- `support_area_mm2`: the area that needs support.
+- `bed_area_mm2`: the area on the bed. It needs no support.
+- `total_area_mm2`: the whole surface area.
+- `flattest_overhang_deg`: the smallest angle from the downward direction over the support faces. Zero is a flat underside. It is absent when no face needs support.
+- `regions`: up to five largest support regions. Each region gives `part`, `centroid_mm`, `area_mm2` and `triangles`.
+
+Each part has its own bed. The bed faces are the faces at the lowest point of the part. Their corners lie within 0.05 mm of that point, and they point down.
+
+In the viewer, select the OVERHANG check box in the analysis panel. Red faces are flat. Orange faces are near the critical angle. Blue faces are on the bed. The slider sets the critical angle.
+
+## Model a metric thread
+
+Add a `thread` feature after the feature that makes the shaft or bore. Set `source` to that feature. Use `face.cylinder_radius` and `face.internal` to select one cylindrical face. Set `size` to a coarse metric designation such as `M6`. Set `length` and `offset` in millimetres. Set `left_handed` to `true` for a left-hand thread.
+
+Open `examples/metric-thread-pair/faber.json` for an M6 shaft and sleeve. Each thread has an axial length of 8 mm. The profile uses nominal dimensions. It has no tolerance class or allowance for a printed fit.
+
+## Drive an assembly
+
+Open `examples/assembly-motion`. Under **Assembly motion**, select **Drag moving parts**. Drag the input arm to turn the follower and the ratio indicator. Drag the carriage along its guide. Use **Reset pose** to return all parts to their assembled positions. The model stores the joint definitions. Dragging changes the view only.
+
+Select a body and use **Add joint to selected part** to set an axis and an origin. Coordinates use the assembled world frame. Open **Edit joints and relations** to set travel limits, attach parts to a common joint, specify a parent joint, enter a signed gear ratio or connect two rotating arms with a rigid rod. Supply the two pin centres at the assembled position.
+
+Call `set_motion` with the `motion` object from the example project. Call `motion_pose` with `{"values":{"input":15}}` to get the world displacement of each moving part. Unspecified drives stay at zero. The solver refuses an unreachable rod position or a value outside the limits.
+
+Call `sweep_motion` with `{"joint":"input","range":[-30,30],"proximity_mm":0}` or use **Check travel** in the viewer. The check excludes pairs with no relative motion. It returns a pair and input value when it finds a violation. It returns an uncertain interval when it cannot establish clearance between checked positions. Mesh contact can require inspection of the original solids.
+
+To capture a pose, run `faber-viewer shot PROJECT --joint input 15 --out pose.png`. Repeat `--joint` to drive more than one independent joint.
+
+## Move and align parts
+
+Call `move_part` with exactly one mode. The call refuses zero or several modes.
+
+- `translate`: move by `[dx, dy, dz]` in mm. The move is relative.
+- `rotate`: set `axis` to `"x"`, `"y"`, `"z"` or a vector. Set `angle_deg`. Set `about` to `"centre"`, `"origin"` or a world point. The default is `"centre"`, the centre of the bounding box.
+- `point_to_point`: set `from` and `to`. The part moves by the vector between them.
+- `position`: move the bounding box centre to this world point.
+
+Example: `{"id":"bracket","rotate":{"axis":"z","angle_deg":90}}` turns the bracket 90 degrees about its centre.
+
+Each move is one undo step. If you want to keep the source part, set `copy_as` to a new id. Set `expected_revision` to refuse a stale change. A placement with a parameter expression is refused. Replace the expression with a number first.
+
+Call `align_parts` to line up a part with a target part. Use `"origin"` as the target to line up with the world origin.
+
+- `axes`: list `"x"`, `"y"` or `"z"`. Only these axes move.
+- `mode`: `min`, `max`, `centre`, `min_to_max` or `max_to_min`.
+- `gap_mm`: a gap in mm. Use it with `min_to_max` and `max_to_min` only.
+
+To stack a part on top of another, use `min_to_max` on the `z` axis. Example: `{"id":"lid","target":"box","axes":["z"],"mode":"min_to_max","gap_mm":0.5}`. The move uses world bounding boxes and changes translation only.
+
+## Suppress a feature
+
+Call `suppress_feature` with `part` and `id`. The default is `suppressed: true`. Set `suppressed: false` to unsuppress the feature.
+
+A suppressed feature is not built. It stays in the recipe. Faber saves the flag as `"suppressed": true`. An active feature has no flag.
+
+A suppressed feature with an input solid passes that solid on. The input is the `source` of a fillet, chamfer, shell, draft, offset, hole, thread, transform, scale, split or pattern. For a boolean, the input is `left`. Later features and the output use the input solid. Suppressing a fillet or hole therefore removes its effect and keeps the chain. A suppressed chain resolves to its first input.
+
+A creation feature has no input solid, such as a box, cylinder, sketch extrude, sweep or imported part. Suppressing it leaves no solid. A later feature that needs it is refused. The error names that later feature. Set `cascade: true` to suppress the later features too. A boolean with a suppressed `right` operand is refused in the same way. With cascade, the boolean is suppressed and passes on its `left` operand.
+
+Faber refuses to suppress the output when the output has no input solid. Faber refuses to unsuppress a feature whose source has no solid. Unsuppress the source first.
+
+Each suppress change is one undo step. Set `expected_revision` to refuse a stale change.

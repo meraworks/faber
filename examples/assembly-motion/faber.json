@@ -1,0 +1,250 @@
+{
+  "schema": 1,
+  "revision": 0,
+  "name": "Assembly motion",
+  "parts": {
+    "input": {
+      "name": "Input arm",
+      "geometry": {
+        "op": "box",
+        "size": [
+          5,
+          25,
+          3
+        ]
+      },
+      "placement": {
+        "translation": [
+          0,
+          10,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ]
+      },
+      "colour": [
+        216,
+        116,
+        60
+      ]
+    },
+    "output": {
+      "name": "Follower arm",
+      "geometry": {
+        "op": "box",
+        "size": [
+          5,
+          25,
+          3
+        ]
+      },
+      "placement": {
+        "translation": [
+          40,
+          10,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ]
+      },
+      "colour": [
+        89,
+        148,
+        193
+      ]
+    },
+    "rod": {
+      "name": "Connecting rod",
+      "geometry": {
+        "op": "box",
+        "size": [
+          44,
+          4,
+          3
+        ]
+      },
+      "placement": {
+        "translation": [
+          20,
+          20,
+          3
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ]
+      },
+      "colour": [
+        137,
+        172,
+        175
+      ]
+    },
+    "slide": {
+      "name": "Carriage",
+      "geometry": {
+        "op": "box",
+        "size": [
+          8,
+          8,
+          8
+        ]
+      },
+      "placement": {
+        "translation": [
+          15,
+          -16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ]
+      },
+      "colour": [
+        163,
+        165,
+        86
+      ]
+    },
+    "wheel": {
+      "name": "Ratio indicator",
+      "geometry": {
+        "op": "box",
+        "size": [
+          20,
+          3,
+          2
+        ]
+      },
+      "placement": {
+        "translation": [
+          56,
+          -16,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ]
+      },
+      "colour": [
+        168,
+        114,
+        157
+      ]
+    }
+  },
+  "motion": {
+    "joints": {
+      "input": {
+        "parts": [
+          "input"
+        ],
+        "kind": "revolute",
+        "origin": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "limits": [
+          -45,
+          45
+        ]
+      },
+      "output": {
+        "parts": [
+          "output"
+        ],
+        "kind": "revolute",
+        "origin": [
+          40,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "limits": null
+      },
+      "carriage": {
+        "parts": [
+          "slide"
+        ],
+        "kind": "slider",
+        "origin": [
+          15,
+          -16,
+          0
+        ],
+        "axis": [
+          1,
+          0,
+          0
+        ],
+        "limits": [
+          -10,
+          10
+        ]
+      },
+      "indicator": {
+        "parts": [
+          "wheel"
+        ],
+        "kind": "revolute",
+        "origin": [
+          56,
+          -16,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "limits": null
+      }
+    },
+    "gears": {
+      "indicator": {
+        "driver": "input",
+        "ratio": -2
+      }
+    },
+    "linkages": {
+      "connecting_rod": {
+        "driver": "input",
+        "follower": "output",
+        "driver_pin": [
+          0,
+          20,
+          3
+        ],
+        "follower_pin": [
+          40,
+          20,
+          3
+        ],
+        "rod_parts": [
+          "rod"
+        ]
+      }
+    }
+  }
+}

@@ -1,20 +1,27 @@
 # Deferred work
 
-Updated: 2026-11-17.
+Updated 2026-11-18.
 
-The owner deferred purchased parts and assembly support. Current work focuses
-on an AI-first CAD application: fast model creation and edits through stdio
-MCP, with a shared GUI. Keep these tasks for a later stage. Filament selection,
-slicer settings and printer operation are outside the current task.
+The viewer and MCP use the same assembly motion definitions.
 
 ## Purchased parts and assemblies
 
-- [ ] Add records for downloaded servos, motors, bearings, wheels and electronic
+- [x] Add records for downloaded servos, motors, bearings, wheels and electronic
   boards, with source, licence, content hash and available mass data.
-- [ ] Preserve purchased model files and prevent geometry edits to those parts.
+- [x] Preserve purchased model files and prevent geometry edits to those parts.
 - [ ] Add reusable part instances and assembly placements.
-- [ ] Add joints, motion limits and named poses.
-- [ ] Check assembly clearance and interference across poses.
+- [ ] Save and recall named poses.
+- [x] Add revolute and slider joints with viewport drag controls.
+- [x] Link joint motion by ratio for gears and drive connected linkages.
+- [x] In the viewer, drag a hinged control surface. Check that the servo arm
+  and connecting rod follow it, the rod length stays fixed and the assembly
+  stops at its motion limits. Use the same joint definitions through MCP.
+- [x] Check assembly clearance and interference across poses.
+- [x] Check interference along a continuous joint motion.
+- [x] Read native Fusion `.f3d` archives. Restore supported sketches,
+  parameters and ordered features. Report unsupported features. Test that
+  an imported dimension can change and its dependent features rebuild.
+- [ ] Verify an archive round trip in a running Fusion host.
 - [ ] Test with real downloaded model fixtures, without network access in tests.
 
 Owned-model import and general part placement already exist. Keep these tools

@@ -49,6 +49,7 @@ fn build_before_save_and_keep_failed_changes_out() {
         parts: Default::default(),
         params: Default::default(),
         contacts: Default::default(),
+        motion: Default::default(),
         sections: Default::default(),
     })));
     let mut project = Project::open(store.clone(), Arc::new(NativeKernel)).unwrap();
@@ -70,6 +71,7 @@ fn unsupported_schema_is_refused() {
         parts: Default::default(),
         params: Default::default(),
         contacts: Default::default(),
+        motion: Default::default(),
         sections: Default::default(),
     })));
     assert!(Project::open(store, Arc::new(NativeKernel)).is_err());
@@ -84,6 +86,7 @@ fn part_ids_remain_safe_on_case_insensitive_file_systems() {
         parts: Default::default(),
         params: Default::default(),
         contacts: Default::default(),
+        motion: Default::default(),
         sections: Default::default(),
     })));
     let mut project = Project::open(store.clone(), Arc::new(NativeKernel)).unwrap();
@@ -143,6 +146,7 @@ fn parameter_edits_reuse_parts_with_unchanged_dimensions() {
         parts: Default::default(),
         params: Default::default(),
         contacts: Default::default(),
+        motion: Default::default(),
         sections: Default::default(),
     })));
     let kernel = Arc::new(CountingKernel(std::sync::atomic::AtomicUsize::new(0)));

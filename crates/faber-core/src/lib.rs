@@ -2,19 +2,29 @@
 
 mod assets;
 mod batch;
+mod construction;
+mod dress_variant;
 mod feature_cache;
 mod feature_edit;
 mod history;
 mod hole;
+pub mod overhang;
 mod pattern;
+mod pipe;
+mod placement;
 mod provenance;
+mod scale;
 mod section;
 mod select;
+mod thread;
 
 pub use batch::{Operation, PartInfo, PartInfoOperation};
 use faber_model::{Part, ProjectData, Scalar};
 use faber_ports::{Body, Kernel, ProjectStore, Result};
 use glam::{DMat3, DVec3};
+pub use placement::{
+    AlignMode, Axis, Motion, Pivot, PivotName, PointToPoint, Rotation, RotationAxis, align_shift,
+};
 pub use section::{CutPart, ResolvedSection, SectionReport};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -122,6 +132,25 @@ impl Project {
         source: &std::path::Path,
         strict: bool,
     ) -> Result<()> {
+        self.import_with_record(id, name, source, strict, None)
+    }
+
+    pub fn import_with_record(
+        &mut self,
+        id: String,
+        name: String,
+        source: &std::path::Path,
+        strict: bool,
+        purchased: Option<faber_model::Purchased>,
+    ) -> Result<()> {
+        if let Some(record) = &purchased
+            && (record.source.trim().is_empty()
+                || record.licence.trim().is_empty()
+                || record.designation.trim().is_empty()
+                || record.mass_g.is_some_and(|m| !m.is_finite() || m <= 0.))
+        {
+            return Err("Supply a source, licence and designation. Mass must be positive.".into());
+        }
         self.sync()?;
         if !valid_id(&id)
             || self
@@ -143,7 +172,10 @@ impl Project {
             note: String::new(),
             colour: [100, 140, 170],
             placement: Default::default(),
-            geometry: faber_model::Geometry::<Scalar>::Imported { asset },
+            geometry: faber_model::Geometry::<Scalar>::Imported {
+                asset,
+                purchased: purchased.map(Box::new),
+            },
         };
         let operations = vec![faber_model::Edit::PutPart { id, part }];
         if strict {
@@ -160,8 +192,20 @@ impl Project {
         self.sync()?;
         let mut next = self.data.clone();
         for (id, part) in parts {
-            next.parts
-                .insert(id, part.map_numbers(|n| Ok(n.clone().into()))?);
+            let part = part.map_numbers(|n| Ok(n.clone().into()))?;
+            if let Some(previous) = next.parts.get(&id)
+                && matches!(
+                    &previous.geometry,
+                    faber_model::Geometry::Imported {
+                        purchased: Some(_),
+                        ..
+                    }
+                )
+                && previous.geometry != part.geometry
+            {
+                return Err(format!("Purchased part geometry is fixed: {id}"));
+            }
+            next.parts.insert(id, part);
         }
         self.apply(next)
     }
@@ -414,6 +458,7 @@ impl Project {
                 histories.entry(id.clone()).or_default(),
                 &paths,
                 self.cache.as_deref(),
+                assets::mesh(&resolved.geometry, self.assets.as_deref(), &paths)?,
             )?);
         }
         if !next.sections.is_empty() {
@@ -543,12 +588,23 @@ fn build_cached(
     cache: Option<&dyn faber_ports::FeatureCache>,
 ) -> Result<Vec<Body>> {
     validate_data(data)?;
+    for id in data.motion.solve(&BTreeMap::new())?.keys() {
+        if !data.parts.contains_key(id) {
+            return Err(format!("Unknown motion part: {id}"));
+        }
+    }
     let paths = assets::resolve(data, assets)?;
     histories.retain(|id, _| data.parts.contains_key(id));
     let values = faber_expr::resolve(&data.params)?;
     data.parts
         .iter()
         .map(|(id, part)| {
+            let mesh = match (&part.geometry, assets) {
+                (faber_model::Geometry::Imported { asset, .. }, Some(store)) => store
+                    .read_mesh(paths.get(asset).ok_or("Asset is missing")?)
+                    .map_err(|error| format!("{id}: {error}"))?,
+                _ => None,
+            };
             build_part(
                 id,
                 &resolve_part(part, &values)?,
@@ -556,6 +612,7 @@ fn build_cached(
                 histories.entry(id.clone()).or_default(),
                 &paths,
                 cache,
+                mesh,
             )
         })
         .collect()
@@ -603,6 +660,7 @@ fn build_part(
     cache: &mut history::Cache,
     paths: &assets::Paths,
     persist: Option<&dyn faber_ports::FeatureCache>,
+    imported_mesh: Option<faber_ports::Mesh>,
 ) -> Result<Body> {
     check_part(id, part)?;
     if part
@@ -614,14 +672,18 @@ fn build_part(
     {
         return Err(format!("{id}: placement is outside the supported range"));
     }
-    let shape = match &part.geometry {
-        faber_model::Geometry::History { features, output } => {
-            history::build(features, output, kernel, cache, paths, persist).map(Some)
+    let shape = if imported_mesh.is_some() {
+        Ok(None)
+    } else {
+        match &part.geometry {
+            faber_model::Geometry::History { features, output } => {
+                history::build(features, output, kernel, cache, paths, persist).map(Some)
+            }
+            faber_model::Geometry::Imported { asset, .. } => kernel
+                .read_shape(paths.get(asset).ok_or("Asset is missing")?)
+                .map(Some),
+            geometry => kernel.exact_shape(geometry),
         }
-        faber_model::Geometry::Imported { asset } => kernel
-            .read_shape(paths.get(asset).ok_or("Asset is missing")?)
-            .map(Some),
-        geometry => kernel.exact_shape(geometry),
     }
     .map_err(|e| format!("{id}: {e}"))?;
     if let Some(shape) = shape {
@@ -645,7 +707,7 @@ fn build_part(
             ));
         }
         let mesh = kernel
-            .tessellate(&shape, 0.15)
+            .tessellate(&shape, 0.03)
             .map_err(|error| part_error(id, &part.geometry, error))?;
         return Ok(Body {
             id: id.into(),
@@ -658,15 +720,24 @@ fn build_part(
             shape: Some(shape),
         });
     }
-    let mut mesh = kernel
-        .build(&part.geometry)
-        .map_err(|e| format!("{id}: {e}"))?;
+    let imported = imported_mesh.is_some();
+    let mut mesh = match imported_mesh {
+        Some(mesh) => mesh,
+        None => kernel
+            .build(&part.geometry)
+            .map_err(|e| format!("{id}: {e}"))?,
+    };
     let [x, y, z] = part.placement.rotation.map(f64::to_radians);
     let rotation =
         DMat3::from_rotation_z(z) * DMat3::from_rotation_y(y) * DMat3::from_rotation_x(x);
     let translation = DVec3::from(part.placement.translation);
     for p in &mut mesh.vertices {
         *p = (rotation * DVec3::from(*p) + translation).to_array();
+    }
+    for normal in &mut mesh.normals {
+        *normal = (rotation * DVec3::from(*normal))
+            .normalize_or_zero()
+            .to_array();
     }
     let mut lo = DVec3::splat(f64::INFINITY);
     let mut hi = DVec3::splat(f64::NEG_INFINITY);
@@ -683,7 +754,8 @@ fn build_part(
             a.dot(b.cross(c)) / 6.
         })
         .sum();
-    if !volume.is_finite() || volume <= 0. {
+    let volume = if imported { volume.abs() } else { volume };
+    if !volume.is_finite() || (!imported && volume <= 0.) {
         return Err(format!("{id}: solid has no positive volume"));
     }
     Ok(Body {

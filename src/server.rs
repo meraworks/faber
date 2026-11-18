@@ -49,11 +49,19 @@ pub struct PutPart {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImportPart {
+    purchased: Option<faber_model::Purchased>,
     id: String,
     name: String,
     path: String,
     #[serde(default)]
     strict: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetricFastener {
+    /// Metric size, for example M3. Read the supported sizes in the guide.
+    size: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -71,6 +79,65 @@ pub struct SetPartInfo {
     note: Option<String>,
     /// Refuse the change if the project revision differs.
     expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportArchive {
+    path: String,
+    destination: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MovePart {
+    /// Part id.
+    id: String,
+    /// Move by [dx, dy, dz] in mm, relative to the current position.
+    translate: Option<[f64; 3]>,
+    /// Turn the part about an axis.
+    rotate: Option<faber_core::Rotation>,
+    /// Move by the vector from one world point to another.
+    point_to_point: Option<faber_core::PointToPoint>,
+    /// Move the bounding box centre to this world point [x, y, z] in mm.
+    position: Option<[f64; 3]>,
+    /// Keep the source part. Write the moved part as a new part with this id.
+    copy_as: Option<String>,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AlignParts {
+    /// Part that moves.
+    id: String,
+    /// Target part id, or "origin".
+    target: String,
+    /// Axes to align. Other axes do not move.
+    axes: Vec<faber_core::Axis>,
+    mode: faber_core::AlignMode,
+    /// Gap in mm. Use it with min_to_max or max_to_min only.
+    #[serde(default)]
+    gap_mm: f64,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SweepMotion {
+    joint: String,
+    range: [f64; 2],
+    #[serde(default)]
+    proximity_mm: f64,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MotionPose {
+    #[serde(default)]
+    values: BTreeMap<String, f64>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -151,6 +218,28 @@ pub struct MassProperties {
     density_g_cm3: Option<f64>,
 }
 
+/// Overhang input. Without a part, every part is analysed.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OverhangAnalysis {
+    /// Part id.
+    part: Option<String>,
+    /// Build direction. Default is up, [0, 0, 1].
+    #[serde(default = "default_build_direction")]
+    direction: [f64; 3],
+    /// Angle from the downward direction. Faces within this angle need support. From 0 to 90.
+    #[serde(default = "default_critical_angle")]
+    critical_angle_deg: f64,
+}
+
+fn default_build_direction() -> [f64; 3] {
+    [0., 0., 1.]
+}
+
+fn default_critical_angle() -> f64 {
+    45.
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Batch {
@@ -173,7 +262,8 @@ pub struct PreviewBatch {
 }
 
 /// Batch tool names, in the order shown to clients.
-const BATCH_TOOLS: [&str; 10] = [
+const BATCH_TOOLS: [&str; 11] = [
+    "set_motion",
     "set_section",
     "remove_section",
     "set_part_info",
@@ -321,6 +411,27 @@ pub struct Remove {
     id: String,
 }
 
+fn suppress_by_default() -> bool {
+    true
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SuppressFeature {
+    #[serde(default)]
+    strict: bool,
+    part: String,
+    id: String,
+    /// True suppresses the feature. False unsuppresses it.
+    #[serde(default = "suppress_by_default")]
+    suppressed: bool,
+    /// With suppressed true, also suppress the features that depend on it.
+    #[serde(default)]
+    cascade: bool,
+    /// Refuse the change if the project revision differs.
+    expected_revision: Option<u64>,
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Topology {
@@ -427,6 +538,23 @@ fn image_height() -> u32 {
 
 pub fn report(data: &ProjectData, bodies: &[Body]) -> Value {
     json!({"schema":1,"name":data.name,"revision":data.revision,"part_count":bodies.len(),"parts":bodies.iter().map(|b| json!({"id":b.id,"name":b.name,"group":b.group,"volume_mm3":b.volume,"bounds_mm":b.bounds,"triangles":b.mesh.triangles.len()})).collect::<Vec<_>>()})
+}
+
+/// Reads the placement, world bounds and revision of one part after a move.
+fn placed_reply(p: &Project, id: &str) -> Result<Value, String> {
+    let part = p
+        .data
+        .parts
+        .get(id)
+        .ok_or_else(|| format!("Unknown part: {id}"))?;
+    let body = p
+        .bodies
+        .iter()
+        .find(|body| body.id == id)
+        .ok_or("Part has no built body")?;
+    Ok(
+        json!({"schema":1,"id":id,"placement":part.placement,"bounds_mm":body.bounds,"revision":p.data.revision}),
+    )
 }
 
 /// Add the resolved absolute project path to the open reply.
@@ -624,7 +752,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Import your own STEP solid as a new part. Use an absolute source path. Preserve the file in the project and verify its content on rebuild. This is not a purchased-part record."
+        description = "Import STEP, STL, 3MF, OBJ, PLY or OFF as a new part. Use an absolute source path. Keep mesh faces and preserve the source bytes in the project. Files without units use millimetres. Mesh parts do not have exact face or solid operations. Materials and textures are not imported. This is not a purchased-part record."
     )]
     fn import_part(
         &self,
@@ -635,7 +763,7 @@ impl Faber {
             if !path.is_absolute() {
                 return Err("Import needs an absolute source path".into());
             }
-            p.import_part(args.id, args.name, path, args.strict)?;
+            p.import_with_record(args.id, args.name, path, args.strict, args.purchased)?;
             Ok(report(&p.data, &p.bodies))
         })
     }
@@ -661,6 +789,66 @@ impl Faber {
             p.undo()?;
             Ok(report(&p.data, &p.bodies))
         })
+    }
+
+    #[tool(
+        description = "Store the as-built assembly joints, gear ratios and connecting rods. Coordinates are in the assembled world frame. Angles are in degrees and distances are in millimetres."
+    )]
+    fn set_motion(
+        &self,
+        Parameters(Checked(study)): Parameters<Checked<faber_model::motion::MotionStudy>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            p.batch(vec![faber_model::Edit::SetMotion { study }])?;
+            Ok(json!({"revision":p.data.revision,"motion":p.data.motion}))
+        })
+    }
+
+    #[tool(
+        description = "Check interference throughout one joint range. Other independent drives stay at zero. An uncertain interval needs further inspection."
+    )]
+    fn sweep_motion(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SweepMotion>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            Ok(json!(faber_wiring::motion_check::sweep(
+                &p.bodies,
+                &p.data.motion,
+                &p.data.contacts,
+                &args.joint,
+                args.range,
+                args.proximity_mm
+            )?))
+        })
+    }
+
+    #[tool(
+        description = "Import a local Fusion archive into a new editable project folder. Start the FaberArchive add-in in Fusion first."
+    )]
+    fn import_archive(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<ImportArchive>>,
+    ) -> CallToolResult {
+        result((|| {
+            let source = Path::new(&args.path);
+            let dest = Path::new(&args.destination);
+            if !source.is_absolute() || !dest.is_absolute() {
+                return Err("Supply two absolute paths".into());
+            }
+            faber_wiring::archive::import(source, dest)?;
+            Ok(json!({"path":args.destination}))
+        })())
+    }
+
+    #[tool(
+        description = "Solve a pose without changing the project. Supply independent joint values. Returns world transforms relative to the as-built position."
+    )]
+    fn motion_pose(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<MotionPose>>,
+    ) -> CallToolResult {
+        self.with(|p| Ok(json!({"transforms":p.data.motion.solve(&args.values)?})))
     }
 
     #[tool(description = "Redo a saved change after undo. A new edit clears the redo branch.")]
@@ -822,6 +1010,29 @@ impl Faber {
         })
     }
 
+    #[tool(
+        description = "Suppress or unsuppress a feature. A suppressed feature stays in the recipe. A suppressed modifier, for example a fillet or a hole, passes its input solid to later features. A suppressed creation feature gives no solid: features that need it are refused unless cascade is true. The change is one undo step."
+    )]
+    fn suppress_feature(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SuppressFeature>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            if args.strict {
+                p.batch_strict(vec![faber_model::Edit::SetSuppressed {
+                    part: args.part,
+                    id: args.id,
+                    suppressed: args.suppressed,
+                    cascade: args.cascade,
+                }])?;
+            } else {
+                p.set_suppressed(&args.part, &args.id, args.suppressed, args.cascade)?;
+            }
+            Ok(report(&p.data, &p.bodies))
+        })
+    }
+
     #[tool(description = "Set a shared parameter expression. Rebuild affected solids before save.")]
     fn set_param(
         &self,
@@ -887,6 +1098,41 @@ impl Faber {
                 p.put_parts(args.parts)?;
             }
             Ok(report(&p.data, &p.bodies))
+        })
+    }
+
+    #[tool(
+        description = "Move or turn a part. Give exactly one mode: translate, rotate, point_to_point or position. Set copy_as to keep the source part. Returns the placement, bounds and revision. The change is one undo step."
+    )]
+    fn move_part(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<MovePart>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            let motion = faber_core::Motion::from_options(
+                args.translate,
+                args.rotate,
+                args.point_to_point,
+                args.position,
+            )?;
+            let target = args.copy_as.clone().unwrap_or_else(|| args.id.clone());
+            p.move_part(&args.id, motion, args.copy_as.as_deref())?;
+            placed_reply(p, &target)
+        })
+    }
+
+    #[tool(
+        description = "Move a part so its bounding box lines up with a target part or with the origin. Translation only. Use mode min_to_max to stack a part on its target. Returns the placement, bounds and revision. The change is one undo step."
+    )]
+    fn align_parts(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<AlignParts>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            p.align_part(&args.id, &args.target, &args.axes, args.mode, args.gap_mm)?;
+            placed_reply(p, &args.id)
         })
     }
 
@@ -981,6 +1227,44 @@ impl Faber {
     }
 
     #[tool(
+        description = "Find faces that need support for 3D printing. Each face is classed by its angle to the build direction. Read the support area, the bed area and the flattest overhang angle. Read up to five largest support regions with centroid and area. The project stays unchanged."
+    )]
+    fn overhang_analysis(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<OverhangAnalysis>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            let bodies: Vec<&Body> = match &args.part {
+                Some(id) => vec![
+                    p.bodies
+                        .iter()
+                        .find(|body| &body.id == id)
+                        .ok_or_else(|| format!("Unknown part: {id}"))?,
+                ],
+                None => p.bodies.iter().collect(),
+            };
+            let meshes: Vec<&faber_ports::Mesh> = bodies.iter().map(|body| &body.mesh).collect();
+            let report =
+                faber_core::overhang::analyse(&meshes, args.direction, args.critical_angle_deg)?;
+            let regions: Vec<Value> = report
+                .regions
+                .iter()
+                .map(|region| {
+                    json!({"part":bodies[region.part].id,"centroid_mm":region.centroid_mm,
+                        "area_mm2":region.area_mm2,"triangles":region.triangles})
+                })
+                .collect();
+            Ok(
+                json!({"schema":1,"revision":p.data.revision,"direction":args.direction,
+                "critical_angle_deg":args.critical_angle_deg,"total_area_mm2":report.total_area_mm2,
+                "support_area_mm2":report.support_area_mm2,"bed_area_mm2":report.bed_area_mm2,
+                "flattest_overhang_deg":report.flattest_overhang_deg,
+                "regions_total":report.regions_total,"regions":regions}),
+            )
+        })
+    }
+
+    #[tool(
         description = "Write one file per part. Choose stl for meshes or step for exact solids. Units are millimetres. A refused export lists each finding."
     )]
     fn export(&self, Parameters(Checked(args)): Parameters<Checked<Export>>) -> CallToolResult {
@@ -999,6 +1283,31 @@ impl Faber {
     #[tool(description = "Read the modelling guide.")]
     fn guide(&self) -> CallToolResult {
         result(Ok(json!({"guide":GUIDE})))
+    }
+
+    #[tool(
+        description = "Read metric coarse pitch, clearance hole, tap drill and head dimensions in millimetres. Does not create a purchased part or a thread. No open project is required."
+    )]
+    fn metric_fastener(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<MetricFastener>>,
+    ) -> CallToolResult {
+        let Some(size) = faber_std::metric(&args.size) else {
+            return result(Err(format!("Unknown metric size: {}", args.size)));
+        };
+        let head = size.socket_head();
+        result(Ok(json!({
+            "schema":1, "name":size.name(), "nominal_mm":size.nominal(),
+            "pitch_mm":size.pitch(), "tap_drill_mm":size.tap_drill(),
+            "clearance_mm":{
+                "fine":size.clearance(faber_std::Fit::Fine),
+                "medium":size.clearance(faber_std::Fit::Medium),
+                "coarse":size.clearance(faber_std::Fit::Coarse)
+            },
+            "socket_head_mm":{"diameter":head.dk,"height":head.k},
+            "counterbore":size.counterbore().map(|v| json!({"diameter_mm":v.diameter,"depth_mm":v.depth})),
+            "countersink":size.countersink().map(|v| json!({"diameter_mm":v.head_diameter,"angle_degrees":v.angle}))
+        })))
     }
 
     #[tool(

@@ -1,0 +1,14 @@
+{
+  "shaft": {
+    "triangles": 49224,
+    "edges_not_paired_at_1e_5_mm": 0,
+    "gcode_bytes": 193307,
+    "layer_changes": 40
+  },
+  "sleeve": {
+    "triangles": 45112,
+    "edges_not_paired_at_1e_5_mm": 0,
+    "gcode_bytes": 408189,
+    "layer_changes": 40
+  }
+}

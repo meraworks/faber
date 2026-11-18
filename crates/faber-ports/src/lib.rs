@@ -11,6 +11,10 @@ pub type Result<T> = std::result::Result<T, String>;
 pub trait AssetStore: Send + Sync {
     fn put(&self, source: &Path) -> Result<String>;
     fn resolve(&self, key: &str) -> Result<std::path::PathBuf>;
+    /// Read a polygon surface. None means the asset needs an exact shape reader.
+    fn read_mesh(&self, _path: &Path) -> Result<Option<Mesh>> {
+        Ok(None)
+    }
 }
 
 /// Design checks. Declared contacts give no violation.
@@ -26,6 +30,9 @@ pub trait DesignChecks: Send + Sync {
 pub struct Mesh {
     pub vertices: Vec<[f64; 3]>,
     pub triangles: Vec<[u32; 3]>,
+    /// Surface normals per vertex. Empty when the source has no surface normals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub normals: Vec<[f64; 3]>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,6 +46,20 @@ pub struct Body {
     pub bounds: [[f64; 3]; 2],
     #[serde(skip)]
     pub shape: Option<Shape>,
+}
+
+/// A point on a path and its unit tangent.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathSample {
+    pub point: [f64; 3],
+    pub tangent: [f64; 3],
+}
+
+/// The length of a path and the samples at the requested distances.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathSamples {
+    pub length: f64,
+    pub samples: Vec<PathSample>,
 }
 
 pub trait Kernel: Send + Sync {
@@ -92,8 +113,16 @@ pub trait Kernel: Send + Sync {
     fn curve(&self, _path: &faber_model::CurvePath) -> Result<Shape> {
         Err("Curve is not available".into())
     }
-    fn sweep_shape(&self, _section: &Shape, _path: &Shape) -> Result<Shape> {
+    fn sweep_shape(&self, _section: &Shape, _path: &Shape, _frenet: bool) -> Result<Shape> {
         Err("Sketch sweep is not available".into())
+    }
+    /// Samples a curve wire at arc-length distances from its start.
+    fn path_samples(&self, _path: &Shape, _distances: &[f64]) -> Result<PathSamples> {
+        Err("Path sampling is not available".into())
+    }
+    /// Scales a shape about `about`. Equal factors keep the shape uniform.
+    fn scale_shape(&self, _shape: &Shape, _about: [f64; 3], _factor: [f64; 3]) -> Result<Shape> {
+        Err("Scale is not available".into())
     }
     fn revolve_shape(
         &self,
@@ -137,6 +166,40 @@ pub trait Kernel: Send + Sync {
         Err("Fillet is not available".into())
     }
     fn chamfer(&self, _shape: &Shape, _edges: &[u32], _distance: f64) -> Result<Shape> {
+        Err("Chamfer is not available".into())
+    }
+    /// Round `edges`. The radius changes linearly from `start` to `end`.
+    fn fillet_variable(
+        &self,
+        _shape: &Shape,
+        _edges: &[u32],
+        _start: f64,
+        _end: f64,
+    ) -> Result<Shape> {
+        Err("Variable fillet is not available".into())
+    }
+    /// Chamfer `edges` with two distances. `first` is measured on `face`.
+    /// Without `face`, the kernel uses the first face of each edge.
+    fn chamfer_two(
+        &self,
+        _shape: &Shape,
+        _edges: &[u32],
+        _first: f64,
+        _second: f64,
+        _face: Option<u32>,
+    ) -> Result<Shape> {
+        Err("Chamfer is not available".into())
+    }
+    /// Chamfer `edges` with a distance and an angle in degrees, measured from `face`.
+    /// Without `face`, the kernel uses the first face of each edge.
+    fn chamfer_angle(
+        &self,
+        _shape: &Shape,
+        _edges: &[u32],
+        _distance: f64,
+        _angle_deg: f64,
+        _face: Option<u32>,
+    ) -> Result<Shape> {
         Err("Chamfer is not available".into())
     }
     fn sweep(
@@ -299,7 +362,18 @@ pub struct EdgeInfo {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CylinderFace {
+    pub start: [f64; 3],
+    pub axis: [f64; 3],
+    pub radius: f64,
+    pub length: f64,
+    pub internal: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FaceInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cylinder: Option<CylinderFace>,
     pub index: u32,
     /// Source feature names; absent when face history is not available.
     pub created_by: Option<Vec<String>>,

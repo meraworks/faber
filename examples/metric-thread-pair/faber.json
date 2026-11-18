@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "revision": 1,
+  "name": "M6 spindle and sleeve",
+  "parts": {
+    "shaft": {
+      "name": "M6 shaft",
+      "geometry": {
+        "op": "history",
+        "features": [
+          {
+            "id": "shaft",
+            "geometry": {
+              "op": "cylinder",
+              "radius": 3.0,
+              "height": 8.0
+            }
+          },
+          {
+            "id": "thread",
+            "geometry": {
+              "op": "thread",
+              "source": "shaft",
+              "face": {
+                "cylinder_radius": 3.0,
+                "internal": false,
+                "created_by": null,
+                "normal": null,
+                "near_centre": null,
+                "in_box": null,
+                "area": null,
+                "tolerance": 0.00001,
+                "expect": 1
+              },
+              "size": "M6",
+              "length": 8.0,
+              "offset": 0.0,
+              "left_handed": false
+            }
+          }
+        ],
+        "output": "thread"
+      },
+      "placement": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "colour": [
+        130,
+        170,
+        190
+      ],
+      "group": "",
+      "note": ""
+    },
+    "sleeve": {
+      "name": "M6 sleeve",
+      "geometry": {
+        "op": "history",
+        "features": [
+          {
+            "id": "shaft",
+            "geometry": {
+              "op": "cylinder",
+              "radius": 5.0,
+              "height": 8.0
+            }
+          },
+          {
+            "id": "bore",
+            "geometry": {
+              "op": "cylinder",
+              "radius": 2.5,
+              "height": 8.0
+            }
+          },
+          {
+            "id": "sleeve",
+            "geometry": {
+              "op": "difference",
+              "left": "shaft",
+              "right": "bore"
+            }
+          },
+          {
+            "id": "thread",
+            "geometry": {
+              "op": "thread",
+              "source": "sleeve",
+              "face": {
+                "cylinder_radius": 2.5,
+                "internal": true,
+                "created_by": null,
+                "normal": null,
+                "near_centre": null,
+                "in_box": null,
+                "area": null,
+                "tolerance": 0.00001,
+                "expect": 1
+              },
+              "size": "M6",
+              "length": 8.0,
+              "offset": 0.0,
+              "left_handed": false
+            }
+          }
+        ],
+        "output": "thread"
+      },
+      "placement": {
+        "translation": [
+          14.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "colour": [
+        130,
+        170,
+        190
+      ],
+      "group": "",
+      "note": ""
+    }
+  },
+  "params": {}
+}

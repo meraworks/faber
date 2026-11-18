@@ -105,6 +105,18 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             data.params.insert(name, expression);
         }
         Edit::PutPart { id, part } => {
+            if let Some(previous) = data.parts.get(&id)
+                && matches!(
+                    &previous.geometry,
+                    Geometry::Imported {
+                        purchased: Some(_),
+                        ..
+                    }
+                )
+                && previous.geometry != part.geometry
+            {
+                return Err(format!("Purchased part geometry is fixed: {id}"));
+            }
             data.parts.insert(id, part);
         }
         Edit::RemovePart { id } => {
@@ -114,6 +126,7 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             data.contacts.retain(|_, c| c.a != id && c.b != id);
             crate::section::detach_part(data, &id)?;
         }
+        Edit::SetMotion { study } => data.motion = study,
         Edit::SetSection { id, section } => {
             crate::section::check_refs(data, &id, &section)?;
             data.sections.insert(id, section);
@@ -201,6 +214,68 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
                 .transpose()?
                 .unwrap_or(features.len());
             features.insert(target, feature);
+        }
+        Edit::SetSuppressed {
+            part,
+            id,
+            suppressed,
+            cascade,
+        } => {
+            let (features, output) = history(data, &part)?;
+            let position = index(features, &id)?;
+            if features[position].suppressed == suppressed {
+                return Ok(());
+            }
+            if !suppressed {
+                let slice = features.as_slice();
+                let missing = crate::history::references(&slice[position].geometry)
+                    .into_iter()
+                    .find(|name| !crate::history::resolves(slice, name));
+                if let Some(name) = missing {
+                    return Err(format!(
+                        "Feature {id} needs {name}, which has no solid. Unsuppress {name} first."
+                    ));
+                }
+                features[position].suppressed = false;
+                return Ok(());
+            }
+            if *output == id
+                && crate::history::primary_input(&features[position].geometry).is_none()
+            {
+                return Err(format!(
+                    "The output feature cannot be suppressed. It has no input solid to show: {id}"
+                ));
+            }
+            features[position].suppressed = true;
+            // Find each active feature that needs a solid which no longer exists.
+            // Refuse it, or with cascade suppress it. A feature with an input still gives a solid.
+            loop {
+                let slice = features.as_slice();
+                let found = slice.iter().find_map(|feature| {
+                    if feature.suppressed {
+                        return None;
+                    }
+                    crate::history::references(&feature.geometry)
+                        .into_iter()
+                        .find(|name| !crate::history::resolves(slice, name))
+                        .map(|name| (feature.id.clone(), name.to_owned()))
+                });
+                let Some((dependant, missing)) = found else {
+                    break;
+                };
+                if !cascade {
+                    return Err(format!(
+                        "Feature {dependant} needs {missing}, which has no solid. Set cascade to true to suppress {dependant} too."
+                    ));
+                }
+                let index = index(features, &dependant)?;
+                features[index].suppressed = true;
+            }
+            if !crate::history::resolves(features.as_slice(), output) {
+                return Err(format!(
+                    "Suppressing {id} leaves the output with no solid: {output}"
+                ));
+            }
         }
     }
     Ok(())

@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+faber-std = { path = "../faber-std" }
 faber-expr = { path = "../faber-expr" }
 faber-model = { path = "../faber-model" }
 faber-ports = { path = "../faber-ports" }

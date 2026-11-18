@@ -1,5 +1,79 @@
 # Faber progress
 
+## Fusion feature gap, Move/Copy and print checks: 2026-11-18
+
+- Compared the installed Fusion command set with Faber. Sources: the Design
+  toolbar XML, the right-click marking menu XML and 886 API headers. See
+  `2026-11-18-fusion-feature-gap.md`. REA string evidence is recorded there.
+- Viewer: the body menu has Move/Copy (M) and Delete part. Move/Copy has a
+  triad with axis arrows and rotation rings, Translate and Rotate modes, snap
+  (1 mm, 15 degrees, Shift for no snap), live preview and Create copy. OK makes
+  one undo step. The sidebar has Move/Copy and Exact placement. Code:
+  `crates/faber-viewer/src/app/move_tool.rs`.
+- MCP: `move_part` (translate, rotate about a pivot, point to point, position,
+  copy) and `align_parts` (min, max, centre, stack with a gap). Placement math
+  is in `crates/faber-core/src/placement.rs`. A placement with parameter
+  expressions is refused.
+- New recipe features: `scale` (uniform and per axis about a point), `pipe`
+  (bar or tube along a curve or helix) and `path_pattern`. This changes
+  `faber-model`; a future commit must keep it separate.
+- Overhang analysis for a build direction: the MCP tool `overhang_analysis`
+  and an OVERHANG panel in the viewer. Bed contact faces do not count as
+  overhang. The trash bin needs support under its floor, because the feet
+  lift the floor 5 mm above the bed.
+- Format, workspace Clippy and all-target tests pass, 364 tests, in sequence.
+  Logs: `.cargo/fusion-gap-clippy.txt` and `.cargo/fusion-gap-tests.txt`.
+- Second round:
+  - Suppress (`suppressed` on a feature, `suppress_feature` tool, viewer
+    button). A suppressed modifier passes its input solid to its dependants.
+    A suppressed creation feature needs `cascade` when other features use it.
+  - Chamfer with two distances or a distance and an angle. Fillet with a
+    start and an end radius.
+  - Construction: plane at angle, midplane, plane through three points,
+    axis from a cylinder, axis from two planes, point at a circle centre.
+  - Sketch text loops with two built-in fonts (Ubuntu Light, Hack). Raised
+    and engraved text use the existing extrude and boolean features.
+  - Viewer forms for scale, pipe and path pattern.
+  - The Move/Copy panel is docked at the right, as in Fusion. It has the move
+    types Free, Move, Rotate, Point, Position and Align, live distance and
+    angle fields, a pivot choice and a value label beside the pointer.
+  - A ring drag now saves whole 15-degree steps. Before, the shown turn was
+    the angle of the composed rotation.
+- Format, workspace Clippy and 429 tests pass. Logs: `.cargo/wave2-*.txt`.
+- Open: overhang in `faber render`; cone and sphere data for construction;
+  remove faces; sketch constraints; components; text kerning and more fonts.
+  The model changes need their own commit. No commit was made.
+
+## Mesh import and view quality: 2026-11-18
+
+- Added mesh import for STL, 3MF, OBJ, PLY and OFF through the asset port, MCP
+  and viewer. STEP input remains available. Source bytes stay unchanged.
+  Mesh bodies do not acquire exact solid topology. Their volume is an estimate.
+- Added reader refusal tests, package transforms, production references,
+  placement, reopen, source removal and undo/redo checks. The original 8x8
+  Multiboard plate imports as 711620 triangles in about one second on this PC.
+- Recorded Fusion REA evidence for surface tolerances, normals and thread
+  interfaces. Fusion remains the behavioural reference. Open-source research
+  supplies adapter implementation examples. Exact Fusion defaults and complete
+  thread construction remain unverified.
+- Added CAD surface normals, preserved section normals, finer tessellation,
+  a light background and lower fill light. Mesh-only input uses a crease-limited
+  normal fallback. The bin remains one solid. Bottom and section views were
+  checked without a window.
+- Added metric dimension lookup through MCP and hole presets in the viewer.
+  Built a modelled thread through MCP and imported an unchanged downloaded
+  screw with source and licence records. These examples do not certify a thread
+  fit. A full catalogue and dedicated thread creation form remain future work.
+- Six example meshes opened and sliced in OrcaSlicer. No data was sent to a
+  printer. See `2026-11-18-slicer-verification.md` for results and limits.
+- Full workspace tests passed. Subsequent OBJ refusal and intersecting-section
+  regression tests passed. Format and workspace Clippy passed after those fixes.
+  Logs are in `.cargo/mesh-view-final-tests.txt` and
+  `.cargo/mesh-view-final-clippy.txt`. No commit, push or release was made.
+- The complete workspace run passed 297 tests. After the final label and long
+  name changes, all 27 viewer tests passed again. Log:
+  `.cargo/mesh-view-final-gui-tests.txt`.
+
 Current state: work resumed on 2026-11-17. The owner set a new priority: an AI
 must design parts through MCP fast and with few errors. Print output (3MF, print
 profile, slicer) is postponed by the owner, not removed. The application and
@@ -181,6 +255,12 @@ through stdio MCP. The transcript is `mcp-transcript.jsonl`.
 - Format, workspace Clippy and all-target tests pass with sequential tests.
   Logs: `.cargo/periodic-spline-clippy.txt` and `.cargo/periodic-spline-tests.txt`.
   Model type changes remain separate for a future commit. No commit was made.
+
+## Modelled metric threads and surface inspection
+
+- The Thread tool cuts a nominal metric thread on a selected shaft or bore. The feature stores the size, axial length, offset and hand.
+- `examples/metric-thread-pair` contains an M6 shaft and sleeve. OrcaSlicer produced 40 layers for each part. The exported meshes had zero unpaired edges at a coordinate precision of 0.00001 mm. A physical fit test is still open.
+- `examples/round-surfaces/inspection` contains the Bambu Studio project, three camera views and the Faber view for the sphere and rounded block.
   GUI periodic drawing controls remain open.
 
 ## Spline end tangents

@@ -21,8 +21,9 @@ async fn main() {
         Some("status") if args.len() == 2 => faber_wiring::read(Path::new(&args[1])).map(|(data,bodies)| {
             println!("{}",server::report(&data,&bodies));
         }),
+        Some("import") if args.len() == 3 => faber_wiring::archive::import(Path::new(&args[1]), Path::new(&args[2])),
         Some("export") if args.len() >= 3 => export(&args),
-        _ => Err("Usage: faber mcp | status PROJECT | export PROJECT DIRECTORY [--format stl|step] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
+        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | status PROJECT | export PROJECT DIRECTORY [--format stl|step] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");

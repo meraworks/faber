@@ -15,26 +15,40 @@ fn main() {
     let sdk = env::var_os("FABER_OCCT_SDK")
         .map(PathBuf::from)
         .unwrap_or_else(|| packages.join("opencascade-7.9.3-vc14-64"));
-    assert!(
-        sdk.join("inc/TopoDS_Shape.hxx").exists(),
-        "OCCT SDK is missing. See docs/specs/kernel-windows-research.md or set FABER_OCCT_SDK"
-    );
-    cc::Build::new()
+    let windows = env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows";
+    let mut bridge = cc::Build::new();
+    bridge
         .cpp(true)
         .file("src/bridge.cpp")
-        .include(sdk.join("inc"))
-        .flag("/std:c++17")
-        .flag("/EHsc")
-        .flag("/MD")
-        .define("_ITERATOR_DEBUG_LEVEL", "0")
-        .define("NOMINMAX", None)
+        .std("c++17")
         .debug(false)
-        .warnings(false)
-        .compile("faber_geometry_bridge");
-    println!(
-        "cargo:rustc-link-search=native={}",
-        sdk.join("win64/vc14/lib").display()
-    );
+        .warnings(false);
+    if windows {
+        assert!(
+            sdk.join("inc/TopoDS_Shape.hxx").exists(),
+            "OCCT SDK is missing. Set FABER_OCCT_SDK"
+        );
+        bridge
+            .include(sdk.join("inc"))
+            .flag("/EHsc")
+            .flag("/MD")
+            .define("_ITERATOR_DEBUG_LEVEL", "0")
+            .define("NOMINMAX", None);
+        println!(
+            "cargo:rustc-link-search=native={}",
+            sdk.join("win64/vc14/lib").display()
+        );
+    } else {
+        let prefix = env::var_os("FABER_OCCT_SDK")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/usr"));
+        bridge.include(prefix.join("include/opencascade"));
+        println!(
+            "cargo:rustc-link-search=native={}",
+            prefix.join("lib").display()
+        );
+    }
+    bridge.compile("faber_geometry_bridge");
     for library in [
         "TKernel",
         "TKMath",
@@ -57,6 +71,9 @@ fn main() {
         "TKBin",
     ] {
         println!("cargo:rustc-link-lib=dylib={library}");
+    }
+    if !windows {
+        return;
     }
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let target = output.ancestors().nth(3).unwrap();
@@ -110,13 +127,18 @@ fn adapter_hash() -> String {
 }
 
 fn copy_runtime(source: &Path, target: &Path) {
+    let bytes = fs::read(source).unwrap();
     for directory in [
         target.to_path_buf(),
         target.join("deps"),
         target.join("examples"),
     ] {
         fs::create_dir_all(&directory).unwrap();
-        fs::copy(source, directory.join(source.file_name().unwrap()))
+        let destination = directory.join(source.file_name().unwrap());
+        if fs::read(&destination).is_ok_and(|existing| existing == bytes) {
+            continue;
+        }
+        fs::copy(source, destination)
             .unwrap_or_else(|e| panic!("Cannot copy {}: {e}", source.display()));
     }
 }

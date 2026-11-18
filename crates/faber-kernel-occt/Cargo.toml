@@ -10,6 +10,8 @@ faber-ports = { path = "../faber-ports" }
 faber-geometry = { path = "../faber-geometry" }
 glam.workspace = true
 tempfile.workspace = true
+skrifa = "0.44.0"
+epaint_default_fonts = "0.37.0"
 
 [build-dependencies]
 cc = "1"

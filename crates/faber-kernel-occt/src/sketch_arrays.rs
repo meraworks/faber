@@ -24,6 +24,9 @@ fn append(
     if depth > 16 {
         return Err("Sketch arrays exceed 16 nested levels".into());
     }
+    if matches!(item, SketchLoop::Text { .. }) {
+        return Err("Text can only be the outer boundary of a sketch".into());
+    }
     if let SketchLoop::Grid { item, count, step } = item {
         if count.contains(&0) || count[0].checked_mul(count[1]).is_none_or(|n| n > 256) {
             return Err("Sketch grid needs between 1 and 256 copies".into());
@@ -88,7 +91,7 @@ fn append(
                 }
             }
         }
-        SketchLoop::Grid { .. } => unreachable!(),
+        SketchLoop::Grid { .. } | SketchLoop::Text { .. } => unreachable!(),
     }
     output.push(item);
     Ok(())

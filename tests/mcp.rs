@@ -45,6 +45,22 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
         json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"faber-test","version":"1"}}),
     );
     let list = request("tools/list", json!({}));
+    let metric = request(
+        "tools/call",
+        json!({"name":"metric_fastener","arguments":{"size":"m3"}}),
+    );
+    assert_ne!(metric["isError"], true, "{metric}");
+    let metric: Value =
+        serde_json::from_str(metric["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(metric["name"], "M3");
+    assert_eq!(metric["pitch_mm"], 0.5);
+    assert_eq!(metric["clearance_mm"]["medium"], 3.4);
+    assert_eq!(metric["tap_drill_mm"], 2.5);
+    let unknown = request(
+        "tools/call",
+        json!({"name":"metric_fastener","arguments":{"size":"M999"}}),
+    );
+    assert_eq!(unknown["isError"], true, "{unknown}");
     assert!(
         list["tools"]
             .as_array()
@@ -511,6 +527,100 @@ fn stdio_topology_filters_by_kind_selector_and_limit() {
 }
 
 #[test]
+fn stdio_overhang_finds_the_bar_underside_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_faber"))
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut id = 0;
+    let mut request = |method: &str, params: Value| -> Value {
+        id += 1;
+        writeln!(
+            input,
+            "{}",
+            json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+        )
+        .unwrap();
+        input.flush().unwrap();
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        assert!(!line.is_empty(), "MCP server stopped");
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert!(reply.get("error").is_none(), "{reply}");
+        if method == "initialize" {
+            writeln!(
+                input,
+                "{}",
+                json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+            )
+            .unwrap();
+            input.flush().unwrap();
+        }
+        reply["result"].clone()
+    };
+    request(
+        "initialize",
+        json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"faber-test","version":"1"}}),
+    );
+    let open = request(
+        "tools/call",
+        json!({"name":"open","arguments":{"path":dir.path(),"create":true,"name":"Overhang"}}),
+    );
+    assert_ne!(open["isError"], true, "{open}");
+    // Two pillars of 10 by 10 by 20 under a bar of 40 by 10 by 10.
+    let bridge = json!({"name":"Bridge","colour":[120,140,160],"geometry":{"op":"history","features":[
+        {"id":"post","geometry":{"op":"box","size":[10,10,20]}},
+        {"id":"far_post","geometry":{"op":"transform","source":"post",
+            "placement":{"translation":[30,0,0],"rotation":[0,0,0]}}},
+        {"id":"joined","geometry":{"op":"union","left":"post","right":"far_post"}},
+        {"id":"bar_block","geometry":{"op":"box","size":[40,10,10]}},
+        {"id":"bar","geometry":{"op":"transform","source":"bar_block",
+            "placement":{"translation":[0,0,20],"rotation":[0,0,0]}}},
+        {"id":"all","geometry":{"op":"union","left":"joined","right":"bar"}}
+    ],"output":"all"}});
+    let put = request(
+        "tools/call",
+        json!({"name":"put_part","arguments":{"id":"bridge","part":bridge}}),
+    );
+    assert_ne!(put["isError"], true, "{put}");
+    let report = request(
+        "tools/call",
+        json!({"name":"overhang_analysis","arguments":{"part":"bridge"}}),
+    );
+    assert_ne!(report["isError"], true, "{report}");
+    let report: Value =
+        serde_json::from_str(report["content"][0]["text"].as_str().unwrap()).unwrap();
+    let near = |value: &Value, want: f64| (value.as_f64().unwrap() - want).abs() < 0.5;
+    assert!(near(&report["support_area_mm2"], 200.), "{report}");
+    assert!(near(&report["bed_area_mm2"], 200.), "{report}");
+    assert!(
+        report["flattest_overhang_deg"].as_f64().unwrap() < 0.01,
+        "{report}"
+    );
+    assert_eq!(report["regions_total"], 1, "{report}");
+    assert_eq!(report["regions"][0]["part"], "bridge", "{report}");
+    // An unknown part and a zero direction are refused.
+    let unknown = request(
+        "tools/call",
+        json!({"name":"overhang_analysis","arguments":{"part":"nope"}}),
+    );
+    assert_eq!(unknown["isError"], true, "{unknown}");
+    let zero = request(
+        "tools/call",
+        json!({"name":"overhang_analysis","arguments":{"direction":[0,0,0]}}),
+    );
+    assert_eq!(zero["isError"], true, "{zero}");
+    drop(input);
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn stdio_declared_contact_lets_an_overlap_export() {
     let dir = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_faber"))
@@ -594,4 +704,305 @@ fn stdio_declared_contact_lets_an_overlap_export() {
     assert_eq!(std::fs::read_dir(&export_dir).unwrap().count(), 2);
     drop(input);
     assert!(child.wait().unwrap().success());
+}
+
+/// A stdio session for the move tests. Tool errors come back as text.
+struct Session {
+    child: std::process::Child,
+    input: std::process::ChildStdin,
+    output: BufReader<std::process::ChildStdout>,
+    id: u64,
+}
+
+impl Session {
+    fn start(dir: &std::path::Path) -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_faber"))
+            .arg("mcp")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        let mut session = Self {
+            child,
+            input,
+            output,
+            id: 0,
+        };
+        session.rpc(
+            "initialize",
+            json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"faber-test","version":"1"}}),
+        );
+        writeln!(
+            session.input,
+            "{}",
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+        )
+        .unwrap();
+        session.input.flush().unwrap();
+        session.ok(
+            "open",
+            json!({"path":dir.display().to_string(),"create":true,"name":"Move"}),
+        );
+        session
+    }
+
+    fn rpc(&mut self, method: &str, params: Value) -> Value {
+        self.id += 1;
+        writeln!(
+            self.input,
+            "{}",
+            json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params})
+        )
+        .unwrap();
+        self.input.flush().unwrap();
+        let mut line = String::new();
+        self.output.read_line(&mut line).unwrap();
+        assert!(!line.is_empty(), "MCP server stopped");
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert!(reply.get("error").is_none(), "{reply}");
+        reply["result"].clone()
+    }
+
+    /// Calls a tool. Returns the error flag and the parsed reply, or the text of an error.
+    fn call(&mut self, tool: &str, arguments: Value) -> (bool, Value) {
+        let result = self.rpc("tools/call", json!({"name":tool,"arguments":arguments}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let value = serde_json::from_str(text).unwrap_or_else(|_| json!(text));
+        (result["isError"] == true, value)
+    }
+
+    fn ok(&mut self, tool: &str, arguments: Value) -> Value {
+        let (failed, value) = self.call(tool, arguments);
+        assert!(!failed, "{tool}: {value}");
+        value
+    }
+
+    /// Returns the error text. The call must fail.
+    fn refused(&mut self, tool: &str, arguments: Value) -> String {
+        let (failed, value) = self.call(tool, arguments);
+        assert!(failed, "{tool} should refuse: {value}");
+        value.as_str().unwrap().to_string()
+    }
+
+    fn finish(mut self) {
+        drop(self.input);
+        assert!(self.child.wait().unwrap().success());
+    }
+}
+
+/// A box from the origin, with the given size and placement translation.
+fn box_part(name: &str, size: [f64; 3], translation: [f64; 3]) -> Value {
+    json!({"name":name,"geometry":{"op":"extrude","profile":{"outer":[[0,0],[size[0],0],[size[0],size[1]],[0,size[1]]]},"height":size[2]},"placement":{"translation":translation},"colour":[80,100,120]})
+}
+
+/// Checks flat numbers, such as a min corner then a max corner, within 1e-3 mm.
+fn assert_near(actual: &Value, expected: &[f64]) {
+    let flat: Vec<f64> = actual
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|value| match value {
+            Value::Array(inner) => inner.iter().map(|x| x.as_f64().unwrap()).collect(),
+            other => vec![other.as_f64().unwrap()],
+        })
+        .collect();
+    assert_eq!(flat.len(), expected.len(), "{actual}");
+    for (a, e) in flat.iter().zip(expected) {
+        assert!((a - e).abs() < 1e-3, "{actual} != {expected:?}");
+    }
+}
+
+#[test]
+fn stdio_move_part_translates_turns_and_refuses_bad_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"block","part":box_part("Block", [10., 20., 30.], [0., 0., 0.])}),
+    );
+    let moved = s.ok("move_part", json!({"id":"block","translate":[5.,0.,2.]}));
+    assert_near(&moved["bounds_mm"], &[5., 0., 2., 15., 20., 32.]);
+    assert_eq!(moved["placement"]["translation"], json!([5., 0., 2.]));
+
+    // Turn the block 90 degrees about Z. The centre of the box is (5, 10, 15).
+    s.ok(
+        "put_part",
+        json!({"id":"turned","part":box_part("Turned", [10., 20., 30.], [0., 0., 0.])}),
+    );
+    let turned = s.ok(
+        "move_part",
+        json!({"id":"turned","rotate":{"axis":"z","angle_deg":90}}),
+    );
+    assert_near(&turned["bounds_mm"], &[-5., 5., 0., 15., 15., 30.]);
+    assert_eq!(turned["placement"]["rotation"], json!([0., 0., 90.]));
+    assert_near(&turned["placement"]["translation"], &[15., 5., 0.]);
+
+    s.ok(
+        "put_part",
+        json!({"id":"slide","part":box_part("Slide", [10., 20., 30.], [0., 0., 0.])}),
+    );
+    let slid = s.ok(
+        "move_part",
+        json!({"id":"slide","point_to_point":{"from":[0.,0.,0.],"to":[100.,0.,0.]}}),
+    );
+    assert_near(&slid["bounds_mm"], &[100., 0., 0., 110., 20., 30.]);
+
+    let placed = s.ok("move_part", json!({"id":"slide","position":[0.,0.,0.]}));
+    assert_near(&placed["bounds_mm"], &[-5., -10., -15., 5., 10., 15.]);
+
+    let none = s.refused("move_part", json!({"id":"slide"}));
+    assert!(none.contains("Found 0"), "{none}");
+    let two = s.refused(
+        "move_part",
+        json!({"id":"slide","translate":[1.,0.,0.],"position":[0.,0.,0.]}),
+    );
+    assert!(two.contains("Found 2"), "{two}");
+
+    s.ok("set_param", json!({"name":"L","expression":"5"}));
+    s.ok(
+        "put_part",
+        json!({"id":"expr","part":{"name":"Expr","geometry":{"op":"extrude","profile":{"outer":[[0,0],[10,0],[10,20],[0,20]]},"height":30},"placement":{"translation":["L",0,0]},"colour":[80,100,120]}}),
+    );
+    let expression = s.refused("move_part", json!({"id":"expr","translate":[1.,0.,0.]}));
+    assert!(expression.contains("translation[0]"), "{expression}");
+
+    let stale = s.refused(
+        "move_part",
+        json!({"id":"slide","translate":[1.,0.,0.],"expected_revision":0}),
+    );
+    assert!(stale.contains("revision changed"), "{stale}");
+    s.finish();
+}
+
+#[test]
+fn stdio_move_part_copy_keeps_the_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"src","part":box_part("Source", [10., 20., 30.], [0., 0., 0.])}),
+    );
+    let copy = s.ok(
+        "move_part",
+        json!({"id":"src","translate":[0.,0.,50.],"copy_as":"copy"}),
+    );
+    assert_eq!(copy["id"], "copy");
+    assert_near(&copy["bounds_mm"], &[0., 0., 50., 10., 20., 80.]);
+    let source = s.ok("part_info", json!({"id":"src"}));
+    assert_near(&source["bounds_mm"], &[0., 0., 0., 10., 20., 30.]);
+    let taken = s.refused(
+        "move_part",
+        json!({"id":"src","translate":[1.,0.,0.],"copy_as":"copy"}),
+    );
+    assert!(taken.contains("already exists"), "{taken}");
+    s.finish();
+}
+
+#[test]
+fn stdio_align_parts_stacks_with_gap_and_undo_restores() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"base","part":box_part("Base", [40., 40., 10.], [0., 0., 0.])}),
+    );
+    s.ok(
+        "put_part",
+        json!({"id":"top","part":box_part("Top", [10., 10., 5.], [0., 0., 20.])}),
+    );
+    // The min face of top goes on the max face of base, plus a 2 mm gap.
+    let stacked = s.ok(
+        "align_parts",
+        json!({"id":"top","target":"base","axes":["z"],"mode":"min_to_max","gap_mm":2.}),
+    );
+    assert_near(&stacked["bounds_mm"], &[0., 0., 12., 10., 10., 17.]);
+    let base = s.ok("part_info", json!({"id":"base"}));
+    assert_near(&base["bounds_mm"], &[0., 0., 0., 40., 40., 10.]);
+
+    let gap = s.refused(
+        "align_parts",
+        json!({"id":"top","target":"base","axes":["x"],"mode":"centre","gap_mm":1.}),
+    );
+    assert!(gap.contains("gap_mm applies only"), "{gap}");
+    let itself = s.refused(
+        "align_parts",
+        json!({"id":"top","target":"top","axes":["x"],"mode":"min"}),
+    );
+    assert!(itself.contains("itself"), "{itself}");
+
+    s.ok("undo", json!({}));
+    let restored = s.ok("part_info", json!({"id":"top"}));
+    assert_near(&restored["bounds_mm"], &[0., 0., 20., 10., 10., 25.]);
+    s.finish();
+}
+
+#[test]
+fn stdio_suppress_feature_skips_refuses_dependants_and_undoes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"block","part":{"name":"Suppress","colour":[100,140,170],"geometry":{"op":"history","output":"out","features":[
+            {"id":"base","geometry":{"op":"box","size":[10,20,30]}},
+            {"id":"round","geometry":{"op":"fillet","source":"base","edges":{"parallel":[0,0,1],"expect":4,"tolerance":0.000001},"radius":1}},
+            {"id":"out","geometry":{"op":"box","size":[10,20,30]}}
+        ]}}}),
+    );
+    let stale = s.refused(
+        "suppress_feature",
+        json!({"part":"block","id":"round","expected_revision":0}),
+    );
+    assert!(stale.contains("revision"), "{stale}");
+    let blocked = s.refused("suppress_feature", json!({"part":"block","id":"base"}));
+    assert!(blocked.contains("round"), "{blocked}");
+    let output = s.refused("suppress_feature", json!({"part":"block","id":"out"}));
+    assert!(
+        output.contains("output feature cannot be suppressed"),
+        "{output}"
+    );
+    s.ok("suppress_feature", json!({"part":"block","id":"round"}));
+    let info = s.ok("part_info", json!({"id":"block"}));
+    assert_eq!(
+        info["recipe"]["geometry"]["features"][1]["suppressed"],
+        true
+    );
+    assert!(
+        info["recipe"]["geometry"]["features"][0]
+            .get("suppressed")
+            .is_none()
+    );
+    s.ok(
+        "suppress_feature",
+        json!({"part":"block","id":"base","cascade":true}),
+    );
+    let info = s.ok("part_info", json!({"id":"block"}));
+    assert_eq!(
+        info["recipe"]["geometry"]["features"][0]["suppressed"],
+        true
+    );
+    s.ok("undo", json!({}));
+    let info = s.ok("part_info", json!({"id":"block"}));
+    assert!(
+        info["recipe"]["geometry"]["features"][0]
+            .get("suppressed")
+            .is_none()
+    );
+    assert_eq!(
+        info["recipe"]["geometry"]["features"][1]["suppressed"],
+        true
+    );
+    s.ok(
+        "suppress_feature",
+        json!({"part":"block","id":"round","suppressed":false}),
+    );
+    let info = s.ok("part_info", json!({"id":"block"}));
+    assert!(
+        info["recipe"]["geometry"]["features"][1]
+            .get("suppressed")
+            .is_none()
+    );
+    s.finish();
 }

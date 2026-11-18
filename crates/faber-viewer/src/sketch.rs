@@ -480,6 +480,7 @@ impl SketchDraft {
                             },
                             placement,
                         },
+                        suppressed: false,
                     },
                     Feature {
                         id: "extrude".into(),
@@ -487,6 +488,7 @@ impl SketchDraft {
                             source: "sketch".into(),
                             vector,
                         },
+                        suppressed: false,
                     },
                 ],
                 output: "extrude".into(),

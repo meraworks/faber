@@ -38,6 +38,7 @@ fn box_body(size: [f64; 3]) -> Body {
         group: String::new(),
         colour: [240, 60, 60],
         mesh: Mesh {
+            normals: Vec::new(),
             vertices,
             triangles,
         },
@@ -63,12 +64,44 @@ fn part_share(image: &RgbaImage) -> f64 {
         for x in w / 2 - 20..w / 2 + 20 {
             total += 1;
             let p = image.get_pixel(x, y);
-            if p[0] > 100 && p[0] > 2 * p[1] {
+            if p[0] > 100 && u16::from(p[0]) > 2 * u16::from(p[1]) {
                 hits += 1;
             }
         }
     }
     hits as f64 / total as f64
+}
+
+#[test]
+fn visibility_changes_reuse_the_uploaded_geometry() {
+    let gpu = faber_render::Gpu::headless().unwrap();
+    let bodies = [box_body([10., 20., 30.])];
+    let list = gpu
+        .upload(&bodies, &Default::default(), None, None)
+        .unwrap();
+    let target = gpu.target(SIZE, SIZE);
+    let mut camera = faber_scene::Camera::fit(&bodies);
+    camera.set_view(View::Top);
+    let mut hidden = std::collections::BTreeSet::new();
+    for show in [true, false, true] {
+        if show {
+            hidden.clear();
+        } else {
+            hidden.insert("box".to_string());
+        }
+        gpu.draw_visible_view(
+            &target,
+            &list,
+            camera,
+            None,
+            None,
+            None,
+            &Default::default(),
+            &hidden,
+        );
+        let frame = RgbaImage::from_raw(SIZE, SIZE, gpu.read(&target).unwrap()).unwrap();
+        assert_eq!(part_share(&frame) > 0.5, show);
+    }
 }
 
 #[test]
@@ -81,4 +114,13 @@ fn top_view_shows_the_box() {
 fn bottom_view_shows_the_box() {
     let share = part_share(&render(View::Bottom));
     assert!(share >= 0.5, "bottom view part share {share}");
+}
+
+#[test]
+fn scene_background_is_light_and_bottom_face_is_lit() {
+    let image = render(View::Bottom);
+    let background = image.get_pixel(2, 2);
+    assert!(background[0] >= 200 && background[1] >= 200 && background[2] >= 200);
+    let bottom = image.get_pixel(SIZE / 2, SIZE / 2);
+    assert!(bottom[0] >= 185, "Bottom face is too dark: {bottom:?}");
 }

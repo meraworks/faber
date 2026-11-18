@@ -3,6 +3,48 @@ use faber_model::Placement;
 use faber_ports::{Combine, Kernel};
 
 #[test]
+fn curved_surface_normals_are_radial_and_caps_are_planar() {
+    let kernel = OcctKernel;
+    let cylinder = kernel.cylinder_shape(10., 20.).unwrap();
+    let mesh = kernel.tessellate(&cylinder, 0.03).unwrap();
+    assert_eq!(mesh.normals.len(), mesh.vertices.len());
+    let mut radial = 0;
+    let mut caps = 0;
+    for (p, n) in mesh.vertices.iter().zip(&mesh.normals) {
+        if n[2].abs() < 1e-8 {
+            assert!((n[0] - p[0] / 10.).abs() < 1e-6);
+            assert!((n[1] - p[1] / 10.).abs() < 1e-6);
+            radial += 1;
+        } else {
+            assert!(n[0].abs() < 1e-8 && n[1].abs() < 1e-8);
+            assert!((n[2] - if p[2] < 1. { -1. } else { 1. }).abs() < 1e-8);
+            caps += 1;
+        }
+    }
+    assert!(radial > 50 && caps > 50);
+}
+
+#[test]
+fn small_curved_surfaces_have_fine_angular_steps() {
+    let kernel = OcctKernel;
+    let cylinder = kernel.cylinder_shape(1., 2.).unwrap();
+    let mesh = kernel.tessellate(&cylinder, 0.03).unwrap();
+    let mut angles: Vec<_> = mesh
+        .vertices
+        .iter()
+        .filter(|p| (p[0] * p[0] + p[1] * p[1] - 1.).abs() < 1e-7 && p[2].abs() < 1e-7)
+        .map(|p| p[1].atan2(p[0]).rem_euclid(std::f64::consts::TAU))
+        .collect();
+    angles.sort_by(f64::total_cmp);
+    angles.dedup_by(|a, b| (*a - *b).abs() < 1e-7);
+    assert!(
+        angles.len() >= 90,
+        "Only {} segments around the cylinder",
+        angles.len()
+    );
+}
+
+#[test]
 fn primitives_and_booleans_have_known_exact_volumes() {
     let kernel = OcctKernel;
     let a = kernel.box_shape([10., 20., 30.]).unwrap();
@@ -336,4 +378,25 @@ fn intersection_reports_an_empty_common_part_explicitly() {
         .unwrap();
     let common = kernel.intersect_solids(&a, &near).unwrap().unwrap();
     assert!((kernel.properties(&common).unwrap().volume - 500.).abs() < 1e-7);
+}
+
+#[test]
+fn cylindrical_face_query_distinguishes_bore_and_shaft() {
+    let kernel = OcctKernel;
+    let shaft = kernel.cylinder_shape(6., 12.).unwrap();
+    let bore = kernel.cylinder_shape(3., 12.).unwrap();
+    let sleeve = kernel.combine(&shaft, &bore, Combine::Difference).unwrap();
+    let cylinders: Vec<_> = kernel
+        .faces(&sleeve)
+        .unwrap()
+        .into_iter()
+        .filter_map(|f| f.cylinder)
+        .collect();
+    assert_eq!(cylinders.len(), 2);
+    for surface in cylinders {
+        assert_eq!(surface.radius, if surface.internal { 3. } else { 6. });
+        assert_eq!(surface.start, [0.; 3]);
+        assert_eq!(surface.axis, [0., 0., 1.]);
+        assert!((surface.length - 12.).abs() < 1e-9);
+    }
 }

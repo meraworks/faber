@@ -3,6 +3,7 @@
 mod assets;
 mod feature_cache;
 mod history;
+mod mesh_input;
 pub use assets::FileAssets;
 pub use feature_cache::FileFeatureCache;
 

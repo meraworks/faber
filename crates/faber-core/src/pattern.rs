@@ -93,3 +93,70 @@ pub(crate) fn linear(
     }
     Ok(result)
 }
+
+/// Copies of `source` along `path`. Copy 0 stays at the path start.
+/// Without a spacing, the copies span the whole path.
+pub(crate) fn along_path(
+    kernel: &dyn Kernel,
+    source: &Shape,
+    path: &Shape,
+    count: f64,
+    spacing: Option<f64>,
+    orient: bool,
+) -> Result<Shape> {
+    if !count.is_finite() || !(1. ..=1000.).contains(&count) || count.fract() != 0. {
+        return Err("Pattern count must be an integer from 1 to 1000".into());
+    }
+    if spacing.is_some_and(|value| !value.is_finite() || value <= 0.) {
+        return Err("Path pattern spacing must be finite and more than zero".into());
+    }
+    let properties = kernel.summary_properties(source)?;
+    if !properties.valid
+        || properties.solids == 0
+        || !properties.volume.is_finite()
+        || properties.volume <= 0.
+    {
+        return Err("Pattern source must be a valid solid".into());
+    }
+    let length = kernel.path_samples(path, &[])?.length;
+    let copies = count as usize;
+    let step = match spacing {
+        Some(value) => value,
+        None if copies > 1 => length / (count - 1.),
+        None => 0.,
+    };
+    if step * (count - 1.) > length + 1e-9 {
+        return Err("Path pattern spacing is longer than the path".into());
+    }
+    let distances: Vec<f64> = (0..copies)
+        .map(|index| (index as f64 * step).min(length))
+        .collect();
+    let samples = kernel.path_samples(path, &distances)?.samples;
+    let tangent = |sample: &faber_ports::PathSample| {
+        glam::DVec3::from_array(sample.tangent)
+            .try_normalize()
+            .ok_or("Path has no tangent")
+    };
+    let origin = glam::DVec3::from_array(samples[0].point);
+    let start = tangent(&samples[0])?;
+    let mut result = source.clone();
+    for sample in samples.iter().skip(1) {
+        let rotation = if orient {
+            glam::DQuat::from_rotation_arc(start, tangent(sample)?)
+        } else {
+            glam::DQuat::IDENTITY
+        };
+        // Move the source by the path motion from the start to this sample.
+        let translation = glam::DVec3::from_array(sample.point) - rotation * origin;
+        let (z, y, x) = rotation.to_euler(glam::EulerRot::ZYX);
+        let copy = kernel.transform_shape(
+            source,
+            &Placement {
+                translation: translation.to_array(),
+                rotation: [x.to_degrees(), y.to_degrees(), z.to_degrees()],
+            },
+        )?;
+        result = kernel.combine(&result, &copy, Combine::Union)?;
+    }
+    Ok(result)
+}

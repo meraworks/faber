@@ -1,11 +1,30 @@
 <p align="center"><img src="assets/logo.svg" width="72" alt="Faber logo"></p>
 
-# Faber
+<h1 align="center">Faber</h1>
 
-Faber builds 3D parts through stdio MCP. A separate native viewer reads the
-same project files. Lengths are in millimetres. Z is up.
+<p align="center">
+  <b>Parametric 3D CAD for AI coding agents.</b><br>
+  Build parts through MCP, inspect the solids in the viewer and edit the same project with the mouse.
+</p>
 
-## Run
+<p align="center">
+  <a href="#quick-start">Quick start</a> Â·
+  <a href="#viewer-tour">Viewer tour</a> Â·
+  <a href="#tools">MCP tools</a> Â·
+  <a href="docs/modelling-guide.md">Modelling guide</a>
+</p>
+
+<p align="center"><img src="docs/images/modelling-demo.gif" width="960" alt="Faber extrudes a hexagonal blank, cuts the cavity and rebuilds the bin as its height increases. A moving section exposes the walls and floor before STEP export."></p>
+
+<p align="center"><sub>From a hexagonal blank to a STEP file. The captions show the MCP calls used to build and resize the part. The cut views come from Section Analysis in the viewer. <a href="examples/hex-bin">Open the example project</a>.</sub></p>
+
+## Quick start
+
+Start **Faber** from the application menu after installation. Choose **New project** to create a model or **Open project** to inspect an existing one. Use **Recent projects** to reopen one of the last eight projects. For a first model, open the <a href="examples/hex-bin">hexagonal bin example</a> from this repository.
+
+For an MCP client, use the installed `faber` executable as the command and `mcp` as its argument. The viewer reads saved changes from the same project folder. Lengths are in millimetres and Z is up.
+
+### Build from source
 
 Windows builds need the pinned OCCT SDK. See
 `docs/specs/kernel-windows-research.md` for its official download and
@@ -18,9 +37,8 @@ target/debug/faber.exe mcp
 target/debug/faber-viewer.exe examples/hex-bin
 ```
 
-Run `faber-viewer` without a project path to open the start screen. Choose
-New project or Open project, then enter an absolute folder path. New project
-refuses to replace an existing project file.
+Run `faber-viewer` without a project path to open the start screen. Choose **Open project** and select the project folder's `faber.json` file or a Fusion `.f3d` archive in the system file picker.
+Choose **New project** to create a project in a folder.
 
 Use `faber-viewer shot --out welcome.png` to capture the start screen without
 opening a window.
@@ -31,6 +49,20 @@ and its arguments to `["mcp"]`. There is no required viewer or daemon.
 Run `faber schema` to print the current project JSON schema. The
 [modelling guide](docs/modelling-guide.md) describes batching, preview, source
 queries and units. The CLI guide and MCP guide return this same text.
+
+## Viewer tour
+
+- **Inspect a cut.** Enable Section Analysis, then drag the arrow to move the plane. Drag either curved line or its round handle to rotate it. Hold Shift before you start a drag for fine control.
+
+<p align="center"><img src="docs/images/section-analysis.gif" width="900" alt="A cut plane moves through the hexagonal bin. The section exposes the wall thickness and the closed floor."></p>
+
+<p align="center"><sub>Section analysis of the <a href="examples/hex-bin">hexagonal bin</a>. The cut changes the view and preserves the solid.</sub></p>
+
+- **Drive an assembly.** Open Assembly motion and select a joint. In the example below, the input arm drives the output arm through a connecting rod. A gear relation turns the indicator in the opposite direction.
+
+<p align="center"><img src="docs/images/assembly-motion.gif" width="900" alt="The input arm turns. The connecting rod moves the output arm and the indicator turns in the opposite direction."></p>
+
+Open the [assembly motion example](examples/assembly-motion) to try the same movement. Both animations use frames from the Faber viewer.
 
 ## Tools
 
@@ -62,12 +94,23 @@ queries and units. The CLI guide and MCP guide return this same text.
   `expected_revision` set to that base revision to save against the same state.
   Optional `render` accepts `path`, `width`, `height` and `section`, as in the
   render tool. It returns a PNG of the candidate. It does not save the design.
-- `import_part`: copy your own STEP solid into the project as a new part. Supply
+- `import_part`: copy a STEP, STL, 3MF, OBJ, PLY or OFF model into the project as a new part. Supply
   `id`, `name`, an absolute `path` and optional `strict`. The source file can then
   be removed. The project checks its stored copy by content hash on rebuild.
-  The viewer provides the same operation through Import STEP. Relative source
+  The viewer provides the same operation through Import model. Relative source
   paths in that form are relative to the project folder.
+  STL and PLY support text and binary input. OBJ and OFF polygon faces are
+  triangulated. 3MF uses build items, units and component transforms, including
+  production references within the package. Mesh input stays a mesh; exact face
+  queries and solid operations need STEP or a model built in Faber. Files without
+  units use millimetres. Materials, textures and slicer settings are not imported.
+  Mesh volume is a signed-volume estimate reported as a positive value. It is not
+  a solid-validity check for an open mesh. Input is limited to 512 MiB; expanded
+  3MF geometry is limited to 10 million vertices and 20 million triangles.
 - `guide`: read input conventions.
+- `metric_fastener`: read metric pitch, clearance, tap-drill and head dimensions.
+  This query does not create geometry. The viewer Hole form also has metric
+  clearance and tap-drill presets.
 
 The project uses exact solids behind a geometry port. The current recipe
 tools support polygon extrusion with holes and pockets with a closed floor.

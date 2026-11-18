@@ -5,6 +5,8 @@ mod app;
 mod edit;
 mod feature_form;
 mod mark;
+mod overhang;
+mod recent;
 mod sketch;
 
 use eframe::{egui, egui_wgpu};
@@ -21,6 +23,7 @@ fn run() -> Result<(), String> {
     let mut out = PathBuf::from("shot.png");
     let mut plane = None;
     let mut reverse = false;
+    let mut drives = std::collections::BTreeMap::new();
     let mut i = usize::from(shot) + usize::from(root.is_some());
     while i < args.len() {
         match args[i].as_str() {
@@ -51,6 +54,18 @@ fn run() -> Result<(), String> {
                     reverse: false,
                 });
             }
+            "--joint" => {
+                let id = args.get(i + 1).ok_or("Supply the joint id")?.clone();
+                let value = args
+                    .get(i + 2)
+                    .ok_or("Supply the joint value")?
+                    .parse::<f64>()
+                    .map_err(|e| e.to_string())?;
+                if drives.insert(id, value).is_some() {
+                    return Err("Supply each joint once".into());
+                }
+                i += 2;
+            }
             "--reverse" => reverse = true,
             _ => return Err(format!("Unknown option: {}", args[i])),
         }
@@ -65,9 +80,23 @@ fn run() -> Result<(), String> {
     let initial = root
         .map(|root| faber_wiring::read(&root).map(|(data, bodies)| (root, data, bodies)))
         .transpose()?;
-    let make_app = move |cc: &eframe::CreationContext<'_>| match initial {
-        Some((root, data, bodies)) => app::Shell::new(cc, root, data, bodies, plane),
-        None => app::Shell::welcome(cc),
+    if !drives.is_empty() {
+        let (_, data, _) = initial.as_ref().ok_or("A pose needs a project")?;
+        data.motion.solve(&drives)?;
+    }
+    let make_app = move |cc: &eframe::CreationContext<'_>| {
+        let mut shell = match initial {
+            Some((root, data, bodies)) => {
+                let mut viewer = app::Shell::new(cc, root, data, bodies, plane);
+                viewer.initial_pose(drives);
+                viewer
+            }
+            None => app::Shell::welcome(cc),
+        };
+        if !shot && let Some(file) = recent::location() {
+            shell.load_recent(file);
+        }
+        shell
     };
     if shot {
         let mut harness = egui_kittest::Harness::builder()
@@ -97,6 +126,11 @@ fn run() -> Result<(), String> {
                     .with_inner_size([1440., 920.])
                     .with_min_inner_size([1000., 650.]),
                 renderer: eframe::Renderer::Wgpu,
+                wgpu_options: egui_wgpu::WgpuConfiguration {
+                    surface: egui_wgpu::SurfaceConfig::LOW_LATENCY,
+                    wgpu_setup: gpu_setup(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Box::new(move |cc| Ok(Box::new(make_app(cc)))),
@@ -107,6 +141,12 @@ fn run() -> Result<(), String> {
 
 fn gpu_setup() -> egui_wgpu::WgpuSetup {
     let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    let default_descriptor = setup.device_descriptor.clone();
+    setup.device_descriptor = std::sync::Arc::new(move |adapter| {
+        let mut descriptor = default_descriptor(adapter);
+        descriptor.required_limits.max_buffer_size = adapter.limits().max_buffer_size;
+        descriptor
+    });
     setup
         .instance_descriptor
         .backends

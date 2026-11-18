@@ -6,6 +6,61 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Display normals per triangle corner.
+pub fn corner_normals(mesh: &Mesh) -> Vec<[[f32; 3]; 3]> {
+    if !mesh.normals.is_empty() && mesh.normals.len() == mesh.vertices.len() {
+        return mesh
+            .triangles
+            .iter()
+            .map(|t| {
+                t.map(|i| {
+                    DVec3::from(mesh.normals[i as usize])
+                        .normalize_or_zero()
+                        .as_vec3()
+                        .to_array()
+                })
+            })
+            .collect();
+    }
+    use std::collections::HashMap;
+    let key = |p: [f64; 3]| p.map(|v| (v * 1e7).round() as i64);
+    let mut adjacent: HashMap<[i64; 3], Vec<(DVec3, f64)>> = HashMap::new();
+    let mut normals = Vec::with_capacity(mesh.triangles.len());
+    for triangle in &mesh.triangles {
+        let points = triangle.map(|i| DVec3::from(mesh.vertices[i as usize]));
+        let normal = (points[1] - points[0])
+            .cross(points[2] - points[0])
+            .normalize_or_zero();
+        normals.push(normal);
+        for corner in 0..3 {
+            let a = (points[(corner + 1) % 3] - points[corner]).normalize_or_zero();
+            let b = (points[(corner + 2) % 3] - points[corner]).normalize_or_zero();
+            let angle = a.dot(b).clamp(-1., 1.).acos();
+            adjacent
+                .entry(key(points[corner].to_array()))
+                .or_default()
+                .push((normal, angle));
+        }
+    }
+    let crease = 35f64.to_radians().cos();
+    mesh.triangles
+        .iter()
+        .zip(normals)
+        .map(|(triangle, normal)| {
+            triangle.map(|i| {
+                adjacent[&key(mesh.vertices[i as usize])]
+                    .iter()
+                    .filter(|(n, _)| n.dot(normal) >= crease)
+                    .map(|(n, weight)| *n * *weight)
+                    .sum::<DVec3>()
+                    .normalize_or_zero()
+                    .as_vec3()
+                    .to_array()
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Section {
@@ -13,6 +68,18 @@ pub struct Section {
     pub offset: f64,
     #[serde(default)]
     pub reverse: bool,
+}
+
+impl Section {
+    /// Express a world plane in the local frame of a rigid body.
+    pub fn in_body(self, transform: glam::DMat4) -> Self {
+        let n = DVec3::from(self.normal).normalize();
+        Self {
+            normal: transform.inverse().transform_vector3(n).to_array(),
+            offset: self.offset - n.dot(transform.w_axis.truncate()),
+            reverse: self.reverse,
+        }
+    }
 }
 
 pub struct Cut {
@@ -34,6 +101,59 @@ pub enum View {
 }
 
 pub fn section(mesh: &Mesh, plane: Section) -> Result<Cut> {
+    section_mesh(mesh, plane, true, mesh.triangles.iter())
+}
+
+pub fn section_cap(mesh: &Mesh, plane: Section) -> Result<Mesh> {
+    Ok(section_mesh(mesh, plane, false, mesh.triangles.iter())?.cap)
+}
+
+/// Bounds for consecutive groups of triangles in one mesh.
+pub struct SectionIndex(Vec<(DVec3, DVec3)>);
+
+impl SectionIndex {
+    const GROUP: usize = 64;
+
+    pub fn new(mesh: &Mesh) -> Self {
+        Self(
+            mesh.triangles
+                .chunks(Self::GROUP)
+                .map(|group| {
+                    let mut lo = DVec3::splat(f64::INFINITY);
+                    let mut hi = -lo;
+                    for triangle in group {
+                        for &index in triangle {
+                            let point = DVec3::from(mesh.vertices[index as usize]);
+                            lo = lo.min(point);
+                            hi = hi.max(point);
+                        }
+                    }
+                    ((lo + hi) * 0.5, (hi - lo) * 0.5)
+                })
+                .collect(),
+        )
+    }
+
+    pub fn cap(&self, mesh: &Mesh, plane: Section) -> Result<Mesh> {
+        let n = DVec3::from(plane.normal).normalize();
+        let triangles = self
+            .0
+            .iter()
+            .zip(mesh.triangles.chunks(Self::GROUP))
+            .filter(|((centre, half), _)| {
+                (n.dot(*centre) - plane.offset).abs() <= n.abs().dot(*half) + 1e-8
+            })
+            .flat_map(|(_, group)| group);
+        Ok(section_mesh(mesh, plane, false, triangles)?.cap)
+    }
+}
+
+fn section_mesh<'a>(
+    mesh: &Mesh,
+    plane: Section,
+    surface: bool,
+    triangles: impl Iterator<Item = &'a [u32; 3]>,
+) -> Result<Cut> {
     let mut n = DVec3::from(plane.normal);
     if !n.is_finite() || !n.length().is_finite() || n.length() < 1e-12 || !plane.offset.is_finite()
     {
@@ -50,20 +170,40 @@ pub fn section(mesh: &Mesh, plane: Section) -> Result<Cut> {
         cap: Mesh::default(),
     };
     let mut segments = Vec::new();
-    for t in &mesh.triangles {
+    let has_normals = mesh.normals.len() == mesh.vertices.len();
+    for t in triangles {
         let points = t.map(|i| DVec3::from(mesh.vertices[i as usize]));
+        let normals = if surface && has_normals {
+            t.map(|i| DVec3::from(mesh.normals[i as usize]))
+        } else {
+            [DVec3::ZERO; 3]
+        };
         let distances = points.map(|p| n.dot(p) - offset);
+        if !surface
+            && (distances.iter().all(|d| *d < -1e-8) || distances.iter().all(|d| *d >= -1e-8))
+        {
+            continue;
+        }
         let mut polygon = Vec::new();
+        let mut polygon_normals = Vec::new();
         let mut crossings = Vec::new();
         for i in 0..3 {
             let j = (i + 1) % 3;
             let (a, b, da, db) = (points[i], points[j], distances[i], distances[j]);
-            if da <= 1e-8 {
+            if surface && da <= 1e-8 {
                 polygon.push(a);
+                polygon_normals.push(normals[i]);
             }
             if (da < -1e-8 && db > 1e-8) || (da > 1e-8 && db < -1e-8) {
                 let p = a + (b - a) * (da / (da - db));
-                polygon.push(p);
+                if surface {
+                    polygon.push(p);
+                    polygon_normals.push(
+                        normals[i]
+                            .lerp(normals[j], da / (da - db))
+                            .normalize_or_zero(),
+                    );
+                }
                 crossings.push(p);
             }
             if da.abs() <= 1e-8 {
@@ -78,6 +218,11 @@ pub fn section(mesh: &Mesh, plane: Section) -> Result<Cut> {
             cut.surface
                 .vertices
                 .extend(polygon.iter().map(|p| p.to_array()));
+            if has_normals {
+                cut.surface
+                    .normals
+                    .extend(polygon_normals.iter().map(|n| n.to_array()));
+            }
             for i in 1..polygon.len() - 1 {
                 cut.surface
                     .triangles
@@ -107,19 +252,26 @@ pub fn section(mesh: &Mesh, plane: Section) -> Result<Cut> {
             }
         }
     }
+    // Index both directions so a contour step looks up only the next vertex.
+    let mut neighbours = BTreeSet::new();
+    for &(a, b) in &edges {
+        neighbours.insert((a, b));
+        neighbours.insert((b, a));
+    }
     let mut loops: Vec<Vec<[f64; 2]>> = Vec::new();
-    while let Some(&(a, b)) = edges.first() {
-        edges.remove(&(a, b));
+    while let Some(&(a, b)) = neighbours.first() {
+        neighbours.remove(&(a, b));
+        neighbours.remove(&(b, a));
         let mut path = vec![a, b];
         let mut at = b;
         while at != a {
-            let edge = edges
-                .iter()
-                .find(|(s, e)| *s == at || *e == at)
-                .copied()
+            let &(_, next) = neighbours
+                .range((at, 0)..=(at, usize::MAX))
+                .next()
                 .ok_or("Section boundary is open")?;
-            edges.remove(&edge);
-            at = if edge.0 == at { edge.1 } else { edge.0 };
+            neighbours.remove(&(at, next));
+            neighbours.remove(&(next, at));
+            at = next;
             if at != a {
                 path.push(at);
             }
@@ -257,7 +409,43 @@ impl Camera {
     }
 }
 
+pub fn ray_hits_bounds(bounds: [[f64; 3]; 2], origin: DVec3, direction: DVec3) -> bool {
+    let (mut near, mut far) = (0.0_f64, f64::INFINITY);
+    for axis in 0..3 {
+        let lo = bounds[0][axis] - 1e-8;
+        let hi = bounds[1][axis] + 1e-8;
+        if direction[axis] == 0. {
+            if origin[axis] < lo || origin[axis] > hi {
+                return false;
+            }
+        } else {
+            let a = (lo - origin[axis]) / direction[axis];
+            let b = (hi - origin[axis]) / direction[axis];
+            near = near.max(a.min(b));
+            far = far.min(a.max(b));
+            if far < near {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub fn pick(mesh: &Mesh, origin: DVec3, direction: DVec3) -> Option<f64> {
+    pick_visible(mesh, origin, direction, None)
+}
+
+pub fn pick_visible(
+    mesh: &Mesh,
+    origin: DVec3,
+    direction: DVec3,
+    plane: Option<Section>,
+) -> Option<f64> {
+    let clip = plane.map(|p| {
+        let sign = if p.reverse { -1. } else { 1. };
+        let normal = DVec3::from(p.normal).normalize() * sign;
+        (normal.dot(origin) - sign * p.offset, normal.dot(direction))
+    });
     let mut nearest = f64::INFINITY;
     for t in &mesh.triangles {
         let [a, b, c] = t.map(|i| DVec3::from(mesh.vertices[i as usize]));
@@ -272,9 +460,26 @@ pub fn pick(mesh: &Mesh, origin: DVec3, direction: DVec3) -> Option<f64> {
         let q = s.cross(e1);
         let v = direction.dot(q) / det;
         let distance = e2.dot(q) / det;
-        if u >= 0. && v >= 0. && u + v <= 1. && distance > 0. {
+        if u >= 0.
+            && v >= 0.
+            && u + v <= 1.
+            && distance > 0.
+            && clip.is_none_or(|(base, slope)| base + slope * distance <= 1e-8)
+        {
             nearest = nearest.min(distance);
         }
     }
     nearest.is_finite().then_some(nearest)
+}
+
+#[cfg(test)]
+mod viewport_bounds_tests {
+    use super::*;
+    #[test]
+    fn ray_skips_boxes_behind_or_beside_it() {
+        let bounds = [[1., -1., -1.], [2., 1., 1.]];
+        assert!(ray_hits_bounds(bounds, DVec3::ZERO, DVec3::X));
+        assert!(!ray_hits_bounds(bounds, DVec3::ZERO, -DVec3::X));
+        assert!(!ray_hits_bounds(bounds, DVec3::Y * 2., DVec3::X));
+    }
 }

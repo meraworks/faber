@@ -1,12 +1,15 @@
 [package]
 name = "faber-viewer"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+rfd = "0.17.2"
 faber-expr = { path = "../faber-expr" }
 faber-model = { path = "../faber-model" }
+faber-std = { path = "../faber-std" }
+faber-core = { path = "../faber-core" }
 faber-ports = { path = "../faber-ports" }
 faber-scene = { path = "../faber-scene" }
 faber-render = { path = "../faber-render" }
@@ -16,7 +19,6 @@ egui_kittest = { version = "0.37", features = ["wgpu", "eframe"] }
 glam.workspace = true
 serde_json.workspace = true
 
-[dev-dependencies]
 tempfile.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]

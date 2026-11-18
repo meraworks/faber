@@ -30,6 +30,20 @@ impl Project {
             id: id.into(),
         }])
     }
+    pub fn set_suppressed(
+        &mut self,
+        part: &str,
+        id: &str,
+        suppressed: bool,
+        cascade: bool,
+    ) -> Result<()> {
+        self.batch(vec![Edit::SetSuppressed {
+            part: part.into(),
+            id: id.into(),
+            suppressed,
+            cascade,
+        }])
+    }
     pub fn move_feature(&mut self, part: &str, id: &str, before: Option<&str>) -> Result<()> {
         self.batch(vec![Edit::MoveFeature {
             part: part.into(),

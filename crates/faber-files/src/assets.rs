@@ -37,6 +37,10 @@ fn copy_and_hash(input: &mut File, output: &mut impl Write) -> Result<String> {
 }
 
 impl AssetStore for FileAssets {
+    fn read_mesh(&self, path: &Path) -> Result<Option<faber_ports::Mesh>> {
+        crate::mesh_input::read(path)
+    }
+
     fn put(&self, source: &Path) -> Result<String> {
         let mut input = File::open(source).map_err(|e| e.to_string())?;
         let metadata = input.metadata().map_err(|e| e.to_string())?;

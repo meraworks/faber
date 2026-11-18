@@ -9,6 +9,7 @@ impl Kernel for NativeKernel {
     fn build(&self, geometry: &Geometry) -> Result<Mesh> {
         match geometry {
             Geometry::Imported { .. }
+            | Geometry::Thread { .. }
             | Geometry::Hole { .. }
             | Geometry::Split { .. }
             | Geometry::Mirror { .. }
@@ -20,6 +21,12 @@ impl Kernel for NativeKernel {
             | Geometry::PlaneOnFace { .. }
             | Geometry::Axis { .. }
             | Geometry::Point { .. }
+            | Geometry::PlaneAtAngle { .. }
+            | Geometry::Midplane { .. }
+            | Geometry::PlaneThroughPoints { .. }
+            | Geometry::AxisFromCylinder { .. }
+            | Geometry::AxisFromPlanes { .. }
+            | Geometry::PointAtCentre { .. }
             | Geometry::RevolveAround { .. }
             | Geometry::PlaceAtPoint { .. }
             | Geometry::SketchOnPlane { .. }
@@ -46,6 +53,9 @@ impl Kernel for NativeKernel {
             Geometry::Box { .. }
             | Geometry::Cylinder { .. }
             | Geometry::Transform { .. }
+            | Geometry::Scale { .. }
+            | Geometry::Pipe { .. }
+            | Geometry::PathPattern { .. }
             | Geometry::Union { .. }
             | Geometry::Difference { .. }
             | Geometry::Intersection { .. }

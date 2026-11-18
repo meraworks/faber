@@ -1,0 +1,59 @@
+name: Desktop installers
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          curl.exe -fL https://github.com/Open-Cascade-SAS/OCCT/releases/download/V7_9_3/opencascade-7.9.3-vc14-64-combined.zip -o sdk.zip
+          if ((Get-FileHash sdk.zip).Hash -ne "afbef3457fbc4a2bdca0608e0fe284392f51e4c2c42ccbfb9df7168d8e4eb9b3") { throw "Incorrect SDK checksum" }
+          7z x sdk.zip -o.deps/occt-sdk
+          cargo build -j 4 --locked --release -p faber -p faber-viewer
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./packaging/windows.ps1
+      - name: Build the macOS installer
+        if: runner.os == 'macOS'
+        run: |
+          brew install opencascade dylibbundler
+          export FABER_OCCT_SDK="$(brew --prefix opencascade)"
+          cargo build -j 4 --locked --release -p faber -p faber-viewer
+          bash packaging/unix.sh
+      - name: Build the Debian installer
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src rust:trixie bash -ec '
+            apt-get update
+            apt-get install -y libocct-data-exchange-dev libocct-modeling-algorithms-dev libxkbcommon-dev dpkg-dev
+            cargo build -j 4 --release --locked -p faber -p faber-viewer
+            bash packaging/unix.sh'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ runner.os }}
+          path: target/installers/*
+          if-no-files-found: error
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" installers/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

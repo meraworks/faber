@@ -1,5 +1,9 @@
 //! Adapter composition.
 
+pub mod archive;
+
+pub mod motion_check;
+
 pub use faber_clash::Report as InterferenceReport;
 
 struct MeshChecks;
@@ -227,6 +231,7 @@ pub fn open(path: &Path, create: bool, name: Option<String>) -> Result<Project> 
             parts: Default::default(),
             params: Default::default(),
             contacts: Default::default(),
+            motion: Default::default(),
             sections: Default::default(),
         };
         faber_core::build(&data, &NativeKernel)?;
@@ -264,6 +269,7 @@ pub fn create(path: &Path, name: String) -> Result<Project> {
         parts: Default::default(),
         params: Default::default(),
         contacts: Default::default(),
+        motion: Default::default(),
         sections: Default::default(),
     };
     faber_core::build(&data, &NativeKernel)?;
@@ -287,7 +293,15 @@ pub fn export(bodies: &[Body], path: &Path) -> Result<Vec<String>> {
     let mut files = Vec::new();
     for body in bodies {
         let output = path.join(format!("{}.stl", body.id));
-        MeshExchange.write(&body.mesh, &output)?;
+        let print_mesh;
+        let mesh = match &body.shape {
+            Some(shape) => {
+                print_mesh = OcctKernel.tessellate(shape, 0.001)?;
+                &print_mesh
+            }
+            None => &body.mesh,
+        };
+        MeshExchange.write(mesh, &output)?;
         files.push(output.to_string_lossy().into_owned());
     }
     Ok(files)

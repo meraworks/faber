@@ -179,6 +179,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -781,6 +790,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b034bd7d5f032402a2479444dcc6f74e36a03f31854d41680fb240ef682a1ac"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
+
+[[package]]
 name = "digest"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -804,6 +824,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.13.2",
+ "block2 0.6.2",
+ "libc",
  "objc2 0.6.5",
 ]
 
@@ -892,7 +914,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "pollster",
+ "pollster 1.0.1",
  "profiling",
  "raw-window-handle",
  "send_wrapper",
@@ -994,7 +1016,7 @@ dependencies = [
  "image",
  "kittest",
  "log",
- "pollster",
+ "pollster 1.0.1",
  "serde",
  "toml",
  "wgpu",
@@ -1150,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "faber"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "embed-resource",
@@ -1159,6 +1181,7 @@ dependencies = [
  "faber-model",
  "faber-ports",
  "faber-scene",
+ "faber-std",
  "faber-wiring",
  "rmcp",
  "schemars",
@@ -1187,6 +1210,7 @@ dependencies = [
  "faber-expr",
  "faber-model",
  "faber-ports",
+ "faber-std",
  "glam",
  "schemars",
  "serde",
@@ -1201,13 +1225,16 @@ version = "0.1.0"
 name = "faber-files"
 version = "0.1.0"
 dependencies = [
+ "earcutr",
  "faber-model",
  "faber-ports",
  "glam",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "zip",
 ]
 
 [[package]]
@@ -1225,11 +1252,13 @@ name = "faber-kernel-occt"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "epaint_default_fonts",
  "faber-geometry",
  "faber-model",
  "faber-ports",
  "glam",
  "sha2",
+ "skrifa",
  "tempfile",
 ]
 
@@ -1237,6 +1266,7 @@ dependencies = [
 name = "faber-model"
 version = "0.1.0"
 dependencies = [
+ "glam",
  "schemars",
  "serde",
 ]
@@ -1258,7 +1288,7 @@ dependencies = [
  "faber-scene",
  "glam",
  "image",
- "pollster",
+ "pollster 1.0.1",
  "wgpu",
 ]
 
@@ -1281,18 +1311,21 @@ version = "0.1.0"
 
 [[package]]
 name = "faber-viewer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui_kittest",
  "embed-resource",
+ "faber-core",
  "faber-expr",
  "faber-model",
  "faber-ports",
  "faber-render",
  "faber-scene",
+ "faber-std",
  "faber-wiring",
  "glam",
+ "rfd",
  "serde_json",
  "tempfile",
 ]
@@ -1310,7 +1343,9 @@ dependencies = [
  "faber-ports",
  "faber-render",
  "faber-scene",
+ "glam",
  "parry3d-f64",
+ "serde",
  "serde_json",
  "tempfile",
 ]
@@ -2830,6 +2865,12 @@ dependencies = [
 
 [[package]]
 name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
+
+[[package]]
+name = "pollster"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc6355899e1c9462875b6757c79f3caa011a1fdae12bbb1a2e72dd1f234f8336"
@@ -3039,6 +3080,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
+name = "rfd"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20dafead71c16a34e1ff357ddefc8afc11e7d51d6d2b9fbd07eaa48e3e540220"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "js-sys",
+ "libc",
+ "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "percent-encoding",
+ "pollster 0.4.0",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "web-sys",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rmcp"
 version = "3.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3081,6 +3149,15 @@ name = "robust"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e27ee8bb91ca0adcf0ecb116293afa12d393f9c2b9b9cd54d33e8078fe19839"
+
+[[package]]
+name = "roxmltree"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "rstar"
@@ -4729,6 +4806,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1dcb24d0152526ae49b9b96c1dcf71850ca1e0b882e4e28ed898a93c41334744"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "crossbeam-utils",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "zopfli",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4739,6 +4831,18 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf7fc5d30c28483d93805c4a5e12b05bbb52407fa67c5f8bd552374cd01fb11"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zune-core"

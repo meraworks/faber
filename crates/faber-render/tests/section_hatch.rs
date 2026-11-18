@@ -40,6 +40,7 @@ fn tube_body() -> Body {
         group: String::new(),
         colour: COLOUR,
         mesh: Mesh {
+            normals: Vec::new(),
             vertices,
             triangles,
         },
@@ -108,7 +109,10 @@ fn cut_face_has_a_hatch_of_two_colours() {
         "cut face covers {cut} of {total}"
     );
     assert!(lines as usize > total / 5, "hatch lines {lines}");
-    assert!(gaps as usize > total / 5, "hatch gaps {gaps}");
+    assert!(
+        (total / 20..total / 5).contains(&(gaps as usize)),
+        "Thin hatch pixels {gaps} of {total}"
+    );
     assert!(
         same_diagonal * 100 >= compared * 90,
         "hatch is not at 45 degrees: {same_diagonal} of {compared}"

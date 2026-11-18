@@ -1,7 +1,7 @@
 //! Exact solid adapter.
 
 use faber_model::{Geometry, Placement};
-use faber_ports::{Combine, Kernel, Mesh, Properties, Result, Shape};
+use faber_ports::{Combine, Kernel, Mesh, PathSample, PathSamples, Properties, Result, Shape};
 use glam::{DMat3, DVec3};
 use std::{
     ffi::{CStr, CString, c_char, c_void},
@@ -144,6 +144,11 @@ struct RawFace {
     area: f64,
     centre: [f64; 3],
     normal: [f64; 3],
+    start: [f64; 3],
+    axis: [f64; 3],
+    radius: f64,
+    length: f64,
+    internal: i32,
 }
 
 #[repr(C)]
@@ -263,6 +268,7 @@ unsafe extern "C" {
     fn faber_sweep_shape(
         section: *const c_void,
         path: *const c_void,
+        frenet: i32,
         result: *mut *mut c_void,
         error: *mut c_char,
         capacity: usize,
@@ -371,6 +377,38 @@ unsafe extern "C" {
         error: *mut c_char,
         capacity: usize,
     ) -> i32;
+    fn faber_chamfer_two(
+        input: *const c_void,
+        indices: *const u32,
+        count: usize,
+        first: f64,
+        second: f64,
+        face: u32,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
+    fn faber_chamfer_angle(
+        input: *const c_void,
+        indices: *const u32,
+        count: usize,
+        distance: f64,
+        angle: f64,
+        face: u32,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
+    fn faber_fillet_variable(
+        input: *const c_void,
+        indices: *const u32,
+        count: usize,
+        start: f64,
+        finish: f64,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
     fn faber_sweep(
         profile: *const f64,
         profile_count: usize,
@@ -437,6 +475,23 @@ unsafe extern "C" {
         error: *mut c_char,
         capacity: usize,
     ) -> i32;
+    fn faber_scale(
+        input: *const c_void,
+        centre: *const f64,
+        factor: *const f64,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
+    fn faber_path_samples(
+        input: *const c_void,
+        distances: *const f64,
+        count: usize,
+        result: *mut f64,
+        length: *mut f64,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
     fn faber_combine(
         left: *const c_void,
         right: *const c_void,
@@ -476,6 +531,7 @@ unsafe extern "C" {
         vertex_count: *mut usize,
         triangles: *mut *const u32,
         triangle_count: *mut usize,
+        normals: *mut *const f64,
     );
     fn faber_read(
         path: *const c_char,
@@ -543,6 +599,17 @@ fn pointer(shape: &Shape) -> Result<*const c_void> {
         .ok_or_else(|| "Shape belongs to another adapter".into())
 }
 
+fn check_edges(edges: &[u32]) -> Result<()> {
+    if edges.is_empty() {
+        return Err("Select at least one edge".into());
+    }
+    let unique: std::collections::BTreeSet<_> = edges.iter().collect();
+    if unique.len() != edges.len() {
+        return Err("Edge selection contains duplicates".into());
+    }
+    Ok(())
+}
+
 fn positive(value: f64) -> Result<()> {
     if value.is_finite() && (1e-6..=1e6).contains(&value) {
         Ok(())
@@ -558,6 +625,7 @@ fn path_text(path: &Path) -> Result<CString> {
 
 mod rounded;
 mod sketch_arrays;
+mod sketch_text;
 mod slot;
 
 pub struct OcctKernel;
@@ -565,13 +633,7 @@ pub struct OcctKernel;
 impl OcctKernel {
     fn dress(&self, shape: &Shape, edges: &[u32], size: f64, chamfer: bool) -> Result<Shape> {
         positive(size)?;
-        if edges.is_empty() {
-            return Err("Select at least one edge".into());
-        }
-        let unique: std::collections::BTreeSet<_> = edges.iter().collect();
-        if unique.len() != edges.len() {
-            return Err("Edge selection contains duplicates".into());
-        }
+        check_edges(edges)?;
         let shape = pointer(shape)?;
         shape_call(|out, error, len| unsafe {
             faber_dress(
@@ -931,10 +993,60 @@ impl Kernel for OcctKernel {
             )
         })
     }
-    fn sweep_shape(&self, section: &Shape, path: &Shape) -> Result<Shape> {
+    fn sweep_shape(&self, section: &Shape, path: &Shape, frenet: bool) -> Result<Shape> {
         let section = pointer(section)?;
         let path = pointer(path)?;
-        shape_call(|out, error, len| unsafe { faber_sweep_shape(section, path, out, error, len) })
+        shape_call(|out, error, len| unsafe {
+            faber_sweep_shape(section, path, i32::from(frenet), out, error, len)
+        })
+    }
+    fn path_samples(&self, path: &Shape, distances: &[f64]) -> Result<PathSamples> {
+        if distances
+            .iter()
+            .any(|d| !d.is_finite() || *d < 0. || *d > 1e6)
+        {
+            return Err("Path distance is outside the supported range".into());
+        }
+        let path = pointer(path)?;
+        let _guard = gate();
+        let mut buffer = [0; 1024];
+        let mut values = vec![0.; distances.len() * 6];
+        let mut length = 0.;
+        error(
+            unsafe {
+                faber_path_samples(
+                    path,
+                    distances.as_ptr(),
+                    distances.len(),
+                    values.as_mut_ptr(),
+                    &mut length,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                )
+            },
+            &buffer,
+        )?;
+        let samples = values
+            .as_chunks::<6>()
+            .0
+            .iter()
+            .map(|v| PathSample {
+                point: [v[0], v[1], v[2]],
+                tangent: [v[3], v[4], v[5]],
+            })
+            .collect();
+        Ok(PathSamples { length, samples })
+    }
+    fn scale_shape(&self, shape: &Shape, about: [f64; 3], factor: [f64; 3]) -> Result<Shape> {
+        if about.iter().any(|v| !v.is_finite() || v.abs() > 1e6)
+            || factor.iter().any(|v| !v.is_finite() || *v <= 0.)
+        {
+            return Err("Scale centre or factor is outside the supported range".into());
+        }
+        let shape = pointer(shape)?;
+        shape_call(|out, error, len| unsafe {
+            faber_scale(shape, about.as_ptr(), factor.as_ptr(), out, error, len)
+        })
     }
     fn revolve_shape(
         &self,
@@ -986,6 +1098,9 @@ impl Kernel for OcctKernel {
     fn sketch(&self, profile: &faber_model::SketchProfile, placement: &Placement) -> Result<Shape> {
         use faber_model::SketchLoop;
         let profile = sketch_arrays::expand(profile)?;
+        if matches!(profile.outer, SketchLoop::Text { .. }) {
+            return sketch_text::sketch(self, &profile, placement);
+        }
         if profile.holes.len() > 256 {
             return Err("Sketch has more than 256 holes".into());
         }
@@ -1155,6 +1270,9 @@ impl Kernel for OcctKernel {
         {
             return Err("Extrusion vector must be finite and non-zero".into());
         }
+        if let Some(solids) = sketch_text::extrude_regions(self, shape, vector)? {
+            return Ok(solids);
+        }
         let shape = pointer(shape)?;
         shape_call(|out, error, len| unsafe {
             faber_extrude_shape(shape, vector.as_ptr(), out, error, len)
@@ -1184,6 +1302,13 @@ impl Kernel for OcctKernel {
         Ok(faces
             .into_iter()
             .map(|f| faber_ports::FaceInfo {
+                cylinder: (f.radius > 0.).then_some(faber_ports::CylinderFace {
+                    start: f.start,
+                    axis: f.axis,
+                    radius: f.radius,
+                    length: f.length,
+                    internal: f.internal != 0,
+                }),
                 index: f.index,
                 created_by: origins.map(|origins| {
                     origins
@@ -1273,6 +1398,78 @@ impl Kernel for OcctKernel {
     }
     fn chamfer(&self, shape: &Shape, edges: &[u32], distance: f64) -> Result<Shape> {
         self.dress(shape, edges, distance, true)
+    }
+    fn fillet_variable(&self, shape: &Shape, edges: &[u32], start: f64, end: f64) -> Result<Shape> {
+        positive(start)?;
+        positive(end)?;
+        check_edges(edges)?;
+        let shape = pointer(shape)?;
+        shape_call(|out, error, len| unsafe {
+            faber_fillet_variable(
+                shape,
+                edges.as_ptr(),
+                edges.len(),
+                start,
+                end,
+                out,
+                error,
+                len,
+            )
+        })
+    }
+    fn chamfer_two(
+        &self,
+        shape: &Shape,
+        edges: &[u32],
+        first: f64,
+        second: f64,
+        face: Option<u32>,
+    ) -> Result<Shape> {
+        positive(first)?;
+        positive(second)?;
+        check_edges(edges)?;
+        let shape = pointer(shape)?;
+        shape_call(|out, error, len| unsafe {
+            faber_chamfer_two(
+                shape,
+                edges.as_ptr(),
+                edges.len(),
+                first,
+                second,
+                face.unwrap_or(0),
+                out,
+                error,
+                len,
+            )
+        })
+    }
+    fn chamfer_angle(
+        &self,
+        shape: &Shape,
+        edges: &[u32],
+        distance: f64,
+        angle_deg: f64,
+        face: Option<u32>,
+    ) -> Result<Shape> {
+        positive(distance)?;
+        if !(angle_deg > 0. && angle_deg < 90.) {
+            return Err("Chamfer angle must be between 0 and 90 degrees".into());
+        }
+        check_edges(edges)?;
+        let shape = pointer(shape)?;
+        shape_call(|out, error, len| unsafe {
+            faber_chamfer_angle(
+                shape,
+                edges.as_ptr(),
+                edges.len(),
+                distance,
+                angle_deg.to_radians(),
+                face.unwrap_or(0),
+                out,
+                error,
+                len,
+            )
+        })
     }
     fn sweep(
         &self,
@@ -1505,7 +1702,7 @@ impl Kernel for OcctKernel {
     }
     fn build(&self, geometry: &Geometry) -> Result<Mesh> {
         let shape = self.exact_shape(geometry)?.ok_or("No exact shape")?;
-        self.tessellate(&shape, 0.15)
+        self.tessellate(&shape, 0.03)
     }
 
     fn exact_shape(&self, geometry: &Geometry) -> Result<Option<Shape>> {
@@ -1763,6 +1960,7 @@ impl Kernel for OcctKernel {
         }
         let raw = Guard(raw);
         let (mut vertices, mut triangles) = (std::ptr::null(), std::ptr::null());
+        let mut normals = std::ptr::null();
         let (mut vertex_count, mut triangle_count) = (0, 0);
         unsafe {
             faber_mesh_data(
@@ -1771,6 +1969,7 @@ impl Kernel for OcctKernel {
                 &mut vertex_count,
                 &mut triangles,
                 &mut triangle_count,
+                &mut normals,
             );
         }
         if vertex_count == 0 || triangle_count == 0 {
@@ -1779,6 +1978,10 @@ impl Kernel for OcctKernel {
         let points = unsafe { std::slice::from_raw_parts(vertices, vertex_count * 3) };
         let indices = unsafe { std::slice::from_raw_parts(triangles, triangle_count * 3) };
         Ok(Mesh {
+            normals: unsafe { std::slice::from_raw_parts(normals, vertex_count * 3) }
+                .as_chunks::<3>()
+                .0
+                .to_vec(),
             vertices: points.as_chunks::<3>().0.to_vec(),
             triangles: indices.as_chunks::<3>().0.to_vec(),
         })

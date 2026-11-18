@@ -1,0 +1,8 @@
+{
+  "thread-rev4": {
+    "triangles": 52072,
+    "edges_not_paired_at_1e_5_mm": 0,
+    "gcode_bytes": 896014,
+    "layer_changes": 75
+  }
+}

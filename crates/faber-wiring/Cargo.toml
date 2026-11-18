@@ -5,6 +5,8 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+glam.workspace = true
+serde.workspace = true
 faber-clash = { path = "../faber-clash" }
 parry3d-f64 = "0.31.1"
 faber-core = { path = "../faber-core" }
@@ -16,6 +18,5 @@ faber-kernel-occt = { path = "../faber-kernel-occt" }
 faber-render = { path = "../faber-render" }
 faber-scene = { path = "../faber-scene" }
 
-[dev-dependencies]
 tempfile.workspace = true
 serde_json.workspace = true

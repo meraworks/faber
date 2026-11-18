@@ -4,6 +4,12 @@ Status: draft, 2026-11-17.
 
 ## 1. Intent
 
+Fusion is the source of truth for core CAD behaviour. Use REA to inspect the
+relevant installed feature before reconstructing it. Record observed behaviour,
+inferences and unknowns separately. Open-source projects provide implementation
+examples; they do not replace Fusion as the behavioural reference. Do not claim
+algorithm parity from symbol names or interface declarations alone.
+
 Faber is a parametric 3D modelling program in Rust. Its primary user is a
 coding agent (Claude Code, Codex or any MCP client). A person gives the
 direction, watches and writes comments. Faber must work when no window is

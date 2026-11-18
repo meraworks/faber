@@ -6,6 +6,10 @@
 #include <TopoDS_Compound.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepBuilderAPI_GTransform.hxx>
+#include <BRepAdaptor_CompCurve.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <gp_GTrsf.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -31,6 +35,7 @@
 #include <BRepLib.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepLib_ToolTriangulatedShape.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
@@ -69,6 +74,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopTools_ListIteratorOfListOfShape.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <initializer_list>
 #include <gp_Trsf.hxx>
 #include <OSD_ThreadPool.hxx>
@@ -92,9 +98,9 @@ struct FaberDistance { double distance; double point_a[3]; double point_b[3]; };
 struct FaberSegment { int32_t kind; double data[6]; const double* points; size_t count; };
 struct FaberCurveSegment { int32_t kind; double data[9]; const double* points; size_t count; };
 struct FaberEdge { uint32_t index; double length; double centre[3]; double direction[3]; double radius; };
-struct FaberFace { uint32_t index; double area; double centre[3]; double normal[3]; };
+struct FaberFace { uint32_t index; double area; double centre[3]; double normal[3]; double start[3],axis[3],radius,length; int internal; };
 struct FaberEdgeFace { uint32_t edge,face; };
-struct FaberMesh { std::vector<double> vertices; std::vector<uint32_t> triangles; };
+struct FaberMesh { std::vector<double> vertices; std::vector<double> normals; std::vector<uint32_t> triangles; };
 struct FaberProperties {
     double volume;
     double centre[3];
@@ -389,7 +395,7 @@ extern "C" int faber_curve(const double* start,const FaberCurveSegment* segments
     });
 }
 
-extern "C" int faber_sweep_shape(const void* section_input,const void* path_input,void** result,char* error,size_t capacity) noexcept {
+extern "C" int faber_sweep_shape(const void* section_input,const void* path_input,int frenet,void** result,char* error,size_t capacity) noexcept {
     return protect(error,capacity,[&]{
         const auto& section=static_cast<const FaberShape*>(section_input)->value;
         const auto& path=static_cast<const FaberShape*>(path_input)->value;
@@ -401,7 +407,7 @@ extern "C" int faber_sweep_shape(const void* section_input,const void* path_inpu
         BRepAdaptor_Surface surface(face);
         if(surface.GetType()!=GeomAbs_Plane || surface.Plane().Distance(start)>1e-6 || std::abs(surface.Plane().Axis().Direction().Dot(gp_Dir(tangent)))<1-1e-8) throw std::runtime_error("Sweep sketch must start normal to the path");
         auto make=[&](const TopoDS_Wire& wire) {
-            BRepOffsetAPI_MakePipeShell operation(spine);operation.SetMode(false);operation.SetTransitionMode(BRepBuilderAPI_RightCorner);
+            BRepOffsetAPI_MakePipeShell operation(spine);operation.SetMode(frenet != 0);operation.SetTransitionMode(BRepBuilderAPI_RightCorner);
             operation.Add(wire,false,false);operation.Build();
             if(!operation.IsDone() || !operation.MakeSolid()) throw std::runtime_error("Cannot sweep sketch");
             return operation.Shape();
@@ -571,6 +577,51 @@ extern "C" int faber_transform(const void* input,const double* matrix,void** res
         BRepBuilderAPI_Transform operation(static_cast<const FaberShape*>(input)->value,transform,true);
         if(!operation.IsDone()) throw std::runtime_error("Cannot place shape");
           publish_tracked(operation,{static_cast<const FaberShape*>(input)->value},result);
+    });
+}
+
+// Uniform factors use SetScale. Other factors use a general transform.
+extern "C" int faber_scale(const void* input,const double* centre,const double* factor,void** result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&]{
+        const auto& shape=static_cast<const FaberShape*>(input)->value;
+        if(factor[0]==factor[1] && factor[1]==factor[2]) {
+            gp_Trsf transform;transform.SetScale(gp_Pnt(centre[0],centre[1],centre[2]),factor[0]);
+            BRepBuilderAPI_Transform operation(shape,transform,true);
+            if(!operation.IsDone()) throw std::runtime_error("Cannot scale shape");
+            publish_tracked(operation,{shape},result);
+        } else {
+            gp_GTrsf transform;
+            for(int i=1;i<=3;++i) {
+                transform.SetValue(i,i,factor[i-1]);
+                transform.SetValue(i,4,(1.-factor[i-1])*centre[i-1]);
+            }
+            BRepBuilderAPI_GTransform operation(shape,transform,true);
+            if(!operation.IsDone()) throw std::runtime_error("Cannot scale shape");
+            publish_tracked(operation,{shape},result);
+        }
+    });
+}
+
+// Writes point and tangent for each distance, six values per sample. Distances are arc lengths from the start.
+extern "C" int faber_path_samples(const void* input,const double* distances,size_t count,double* result,double* length,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&]{
+        const auto& shape=static_cast<const FaberShape*>(input)->value;
+        if(shape.ShapeType()!=TopAbs_WIRE) throw std::runtime_error("Path must be a curve");
+        BRepAdaptor_CompCurve curve(TopoDS::Wire(shape));
+        const double first=curve.FirstParameter();
+        *length=GCPnts_AbscissaPoint::Length(curve);
+        for(size_t i=0;i<count;++i) {
+            double u=first;
+            if(distances[i]!=0.) {
+                GCPnts_AbscissaPoint abscissa(curve,distances[i],first);
+                if(!abscissa.IsDone()) throw std::runtime_error("Path distance is outside the curve");
+                u=abscissa.Parameter();
+            }
+            gp_Pnt point;gp_Vec tangent;curve.D1(u,point,tangent);
+            if(tangent.Magnitude()<=1e-12) throw std::runtime_error("Path has no tangent");
+            result[6*i]=point.X();result[6*i+1]=point.Y();result[6*i+2]=point.Z();
+            result[6*i+3]=tangent.X();result[6*i+4]=tangent.Y();result[6*i+5]=tangent.Z();
+        }
     });
 }
 
@@ -761,6 +812,16 @@ extern "C" int faber_faces(const void* input,FaberFace* result,size_t capacity_f
             GProp_GProps mass;BRepGProp::SurfaceProperties(face,mass);out.area=mass.Mass();
             const gp_Pnt centre=mass.CentreOfMass();out.centre[0]=centre.X();out.centre[1]=centre.Y();out.centre[2]=centre.Z();
             BRepAdaptor_Surface surface(face);
+            if(surface.GetType()==GeomAbs_Cylinder) {
+                const auto cylinder=surface.Cylinder();
+                const auto axis=cylinder.Axis().Direction();
+                double u0,u1,v0,v1;BRepTools::UVBounds(face,u0,u1,v0,v1);
+                const auto start=cylinder.Location().Translated(gp_Vec(axis)*v0);
+                start.Coord(out.start[0],out.start[1],out.start[2]);
+                axis.Coord(out.axis[0],out.axis[1],out.axis[2]);
+                out.radius=cylinder.Radius();out.length=v1-v0;
+                out.internal=(face.Orientation()==TopAbs_REVERSED)==cylinder.Direct();
+            }
             gp_Dir normal;bool planar=false;
             if(surface.GetType()==GeomAbs_Plane) {
                 double u0,u1,v0,v1;BRepTools::UVBounds(face,u0,u1,v0,v1);
@@ -814,20 +875,87 @@ extern "C" int faber_dress(const void* input,const uint32_t* indices,size_t coun
     });
 }
 
+// Returns the face for one chamfer edge. Index 0 takes the first face of the edge.
+static TopoDS_Face dress_face(const TopTools_IndexedDataMapOfShapeListOfShape& edge_faces,const TopoDS_Edge& edge,const TopTools_IndexedMapOfShape& faces,uint32_t index) {
+    if(!edge_faces.Contains(edge)) throw std::runtime_error("Edge has no face");
+    const TopTools_ListOfShape& owners=edge_faces.FindFromKey(edge);
+    if(index==0) return TopoDS::Face(owners.First());
+    if(index>static_cast<uint32_t>(faces.Extent())) throw std::runtime_error("Unknown face index");
+    const TopoDS_Shape& face=faces(index);
+    for(TopTools_ListIteratorOfListOfShape it(owners);it.More();it.Next()) {
+        if(it.Value().IsSame(face)) return TopoDS::Face(face);
+    }
+    throw std::runtime_error("Chamfer face does not touch the edge");
+}
+
+extern "C" int faber_chamfer_two(const void* input,const uint32_t* indices,size_t count,double first,double second,uint32_t face,void** result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&]{
+        const auto& shape=static_cast<const FaberShape*>(input)->value;
+        TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);
+        TopTools_IndexedMapOfShape faces;TopExp::MapShapes(shape,TopAbs_FACE,faces);
+        TopTools_IndexedDataMapOfShapeListOfShape edge_faces;TopExp::MapShapesAndAncestors(shape,TopAbs_EDGE,TopAbs_FACE,edge_faces);
+        for(size_t i=0;i<count;++i) if(indices[i]==0 || indices[i]>static_cast<uint32_t>(edges.Extent())) throw std::runtime_error("Unknown edge index");
+        BRepFilletAPI_MakeChamfer operation(shape);
+        for(size_t i=0;i<count;++i) {
+            const TopoDS_Edge edge=TopoDS::Edge(edges(indices[i]));
+            operation.Add(first,second,edge,dress_face(edge_faces,edge,faces,face));
+        }
+        operation.Build();
+        if(!operation.IsDone()) throw std::runtime_error("Cannot chamfer selected edges");
+        publish_tracked(operation,{shape},result);
+    });
+}
+
+// The angle is in radians.
+extern "C" int faber_chamfer_angle(const void* input,const uint32_t* indices,size_t count,double distance,double angle,uint32_t face,void** result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&]{
+        const auto& shape=static_cast<const FaberShape*>(input)->value;
+        TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);
+        TopTools_IndexedMapOfShape faces;TopExp::MapShapes(shape,TopAbs_FACE,faces);
+        TopTools_IndexedDataMapOfShapeListOfShape edge_faces;TopExp::MapShapesAndAncestors(shape,TopAbs_EDGE,TopAbs_FACE,edge_faces);
+        for(size_t i=0;i<count;++i) if(indices[i]==0 || indices[i]>static_cast<uint32_t>(edges.Extent())) throw std::runtime_error("Unknown edge index");
+        BRepFilletAPI_MakeChamfer operation(shape);
+        for(size_t i=0;i<count;++i) {
+            const TopoDS_Edge edge=TopoDS::Edge(edges(indices[i]));
+            operation.AddDA(distance,angle,edge,dress_face(edge_faces,edge,faces,face));
+        }
+        operation.Build();
+        if(!operation.IsDone()) throw std::runtime_error("Cannot chamfer selected edges");
+        publish_tracked(operation,{shape},result);
+    });
+}
+
+extern "C" int faber_fillet_variable(const void* input,const uint32_t* indices,size_t count,double start,double finish,void** result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&]{
+        const auto& shape=static_cast<const FaberShape*>(input)->value;
+        TopTools_IndexedMapOfShape edges;TopExp::MapShapes(shape,TopAbs_EDGE,edges);
+        for(size_t i=0;i<count;++i) if(indices[i]==0 || indices[i]>static_cast<uint32_t>(edges.Extent())) throw std::runtime_error("Unknown edge index");
+        BRepFilletAPI_MakeFillet operation(shape);
+        for(size_t i=0;i<count;++i) operation.Add(start,finish,TopoDS::Edge(edges(indices[i])));
+        operation.Build();
+        if(!operation.IsDone()) throw std::runtime_error("Cannot fillet selected edges");
+        publish_tracked(operation,{shape},result);
+    });
+}
+
 extern "C" int faber_mesh(const void* input,double tolerance,void** result,char* error,size_t capacity) noexcept {
     return protect(error,capacity,[&]{
         const auto& shape=static_cast<const FaberShape*>(input)->value;
-        BRepMesh_IncrementalMesh operation(shape,tolerance,false,0.3,false);
+        BRepMesh_IncrementalMesh operation(shape,tolerance,false,0.1,false);
         if(!operation.IsDone()) throw std::runtime_error("Cannot make mesh");
         auto mesh=std::make_unique<FaberMesh>();
         for(TopExp_Explorer iterator(shape,TopAbs_FACE);iterator.More();iterator.Next()) {
             const TopoDS_Face face=TopoDS::Face(iterator.Current());TopLoc_Location location;
             const Handle(Poly_Triangulation) triangles=BRep_Tool::Triangulation(face,location);
             if(triangles.IsNull()) throw std::runtime_error("Face has no mesh");
+            BRepLib_ToolTriangulatedShape::ComputeNormals(face,triangles);
             const uint32_t base=static_cast<uint32_t>(mesh->vertices.size()/3);
             for(int i=1;i<=triangles->NbNodes();++i) {
                 const gp_Pnt p=triangles->Node(i).Transformed(location.Transformation());
                 mesh->vertices.insert(mesh->vertices.end(),{p.X(),p.Y(),p.Z()});
+                gp_Dir normal=triangles->Normal(i).Transformed(location.Transformation());
+                if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+                mesh->normals.insert(mesh->normals.end(),{normal.X(),normal.Y(),normal.Z()});
             }
             for(int i=1;i<=triangles->NbTriangles();++i) {
                 int a,b,c;triangles->Triangle(i).Get(a,b,c);
@@ -839,10 +967,11 @@ extern "C" int faber_mesh(const void* input,double tolerance,void** result,char*
     });
 }
 
-extern "C" void faber_mesh_data(const void* input,const double** vertices,size_t* vertex_count,const uint32_t** triangles,size_t* triangle_count) noexcept {
+extern "C" void faber_mesh_data(const void* input,const double** vertices,size_t* vertex_count,const uint32_t** triangles,size_t* triangle_count,const double** normals) noexcept {
     const auto* mesh=static_cast<const FaberMesh*>(input);
     *vertices=mesh->vertices.data();*vertex_count=mesh->vertices.size()/3;
     *triangles=mesh->triangles.data();*triangle_count=mesh->triangles.size()/3;
+    *normals=mesh->normals.data();
 }
 
 extern "C" int faber_write(const void* input,const char* path,char* error,size_t capacity) noexcept {

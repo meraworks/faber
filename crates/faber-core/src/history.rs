@@ -1,6 +1,7 @@
+use crate::construction;
 use crate::feature_cache;
 use crate::valid_id;
-use faber_model::{Feature, Geometry};
+use faber_model::{AngleFrom, Feature, Geometry, PathInput, PointInput};
 use faber_ports::{Combine, FeatureCache, Kernel, Result, Shape};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,6 +49,7 @@ mod tests {
             Feature {
                 id: "base".into(),
                 geometry: Geometry::Box { size: [10.; 3] },
+                suppressed: false,
             },
             Feature {
                 id: "plane".into(),
@@ -55,6 +57,8 @@ mod tests {
                     source: "base".into(),
                     offset: 0.,
                     face: faber_model::FaceSelector {
+                        cylinder_radius: None,
+                        internal: None,
                         created_by: Some("base".into()),
                         normal: Some([0., 0., 1.]),
                         near_centre: None,
@@ -64,6 +68,7 @@ mod tests {
                         expect: 1,
                     },
                 },
+                suppressed: false,
             },
         ];
         let error = build(
@@ -85,10 +90,12 @@ mod tests {
             Feature {
                 id: "a".into(),
                 geometry: Geometry::Box { size: [10.; 3] },
+                suppressed: false,
             },
             Feature {
                 id: "b".into(),
                 geometry: Geometry::Box { size: [20.; 3] },
+                suppressed: false,
             },
             Feature {
                 id: "sum".into(),
@@ -96,6 +103,7 @@ mod tests {
                     left: "a".into(),
                     right: "b".into(),
                 },
+                suppressed: false,
             },
         ];
         let mut cache = Cache::default();
@@ -191,6 +199,7 @@ mod tests {
         let features = vec![Feature {
             id: "base".into(),
             geometry: Geometry::Box { size: [10.; 3] },
+            suppressed: false,
         }];
         let first = Versioned {
             version: "v1",
@@ -296,6 +305,112 @@ impl Built {
             ) => a == c && b == d,
             _ => false,
         }
+    }
+}
+
+/// The reference or shape inputs of a construction reference, in the order that `construction_value` reads them.
+fn construction_inputs(
+    geometry: &Geometry,
+    shapes: &BTreeMap<String, Built>,
+) -> Result<Option<Vec<Built>>> {
+    let get = |name: &str| {
+        shapes
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("Unknown previous feature: {name}"))
+    };
+    let axis = |name: &str| match get(name)? {
+        value @ Built::Axis { .. } => Ok(value),
+        _ => Err(format!("Feature {name} is not a reference axis")),
+    };
+    let plane = |name: &str| match get(name)? {
+        value @ Built::Plane(_) => Ok(value),
+        _ => Err(format!("Feature {name} is not a reference plane")),
+    };
+    let point = |name: &str| match get(name)? {
+        value @ Built::Point(_) => Ok(value),
+        _ => Err(format!("Feature {name} is not a reference point")),
+    };
+    let shape = |name: &str| match get(name)? {
+        value @ Built::Shape(_) => Ok(value),
+        _ => Err(format!("Feature {name} is a reference, not a shape")),
+    };
+    Ok(Some(match geometry {
+        Geometry::PlaneAtAngle {
+            axis: name, from, ..
+        } => {
+            let mut inputs = vec![axis(name)?];
+            if let AngleFrom::Plane(plane_name) = from {
+                inputs.push(plane(plane_name)?);
+            }
+            inputs
+        }
+        Geometry::Midplane { first, second } | Geometry::AxisFromPlanes { first, second } => {
+            vec![plane(first)?, plane(second)?]
+        }
+        Geometry::PlaneThroughPoints { points } => points
+            .iter()
+            .filter_map(|point_input| match point_input {
+                PointInput::Feature(name) => Some(point(name)),
+                PointInput::Position(_) => None,
+            })
+            .collect::<Result<_>>()?,
+        Geometry::AxisFromCylinder { source, .. } | Geometry::PointAtCentre { source, .. } => {
+            vec![shape(source)?]
+        }
+        _ => return Ok(None),
+    }))
+}
+
+/// The value of a construction reference from its inputs. A failure names the operation only.
+fn construction_value(kernel: &dyn Kernel, geometry: &Geometry, inputs: &[Built]) -> Result<Built> {
+    let mismatch = || Err("Reference inputs do not match the operation".to_owned());
+    match (geometry, inputs) {
+        (
+            Geometry::PlaneAtAngle { from, angle, .. },
+            [Built::Axis { origin, direction }, rest @ ..],
+        ) => {
+            let reference = match (from, rest) {
+                (AngleFrom::Xy, []) => (glam::DVec3::ZERO, glam::DVec3::Z),
+                (AngleFrom::Xz, []) => (glam::DVec3::ZERO, glam::DVec3::Y),
+                (AngleFrom::Yz, []) => (glam::DVec3::ZERO, glam::DVec3::X),
+                (AngleFrom::Plane(_), [Built::Plane(plane)]) => construction::plane_of(plane),
+                _ => return mismatch(),
+            };
+            construction::angled((*origin, *direction), reference, *angle).map(Built::Plane)
+        }
+        (Geometry::Midplane { .. }, [Built::Plane(first), Built::Plane(second)]) => {
+            construction::midplane(first, second).map(Built::Plane)
+        }
+        (Geometry::AxisFromPlanes { .. }, [Built::Plane(first), Built::Plane(second)]) => {
+            let (origin, direction) = construction::plane_axis(
+                construction::plane_of(first),
+                construction::plane_of(second),
+            )?;
+            Ok(Built::Axis { origin, direction })
+        }
+        (Geometry::PlaneThroughPoints { points }, inputs) => {
+            let mut found = inputs.iter();
+            let mut positions = [glam::DVec3::ZERO; 3];
+            for (slot, point_input) in positions.iter_mut().zip(points) {
+                *slot = match point_input {
+                    PointInput::Feature(_) => match found.next() {
+                        Some(Built::Point(position)) => glam::DVec3::from(*position),
+                        _ => return mismatch(),
+                    },
+                    PointInput::Position(position) => glam::DVec3::from(*position),
+                };
+            }
+            construction::through_points(positions).map(Built::Plane)
+        }
+        (Geometry::AxisFromCylinder { face, .. }, [Built::Shape(shape)]) => {
+            let (origin, direction) = construction::cylinder_axis(kernel, shape, face)?;
+            Ok(Built::Axis { origin, direction })
+        }
+        (Geometry::PointAtCentre { edge, .. }, [Built::Shape(shape)]) => {
+            construction::circle_centre(kernel, shape, edge).map(Built::Point)
+        }
+        _ => mismatch(),
     }
 }
 
@@ -406,6 +521,7 @@ fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
         Geometry::Mirror { .. } => "mirror",
         Geometry::CircularPattern { .. } => "circular_pattern",
         Geometry::LinearPattern { .. } => "linear_pattern",
+        Geometry::PathPattern { .. } => "path_pattern",
         Geometry::Curve { .. } => "curve",
         Geometry::Helix { .. } => "helix",
         Geometry::SweepSketch { .. } => "sweep_sketch",
@@ -416,12 +532,19 @@ fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
         Geometry::PlaneOnFace { .. } => "plane_on_face",
         Geometry::Axis { .. } => "axis",
         Geometry::Point { .. } => "point",
+        Geometry::PlaneAtAngle { .. } => "plane_at_angle",
+        Geometry::Midplane { .. } => "midplane",
+        Geometry::PlaneThroughPoints { .. } => "plane_through_points",
+        Geometry::AxisFromCylinder { .. } => "axis_from_cylinder",
+        Geometry::AxisFromPlanes { .. } => "axis_from_planes",
+        Geometry::PointAtCentre { .. } => "point_at_centre",
         Geometry::RevolveAround { .. } => "revolve_around",
         Geometry::PlaceAtPoint { .. } => "place_at_point",
         Geometry::SketchOnPlane { .. } => "sketch_on_plane",
         Geometry::ExtrudeSketch { .. } => "extrude_sketch",
         Geometry::Shell { .. } => "shell",
         Geometry::Offset { .. } => "offset",
+        Geometry::Thread { .. } => "thread",
         Geometry::Hole { .. } => "hole",
         Geometry::Split { .. } => "split",
         Geometry::Thicken { .. } => "thicken",
@@ -429,6 +552,7 @@ fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
         Geometry::Fillet { .. } => "fillet",
         Geometry::Chamfer { .. } => "chamfer",
         Geometry::Sweep { .. } => "sweep",
+        Geometry::Pipe { .. } => "pipe",
         Geometry::Loft { .. } => "loft",
         Geometry::Sphere { .. } => "sphere",
         Geometry::Cone { .. } => "cone",
@@ -437,6 +561,7 @@ fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
         Geometry::Box { .. } => "box",
         Geometry::Cylinder { .. } => "cylinder",
         Geometry::Transform { .. } => "transform",
+        Geometry::Scale { .. } => "scale",
         Geometry::Union { .. } => "union",
         Geometry::Difference { .. } => "difference",
         Geometry::Intersection { .. } => "intersection",
@@ -447,22 +572,45 @@ fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
 }
 
 /// Names of the features that a feature reads. The order matches `dependencies`.
-fn references(geometry: &Geometry) -> Vec<&str> {
+pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
     let names: Vec<&String> = match geometry {
         Geometry::SketchOnPlane { plane, .. } => vec![plane],
+        Geometry::PlaneAtAngle { axis, from, .. } => match from {
+            AngleFrom::Plane(plane) => vec![axis, plane],
+            _ => vec![axis],
+        },
+        Geometry::Midplane { first, second } | Geometry::AxisFromPlanes { first, second } => {
+            vec![first, second]
+        }
+        Geometry::PlaneThroughPoints { points } => points
+            .iter()
+            .filter_map(|point| match point {
+                PointInput::Feature(name) => Some(name),
+                PointInput::Position(_) => None,
+            })
+            .collect(),
+        Geometry::AxisFromCylinder { source, .. } | Geometry::PointAtCentre { source, .. } => {
+            vec![source]
+        }
         Geometry::RevolveAround { source, axis, .. } => vec![source, axis],
         Geometry::PlaceAtPoint { source, point } => vec![source, point],
-        Geometry::SweepSketch { source, path } => vec![source, path],
+        Geometry::SweepSketch { source, path, .. } => vec![source, path],
         Geometry::LoftSketches { sources, .. } => sources.iter().collect(),
+        Geometry::Pipe { path, .. } => path_names(path),
+        Geometry::PathPattern { source, path, .. } => {
+            std::iter::once(source).chain(path_names(path)).collect()
+        }
         Geometry::Mirror { source, .. }
         | Geometry::CircularPattern { source, .. }
         | Geometry::LinearPattern { source, .. }
         | Geometry::Transform { source, .. }
+        | Geometry::Scale { source, .. }
         | Geometry::PlaneOnFace { source, .. }
         | Geometry::RevolveSketch { source, .. }
         | Geometry::ExtrudeSketch { source, .. }
         | Geometry::Shell { source, .. }
         | Geometry::Offset { source, .. }
+        | Geometry::Thread { source, .. }
         | Geometry::Hole { source, .. }
         | Geometry::Split { source, .. }
         | Geometry::Thicken { source, .. }
@@ -475,6 +623,57 @@ fn references(geometry: &Geometry) -> Vec<&str> {
         _ => vec![],
     };
     names.into_iter().map(String::as_str).collect()
+}
+
+/// The input solid of a feature that changes one solid. Creation features and references have none.
+pub(crate) fn primary_input<N>(geometry: &Geometry<N>) -> Option<&str> {
+    match geometry {
+        Geometry::Fillet { source, .. }
+        | Geometry::Chamfer { source, .. }
+        | Geometry::Shell { source, .. }
+        | Geometry::Draft { source, .. }
+        | Geometry::Offset { source, .. }
+        | Geometry::Hole { source, .. }
+        | Geometry::Thread { source, .. }
+        | Geometry::Transform { source, .. }
+        | Geometry::Scale { source, .. }
+        | Geometry::Split { source, .. }
+        | Geometry::LinearPattern { source, .. }
+        | Geometry::CircularPattern { source, .. }
+        | Geometry::PathPattern { source, .. }
+        | Geometry::Mirror { source, .. } => Some(source),
+        Geometry::Union { left, .. }
+        | Geometry::Difference { left, .. }
+        | Geometry::Intersection { left, .. } => Some(left),
+        _ => None,
+    }
+}
+
+/// Whether a feature gives a solid for later features. A suppressed feature gives its primary input.
+pub(crate) fn resolves<N>(features: &[Feature<N>], id: &str) -> bool {
+    let mut current = id;
+    // Each step goes to an earlier feature. The bound stops a broken file with a cycle.
+    for _ in 0..=features.len() {
+        let Some(feature) = features.iter().find(|feature| feature.id == current) else {
+            return false;
+        };
+        if !feature.suppressed {
+            return true;
+        }
+        match primary_input(&feature.geometry) {
+            Some(next) => current = next,
+            None => return false,
+        }
+    }
+    false
+}
+
+/// The feature id of a path, when the path names one.
+fn path_names<N>(path: &PathInput<N>) -> Vec<&String> {
+    match path {
+        PathInput::Feature(name) => vec![name],
+        PathInput::Curve(_) => vec![],
+    }
 }
 
 fn load_persisted(store: &dyn FeatureCache, key: &str, kernel: &dyn Kernel) -> Option<Shape> {
@@ -513,6 +712,11 @@ pub(crate) fn build(
     let version = kernel.cache_version();
     let persist = persist.filter(|_| version.is_some());
     let version = version.unwrap_or("");
+    let suppressed: BTreeSet<&str> = features
+        .iter()
+        .filter(|feature| feature.suppressed)
+        .map(|feature| feature.id.as_str())
+        .collect();
     let mut keys = BTreeMap::<String, String>::new();
     let mut shapes = BTreeMap::<String, Built>::new();
     let mut ids = BTreeSet::new();
@@ -521,7 +725,25 @@ pub(crate) fn build(
         if !valid_id(&feature.id) || !ids.insert(feature.id.to_ascii_lowercase()) {
             return Err(format!("Invalid or duplicate feature id: {}", feature.id));
         }
+        // A suppressed feature is not built. With a primary input, it becomes an alias of that input.
+        // The alias is not in the cache, so a later unsuppress builds the feature again.
+        if feature.suppressed {
+            if let Some(name) = primary_input(&feature.geometry)
+                && let Some(value) = shapes.get(name).cloned()
+            {
+                if let Some(key) = keys.get(name).cloned() {
+                    keys.insert(feature.id.clone(), key);
+                }
+                shapes.insert(feature.id.clone(), value);
+            }
+            continue;
+        }
         let previous = |name: &str| {
+            if suppressed.contains(name) && !shapes.contains_key(name) {
+                return Err(format!(
+                    "Feature {name} is suppressed. Unsuppress it or change the features that use it."
+                ));
+            }
             shapes
                 .get(name)
                 .ok_or_else(|| format!("Unknown previous feature: {name}"))
@@ -546,24 +768,45 @@ pub(crate) fn build(
                 Built::Shape(source(name)?.clone()),
                 previous(reference)?.clone(),
             ]
+        } else if let Some(inputs) = construction_inputs(&feature.geometry, &shapes)
+            .map_err(|error| named(feature, error))?
+        {
+            inputs
         } else {
             match &feature.geometry {
-                Geometry::SweepSketch { source: name, path } => {
+                Geometry::SweepSketch {
+                    source: name, path, ..
+                } => {
                     vec![source(name)?.clone(), source(path)?.clone()]
                 }
                 Geometry::LoftSketches { sources, .. } => sources
                     .iter()
                     .map(|name| source(name).cloned())
                     .collect::<Result<Vec<_>>>()?,
+                Geometry::Pipe {
+                    path: PathInput::Feature(name),
+                    ..
+                } => vec![source(name)?.clone()],
+                Geometry::PathPattern {
+                    source: name, path, ..
+                } => {
+                    let mut inputs = vec![source(name)?.clone()];
+                    if let PathInput::Feature(id) = path {
+                        inputs.push(source(id)?.clone());
+                    }
+                    inputs
+                }
                 Geometry::Mirror { source: name, .. }
                 | Geometry::CircularPattern { source: name, .. }
                 | Geometry::LinearPattern { source: name, .. }
                 | Geometry::Transform { source: name, .. }
+                | Geometry::Scale { source: name, .. }
                 | Geometry::PlaneOnFace { source: name, .. }
                 | Geometry::RevolveSketch { source: name, .. }
                 | Geometry::ExtrudeSketch { source: name, .. }
                 | Geometry::Shell { source: name, .. }
                 | Geometry::Offset { source: name, .. }
+                | Geometry::Thread { source: name, .. }
                 | Geometry::Hole { source: name, .. }
                 | Geometry::Split { source: name, .. }
                 | Geometry::Thicken { source: name, .. }
@@ -617,6 +860,14 @@ pub(crate) fn build(
                 offset,
             } => crate::select::plane(kernel, source(name)?, face, *offset)
                 .map(|plane| Some(Built::Plane(plane))),
+            Geometry::PlaneAtAngle { .. }
+            | Geometry::Midplane { .. }
+            | Geometry::PlaneThroughPoints { .. }
+            | Geometry::AxisFromCylinder { .. }
+            | Geometry::AxisFromPlanes { .. }
+            | Geometry::PointAtCentre { .. } => {
+                construction_value(kernel, &feature.geometry, &dependencies).map(Some)
+            }
             geometry => reference(geometry),
         };
         if let Some(value) = reference_value.map_err(|error| named(feature, error))? {
@@ -684,7 +935,7 @@ pub(crate) fn build(
                     let sketch = kernel.sketch(profile, placement)?;
                     kernel.transform_shape(&sketch, reference)
                 }
-                Geometry::Imported { asset } => {
+                Geometry::Imported { asset, .. } => {
                     kernel.read_shape(paths.get(asset).ok_or("Asset is missing")?)
                 }
                 Geometry::Mirror {
@@ -715,6 +966,42 @@ pub(crate) fn build(
                     count,
                     step,
                 } => crate::pattern::linear(kernel, source(name)?, *count, *step),
+                Geometry::PathPattern {
+                    source: name,
+                    path,
+                    count,
+                    spacing,
+                    orient,
+                } => {
+                    let path = match path {
+                        PathInput::Feature(id) => source(id)?.clone(),
+                        PathInput::Curve(curve) => kernel.curve(curve)?,
+                    };
+                    crate::pattern::along_path(
+                        kernel,
+                        source(name)?,
+                        &path,
+                        *count,
+                        *spacing,
+                        *orient,
+                    )
+                }
+                Geometry::Pipe {
+                    path,
+                    diameter,
+                    wall,
+                } => {
+                    let path = match path {
+                        PathInput::Feature(id) => source(id)?.clone(),
+                        PathInput::Curve(curve) => kernel.curve(curve)?,
+                    };
+                    crate::pipe::build(kernel, &path, *diameter, *wall)
+                }
+                Geometry::Scale {
+                    source: name,
+                    factor,
+                    about,
+                } => crate::scale::build(kernel, source(name)?, factor, *about),
                 Geometry::Curve { path } => kernel.curve(path),
                 Geometry::Helix {
                     radius,
@@ -725,9 +1012,11 @@ pub(crate) fn build(
                     let shape = kernel.helix(*radius, *pitch, *turns)?;
                     kernel.transform_shape(&shape, placement)
                 }
-                Geometry::SweepSketch { source: name, path } => {
-                    kernel.sweep_shape(source(name)?, source(path)?)
-                }
+                Geometry::SweepSketch {
+                    source: name,
+                    path,
+                    frenet,
+                } => kernel.sweep_shape(source(name)?, source(path)?, *frenet),
                 Geometry::RevolveSketch {
                     source: name,
                     origin,
@@ -780,6 +1069,22 @@ pub(crate) fn build(
                     normal,
                     keep,
                 } => kernel.split(source(name)?, *origin, *normal, *keep),
+                Geometry::Thread {
+                    source: name,
+                    face,
+                    size,
+                    length,
+                    offset,
+                    left_handed,
+                } => crate::thread::build(
+                    kernel,
+                    source(name)?,
+                    face,
+                    size,
+                    *length,
+                    *offset,
+                    *left_handed,
+                ),
                 Geometry::Hole {
                     source: name,
                     diameter,
@@ -837,19 +1142,56 @@ pub(crate) fn build(
                     source: name,
                     edges,
                     radius,
+                    radius_end,
                 } => {
+                    crate::dress_variant::check_fillet(*radius, *radius_end)?;
                     let shape = source(name)?;
                     let edges = crate::select::edges(kernel, shape, edges)?;
-                    dress_with_hint(*radius, |value| kernel.fillet(shape, &edges, value))
+                    match radius_end {
+                        // The end radius scales with the start radius during the hint search.
+                        Some(end) => dress_with_hint(*radius, |value| {
+                            kernel.fillet_variable(shape, &edges, value, end * value / radius)
+                        }),
+                        None => {
+                            dress_with_hint(*radius, |value| kernel.fillet(shape, &edges, value))
+                        }
+                    }
                 }
                 Geometry::Chamfer {
                     source: name,
                     edges,
                     distance,
+                    distance2,
+                    angle_deg,
+                    face,
                 } => {
+                    crate::dress_variant::check_chamfer(*distance, *distance2, *angle_deg)?;
                     let shape = source(name)?;
                     let edges = crate::select::edges(kernel, shape, edges)?;
-                    dress_with_hint(*distance, |value| kernel.chamfer(shape, &edges, value))
+                    let face = match face {
+                        Some(selector) => {
+                            Some(crate::dress_variant::chamfer_face(kernel, shape, selector)?)
+                        }
+                        None => None,
+                    };
+                    match (distance2, angle_deg) {
+                        // The second distance scales with the first during the hint search.
+                        (Some(second), _) => dress_with_hint(*distance, |value| {
+                            kernel.chamfer_two(
+                                shape,
+                                &edges,
+                                value,
+                                second * value / distance,
+                                face,
+                            )
+                        }),
+                        (None, Some(angle)) => dress_with_hint(*distance, |value| {
+                            kernel.chamfer_angle(shape, &edges, value, *angle, face)
+                        }),
+                        (None, None) => {
+                            dress_with_hint(*distance, |value| kernel.chamfer(shape, &edges, value))
+                        }
+                    }
                 }
                 Geometry::History { .. } => {
                     Err("Nested feature histories are not supported".into())
@@ -933,9 +1275,13 @@ pub(crate) fn build(
         );
         shapes.insert(feature.id.clone(), Built::Shape(shape));
     }
-    let result = shapes
-        .remove(output)
-        .ok_or_else(|| format!("Unknown output feature: {output}"))?;
+    let result = shapes.remove(output).ok_or_else(|| {
+        if suppressed.contains(output) {
+            format!("The output feature has no solid to show: {output}")
+        } else {
+            format!("Unknown output feature: {output}")
+        }
+    })?;
     match result {
         Built::Shape(shape) => {
             cache.0 = next;

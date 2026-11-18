@@ -206,6 +206,7 @@ fn check_face_selector(shape: &Shape, selector: &FaceSelector) -> Result<()> {
         .chain(selector.near_centre.iter().flatten())
         .chain(selector.in_box.iter().flatten().flatten())
         .chain(&selector.area)
+        .chain(&selector.cylinder_radius)
     {
         if !value.is_finite() {
             return Err("Face selector contains a non-finite value".into());
@@ -217,6 +218,9 @@ fn check_face_selector(shape: &Shape, selector: &FaceSelector) -> Result<()> {
         .is_some_and(|n| n.length() < 1e-10)
     {
         return Err("Face normal must be non-zero".into());
+    }
+    if selector.cylinder_radius.is_some_and(|r| r <= 0.) {
+        return Err("Cylinder radius must be positive".into());
     }
     check_box(&selector.in_box)?;
     if selector.created_by.is_some() && shape.face_origins().is_none() {
@@ -256,6 +260,22 @@ fn face_items(shape: &Shape, faces: &[FaceInfo], selector: &FaceSelector) -> Res
                 && !inside(face.centre, bounds, tolerance)
             {
                 failed.push("in_box");
+            }
+            if let Some(radius) = selector.cylinder_radius
+                && !face
+                    .cylinder
+                    .as_ref()
+                    .is_some_and(|c| (c.radius - radius).abs() <= tolerance)
+            {
+                failed.push("cylinder_radius");
+            }
+            if let Some(internal) = selector.internal
+                && !face
+                    .cylinder
+                    .as_ref()
+                    .is_some_and(|c| c.internal == internal)
+            {
+                failed.push("internal");
             }
             if let Some(area) = selector.area
                 && (face.area - area).abs() > tolerance

@@ -1,0 +1,11 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "addin",
+  "id": "16a51f82-8605-4436-8c4f-01f78dd521f4",
+  "author": "Faber",
+  "description": {"": "Read editable sketch and extrusion history for Faber."},
+  "version": "1.0.0",
+  "runOnStartup": false,
+  "supportedOS": "windows",
+  "editEnabled": true
+}

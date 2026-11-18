@@ -35,6 +35,7 @@ pub fn append_feature(
             vec![Feature {
                 id: "source".into(),
                 geometry,
+                suppressed: false,
             }],
             "source".into(),
         ),
@@ -45,6 +46,12 @@ pub fn append_feature(
             | Geometry::PlaneOnFace { .. }
             | Geometry::Axis { .. }
             | Geometry::Point { .. }
+            | Geometry::PlaneAtAngle { .. }
+            | Geometry::Midplane { .. }
+            | Geometry::PlaneThroughPoints { .. }
+            | Geometry::AxisFromCylinder { .. }
+            | Geometry::AxisFromPlanes { .. }
+            | Geometry::PointAtCentre { .. }
     ) {
         output
     } else {
@@ -53,6 +60,7 @@ pub fn append_feature(
     features.push(Feature {
         id: id.into(),
         geometry,
+        suppressed: false,
     });
     part.geometry = Geometry::History { features, output };
     let operations = vec![Edit::PutPart {
@@ -104,6 +112,7 @@ pub fn import(
     source: &Path,
     name: String,
     strict: bool,
+    purchased: Option<faber_model::Purchased>,
 ) -> Result<(ProjectData, Vec<Body>), String> {
     let mut project = faber_wiring::open(root, false, None)?;
     if project.data != *expected {
@@ -119,7 +128,7 @@ pub fn import(
                 .any(|existing| existing.eq_ignore_ascii_case(id))
         })
         .ok_or("No body id is available")?;
-    project.import_part(id, name, source, strict)?;
+    project.import_with_record(id, name, source, strict, purchased)?;
     Ok((project.data, project.bodies))
 }
 
@@ -307,13 +316,14 @@ mod tests {
         drop(project);
         let source = output.join("box.step");
         assert!(
-            import(dir.path(), &stale, &source, "Copy".into(), false)
+            import(dir.path(), &stale, &source, "Copy".into(), false, None)
                 .unwrap_err()
                 .contains("Project changed")
         );
-        assert!(import(dir.path(), &expected, &source, "Copy".into(), true).is_err());
+        assert!(import(dir.path(), &expected, &source, "Copy".into(), true, None).is_err());
         assert_eq!(faber_wiring::read(dir.path()).unwrap().0, expected);
-        let (data, bodies) = import(dir.path(), &expected, &source, "Copy".into(), false).unwrap();
+        let (data, bodies) =
+            import(dir.path(), &expected, &source, "Copy".into(), false, None).unwrap();
         assert_eq!(bodies.len(), 2);
         assert_eq!(data.parts["body_1"].name, "Copy");
     }
