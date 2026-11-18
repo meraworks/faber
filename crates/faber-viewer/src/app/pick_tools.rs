@@ -195,7 +195,7 @@ impl Shell {
             if self
                 .feature_draft
                 .as_ref()
-                .is_some_and(|f| f.is_face_plane())
+                .is_some_and(|f| f.requires_planar_pick())
             {
                 planar_face(topo, &self.picks)?;
             }

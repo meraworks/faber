@@ -29,7 +29,7 @@ pub fn get(data: &ProjectData, id: &str) -> Result<MaterialData> {
 
 fn owned(m: &library::Material) -> MaterialData {
     MaterialData {
-        snap_strain_limit: None,
+        snap_strain_limit: m.snap_strain_limit,
         name: m.name.into(),
         class: match m.class {
             Class::Polymer => MaterialClass::Polymer,
@@ -92,6 +92,13 @@ pub(crate) fn validate(data: &ProjectData) -> Result<()> {
         if m.yield_mpa > m.ultimate_mpa {
             return Err(format!(
                 "Material {id}: yield strength exceeds ultimate strength."
+            ));
+        }
+        if m.snap_strain_limit
+            .is_some_and(|v| !v.is_finite() || v <= 0.)
+        {
+            return Err(format!(
+                "Material {id}: the snap strain limit must be finite and above zero."
             ));
         }
         if !(m.poisson > -1. && m.poisson < 0.5) {

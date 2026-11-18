@@ -873,6 +873,51 @@ impl Session {
     }
 }
 
+#[test]
+fn snap_check_matches_the_material_and_feature_info() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = Session::start(directory.path());
+    let dims = json!({"length":15,"thickness":2,"undercut":1.5});
+    let unknown = session.ok("snap_check", dims.clone());
+    assert!((unknown["strain"].as_f64().unwrap() - 0.02).abs() < 1e-9);
+    assert!(unknown.get("ok").is_none());
+    let mut known = dims.clone();
+    known["material"] = json!("pla");
+    let report = session.ok("snap_check", known);
+    assert!(report["strain_limit"].as_f64().unwrap() > 0.);
+    session.ok("put_part",json!({"id":"lid","part":{"name":"Lid","colour":[80,100,120],"material":"pla","geometry":{"op":"history","output":"tab","features":[
+        {"id":"plate","geometry":{"op":"box","size":[40,40,2]}},
+        {"id":"top","geometry":{"op":"plane","placement":{"translation":[0,0,2]}}},
+        {"id":"tab","geometry":{"op":"snap_hook","body":"plate","plane":"top","at":[20,20],"angle_deg":0,"length":15,"width":5,"thickness":2,"undercut":1.5,"hook_length":3}}
+    ]}}}));
+    let info = session.ok("feature_info", json!({"part":"lid","feature":"tab"}));
+    assert_eq!(info["hook_check"]["strain"], report["strain"]);
+    assert_eq!(info["hook_check"]["ok"], report["ok"]);
+    assert_eq!(info["hook_check"]["strain_limit"], report["strain_limit"]);
+    let mut custom = session.ok("materials", json!({"id":"pla"}));
+    custom.as_object_mut().unwrap().remove("id");
+    custom["snap_strain_limit"] = json!(0.03);
+    session.ok("set_material", json!({"id":"pla","material":custom}));
+    let info = session.ok("feature_info", json!({"part":"lid","feature":"tab"}));
+    assert_eq!(info["hook_check"]["ok"], true);
+    assert_eq!(info["hook_check"]["strain_limit"], 0.03);
+    custom["snap_strain_limit"] = json!(-0.01);
+    assert!(
+        session
+            .refused("set_material", json!({"id":"pla","material":custom}))
+            .contains("strain limit")
+    );
+    session.ok("suppress_feature", json!({"part":"lid","id":"tab"}));
+    let suppressed = session.ok("feature_info", json!({"part":"lid","feature":"tab"}));
+    assert!(suppressed.get("hook_check").is_none());
+    assert!(
+        session
+            .refused("snap_check", json!({"length":0,"thickness":2,"undercut":1}))
+            .contains("length")
+    );
+    session.finish();
+}
+
 /// A box from the origin, with the given size and placement translation.
 fn box_part(name: &str, size: [f64; 3], translation: [f64; 3]) -> Value {
     json!({"name":name,"geometry":{"op":"extrude","profile":{"outer":[[0,0],[size[0],0],[size[0],size[1]],[0,size[1]]]},"height":size[2]},"placement":{"translation":translation},"colour":[80,100,120]})

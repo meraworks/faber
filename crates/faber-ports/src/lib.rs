@@ -166,6 +166,21 @@ pub struct PathSamples {
 }
 
 pub trait Kernel: Send + Sync {
+    /// Grow a wall from a line to the next face. Offset ranges from -1 to 1.
+    fn linear_form(
+        &self,
+        _body: &Shape,
+        _profile: &Shape,
+        _direction: [f64; 3],
+        _thickness: f64,
+        _offset: f64,
+    ) -> Result<Shape> {
+        Err("Wall growth is not available".into())
+    }
+    /// A planar face bounded by one offset loop. Loop zero is the outer loop.
+    fn inset_face(&self, _face: &Shape, _loop_index: u32, _distance: f64) -> Result<Shape> {
+        Err("Face loop offsets are not available".into())
+    }
     fn face_sources(&self, _shape: &Shape, _inputs: &[Shape]) -> Result<Option<Vec<FaceSource>>> {
         Ok(None)
     }

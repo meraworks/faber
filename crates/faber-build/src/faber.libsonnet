@@ -58,6 +58,40 @@
   circular_pattern(id, source, count, origin, axis, angle)::
     faber.feature(id, 'circular_pattern', { source: source, count: count, origin: origin, axis: axis, angle: angle }),
 
+  // Wall lines are pairs of points in the reference plane.
+  rib(id, body, plane, lines, thickness, side='symmetric', draft_deg=null)::
+    faber.feature(id, 'rib', { body: body, plane: plane, lines: lines, thickness: thickness, side: side }
+      + (if draft_deg == null then {} else { draft_deg: draft_deg })),
+
+  web(id, body, plane, lines, thickness, draft_deg=null)::
+    faber.feature(id, 'web', { body: body, plane: plane, lines: lines, thickness: thickness }
+      + (if draft_deg == null then {} else { draft_deg: draft_deg })),
+
+  // The boss and hook start at a point in the reference plane.
+  boss(id, body, plane, at, diameter, height, hole_diameter=null, hole_depth=null,
+       draft_deg=null, ribs=null, fillet=null)::
+    faber.feature(id, 'boss', { body: body, plane: plane, at: at, diameter: diameter, height: height }
+      + { [kv[0]]: kv[1] for kv in [
+          ['hole_diameter', hole_diameter], ['hole_depth', hole_depth],
+          ['draft_deg', draft_deg], ['ribs', ribs], ['fillet', fillet],
+        ] if kv[1] != null }),
+
+  snap_hook(id, body, plane, at, angle_deg, length, width, thickness, undercut, hook_length,
+            tip_thickness=null, lead_deg=null, return_deg=null, root_fillet=null)::
+    faber.feature(id, 'snap_hook', { body: body, plane: plane, at: at, angle_deg: angle_deg,
+        length: length, width: width, thickness: thickness, undercut: undercut, hook_length: hook_length }
+      + { [kv[0]]: kv[1] for kv in [
+          ['tip_thickness', tip_thickness], ['lead_deg', lead_deg],
+          ['return_deg', return_deg], ['root_fillet', root_fillet],
+        ] if kv[1] != null }),
+
+  // The loop is outer or inner. The side is inside or outside that loop.
+  lip(id, body, face, loop, side, width, height)::
+    faber.feature(id, 'lip', { body: body, face: face, loop: loop, side: side, width: width, height: height }),
+
+  groove(id, body, face, loop, side, width, depth, clearance)::
+    faber.feature(id, 'groove', { body: body, face: face, loop: loop, side: side, width: width, depth: depth, clearance: clearance }),
+
   // Join fragments. Each part id must be unique. The later fragment keeps
   // the other fields. Refuses a part id that two fragments have.
   merge(fragments)::

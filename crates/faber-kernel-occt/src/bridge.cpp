@@ -16,6 +16,13 @@
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepOffsetAPI_MakeOffset.hxx>
+#include <BOPTools_AlgoTools3D.hxx>
+#include <IntTools_Context.hxx>
+#include <HLRTopoBRep_OutLiner.hxx>
+#include <HLRAlgo_Projector.hxx>
+#include <BRepTopAdaptor_MapOfShapeTool.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Mat.hxx>
 #include <gp_Elips.hxx>
@@ -219,6 +226,178 @@ extern "C" int faber_face_shape(const void* input,uint32_t index,void** result,c
         TopExp::MapShapes(static_cast<const FaberShape*>(input)->value,TopAbs_FACE,faces);
         if(index==0 || index>static_cast<uint32_t>(faces.Extent())) throw std::runtime_error("Unknown face index");
         publish(faces(index),result);
+    });
+}
+
+static double surface_area(const TopoDS_Shape& shape) {
+    GProp_GProps p;
+    BRepGProp::SurfaceProperties(shape,p);
+    return std::abs(p.Mass());
+}
+
+extern "C" int faber_inset_face(const void* input,uint32_t index,double distance,void** result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&] {
+        const TopoDS_Face face=TopoDS::Face(static_cast<const FaberShape*>(input)->value);
+        const BRepAdaptor_Surface surface(face);
+        if(surface.GetType()!=GeomAbs_Plane) throw std::runtime_error("Select a planar face for the rim");
+        TopoDS_Wire outer=BRepTools::OuterWire(face), selected=outer;
+        if(index>0) {
+            uint32_t count=0;
+            for(TopExp_Explorer it(face,TopAbs_WIRE);it.More();it.Next()) {
+                if(it.Current().IsSame(outer)) continue;
+                if(++count==index) selected=TopoDS::Wire(it.Current());
+            }
+            if(count<index) throw std::runtime_error("The selected face has no such inner loop");
+            if(count>1 && index==1) throw std::runtime_error("The face has more than one inner loop");
+        }
+        const gp_Pln plane=surface.Plane();
+        BRepBuilderAPI_MakeFace disk(plane,selected,true);
+        if(!disk.IsDone()) throw std::runtime_error("Cannot make a face from the selected loop");
+        TopoDS_Face output=disk.Face();
+        if(distance!=0.) {
+            BRepOffsetAPI_MakeOffset offset(output,GeomAbs_Intersection);
+            offset.Perform(distance);
+            if(!offset.IsDone()) throw std::runtime_error("The rim width collapses the selected loop");
+            TopTools_IndexedMapOfShape wires; TopExp::MapShapes(offset.Shape(),TopAbs_WIRE,wires);
+            if(wires.Extent()!=1) throw std::runtime_error("The rim width splits or collapses the selected loop");
+            BRepBuilderAPI_MakeFace inset(plane,TopoDS::Wire(wires(1)),true);
+            if(!inset.IsDone()) throw std::runtime_error("Cannot build the offset loop");
+            output=inset.Face();
+            if((surface_area(output)-surface_area(disk.Face()))*distance<=0.) {
+                throw std::runtime_error("The rim width does not give a valid offset loop");
+            }
+        }
+        publish(output,result);
+    });
+}
+
+static double separation(const TopoDS_Shape& a,const TopoDS_Shape& b) {
+    BRepExtrema_DistShapeShape distance(a,b);
+    if(!distance.IsDone()) throw std::runtime_error("Cannot measure the wall limits");
+    return distance.Value();
+}
+
+// Divide a curved face at its silhouettes. Each patch then faces one way
+// over its full projection in the growth direction.
+static TopoDS_Shape wall_patches(const TopoDS_Face& face,const gp_Vec& grow) {
+    if(BRepAdaptor_Surface(face).GetType()==GeomAbs_Plane) return face;
+    HLRTopoBRep_OutLiner outline(face);
+    BRepTopAdaptor_MapOfShapeTool tools;
+    outline.Fill(HLRAlgo_Projector(gp_Ax2(gp_Pnt(0,0,0),gp_Dir(grow))),tools,0);
+    const auto& data=outline.DataStructure();
+    if(!data.FaceHasIntL(face)) return face;
+    TopTools_ListOfShape edges,arguments;
+    for(TopTools_ListIteratorOfListOfShape it(data.FaceIntL(face));it.More();it.Next()) {
+        const auto edge=TopoDS::Edge(it.Value().Oriented(TopAbs_FORWARD));
+        if(!BRepLib::BuildCurve3d(edge)) throw std::runtime_error("Cannot resolve a curved wall limit");
+        edges.Append(edge);
+    }
+    if(edges.IsEmpty()) return face;
+    arguments.Append(face);
+    BRepAlgoAPI_Splitter parts; parts.SetArguments(arguments); parts.SetTools(edges);
+    parts.SetNonDestructive(true); parts.Build();
+    if(!parts.IsDone() || parts.HasErrors()) throw std::runtime_error("Cannot split a curved wall limit");
+    return parts.Shape();
+}
+
+// A void can wrap around a shelf. Remove the material downstream of each
+// back-facing patch so each line of growth stops at its first contact.
+static TopoDS_Shape first_wall_contact(const TopoDS_Shape& cell,const gp_Pnt& start,const gp_Vec& grow,double reach) {
+    TopTools_ListOfShape shadows;
+    Handle(IntTools_Context) context=new IntTools_Context();
+    for(TopExp_Explorer faces(cell,TopAbs_FACE);faces.More();faces.Next()) {
+        const auto original=TopoDS::Face(faces.Current());
+        const auto patches=wall_patches(original,grow);
+        for(TopExp_Explorer parts(patches,TopAbs_FACE);parts.More();parts.Next()) {
+            const auto face=TopoDS::Face(parts.Current().Oriented(original.Orientation()));
+            const BRepAdaptor_Surface surface(face);
+            gp_Pnt point; gp_Vec normal;
+            if(surface.GetType()==GeomAbs_Plane) {
+                const auto plane=surface.Plane();
+                point=plane.Location();
+                normal=gp_Vec(plane.Axis().Direction());
+                if(std::abs(normal.Dot(grow))>1.-1e-10 && std::abs(plane.Distance(start))<1e-7) continue;
+            } else {
+                gp_Pnt2d uv;
+                if(BOPTools_AlgoTools3D::PointInFace(face,point,uv,context)!=0) {
+                    throw std::runtime_error("Cannot identify a curved wall limit");
+                }
+                gp_Vec du,dv; surface.D1(uv.X(),uv.Y(),point,du,dv);
+                normal=du.Crossed(dv).Normalized();
+            }
+            if(face.Orientation()==TopAbs_REVERSED) normal.Reverse();
+            if(normal.Dot(grow)>=-1e-9) continue;
+            BRepPrimAPI_MakePrism swept(face,grow*reach,true);
+            if(!swept.IsDone() || swept.Shape().ShapeType()!=TopAbs_SOLID) throw std::runtime_error("Cannot trim a wall behind its first contact");
+            auto solid=TopoDS::Solid(swept.Shape());
+            if(!BRepLib::OrientClosedSolid(solid)) throw std::runtime_error("Cannot orient a wall limit");
+            shadows.Append(solid);
+        }
+    }
+    if(shadows.IsEmpty()) return cell;
+    TopTools_ListOfShape arguments;arguments.Append(cell);
+    BRepAlgoAPI_Cut trim;trim.SetArguments(arguments);trim.SetTools(shadows);trim.SetNonDestructive(true);trim.Build();
+    if(!trim.IsDone() || trim.HasErrors()) throw std::runtime_error("Cannot trim the wall behind its first contact");
+    return trim.Shape();
+}
+
+extern "C" int faber_linear_form(const void* raw_body,const void* raw_profile,const double* direction,
+        double thickness,double offset,void** result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&] {
+        const auto& body=static_cast<const FaberShape*>(raw_body)->value;
+        const auto& profile=static_cast<const FaberShape*>(raw_profile)->value;
+        TopTools_IndexedMapOfShape edges;
+        TopExp::MapShapes(profile,TopAbs_EDGE,edges);
+        if(edges.Extent()!=1) throw std::runtime_error("Wall growth needs one line");
+        const BRepAdaptor_Curve curve(TopoDS::Edge(edges(1)));
+        if(curve.GetType()!=GeomAbs_Line) throw std::runtime_error("Wall growth needs a straight line");
+        const gp_Pnt a=curve.Value(curve.FirstParameter()), b=curve.Value(curve.LastParameter());
+        constexpr double tol=1e-6;
+        if(separation(BRepBuilderAPI_MakeVertex(a).Vertex(),body)>tol) throw std::runtime_error("open start");
+        if(separation(BRepBuilderAPI_MakeVertex(b).Vertex(),body)>tol) throw std::runtime_error("open end");
+        const gp_Vec along=gp_Vec(a,b).Normalized();
+        const gp_Vec grow=gp_Vec(direction[0],direction[1],direction[2]).Normalized();
+        if(std::abs(along.Dot(grow))>1e-8) throw std::runtime_error("Wall growth must be perpendicular to the line");
+        const gp_Vec side=along.Crossed(grow).Normalized();
+        const gp_Vec low=side*(thickness*(offset-1.)/2.), high=side*(thickness*(offset+1.)/2.);
+        BRepBuilderAPI_MakePolygon outline;
+        outline.Add(a.Translated(low)); outline.Add(b.Translated(low));
+        outline.Add(b.Translated(high)); outline.Add(a.Translated(high)); outline.Close();
+        const auto seed=BRepBuilderAPI_MakeFace(outline.Wire()).Face();
+        Bnd_Box bounds; BRepBndLib::Add(body,bounds);
+        const double reach=std::sqrt(bounds.SquareExtent())*2.+thickness+1.;
+        BRepPrimAPI_MakePrism prism(seed,grow*reach,true);
+        BRepAlgoAPI_Cut split(prism.Shape(),body);
+        if(!split.IsDone() || split.HasErrors()) throw std::runtime_error("Cannot trim the wall to the next faces");
+        // Keep only cells that start at the profile and stop on the body.
+        BRep_Builder builder; TopoDS_Compound walls; builder.MakeCompound(walls);
+        double covered=0.;
+        for(TopExp_Explorer it(split.Shape(),TopAbs_SOLID);it.More();it.Next()) {
+            const auto& cell=it.Current();
+            BRepAlgoAPI_Common contact(cell,seed);
+            if(!contact.IsDone() || contact.HasErrors()) throw std::runtime_error("Cannot find the wall contact");
+            const double area=surface_area(contact.Shape());
+            if(area<=tol*tol) continue;
+            const TopoDS_Shape visible=first_wall_contact(cell,a,grow,reach);
+            if(separation(visible,prism.LastShape())<=tol) throw std::runtime_error("The wall does not reach a limiting face");
+            covered+=area;
+            builder.Add(walls,visible);
+        }
+        // Endpoints can extend into existing walls. Measure the free part of the centre line.
+        BRepAlgoAPI_Cut free_line(profile,body);
+        if(!free_line.IsDone() || free_line.HasErrors()) throw std::runtime_error("Cannot measure the open profile");
+        GProp_GProps length; BRepGProp::LinearProperties(free_line.Shape(),length);
+        const double expected=length.Mass()*thickness;
+        if(covered<=tol*tol || covered+tol*(a.Distance(b)+thickness)<expected) {
+            throw std::runtime_error("The wall thickness exceeds the free space at the profile");
+        }
+        BRepAlgoAPI_Fuse joined(body,walls);
+        if(!joined.IsDone() || joined.HasErrors()) throw std::runtime_error("Cannot join the wall to the body");
+        joined.SimplifyResult();
+        TopTools_IndexedMapOfShape before,after;
+        TopExp::MapShapes(body,TopAbs_SOLID,before); TopExp::MapShapes(joined.Shape(),TopAbs_SOLID,after);
+        if(after.Extent()!=1 || before.Extent()!=1) throw std::runtime_error("The wall must join to one solid");
+        publish_tracked(joined,{body},result,false,&after(1));
     });
 }
 

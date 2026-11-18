@@ -18,6 +18,8 @@ mod pattern;
 pub mod pick_selector;
 mod pipe;
 mod placement;
+pub mod plastic;
+mod plastic_walls;
 pub mod press_pull;
 mod provenance;
 mod read_cache;

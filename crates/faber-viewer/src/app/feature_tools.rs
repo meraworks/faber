@@ -1,9 +1,9 @@
-//! Default recipes and tests for the scale, pipe and path pattern tools.
+//! Default recipes for path tools, scale and plastic features.
 
 use super::ToolKind;
 use faber_model::{Geometry, PathInput, Scalar, ScaleFactor};
 
-/// The first recipe of a new scale, pipe or path pattern feature.
+/// The first recipe shown in the feature form.
 pub(super) fn new_geometry(
     kind: &ToolKind,
     source: String,
@@ -15,6 +15,24 @@ pub(super) fn new_geometry(
             .next()
             .map(PathInput::Feature)
             .ok_or_else(|| "Add a curve or helix feature to this part first.".to_owned())
+    };
+    let plane = || {
+        crate::feature_form::plane_ids(part, "")
+            .into_iter()
+            .next()
+            .ok_or_else(|| "Add a reference plane to this part first.".to_owned())
+    };
+    let line = || vec![[[0., 0.].map(Scalar::Number), [10., 0.].map(Scalar::Number)]];
+    let face = || faber_model::FaceSelector {
+        normal: Some([0., 0., 1.].map(Scalar::Number)),
+        cylinder_radius: None,
+        internal: None,
+        created_by: None,
+        near_centre: None,
+        in_box: None,
+        area: None,
+        tolerance: 0.000001.into(),
+        expect: 1,
     };
     Ok(match kind {
         ToolKind::Scale => Geometry::Scale {
@@ -34,7 +52,66 @@ pub(super) fn new_geometry(
             spacing: None,
             orient: false,
         },
-        _ => return Err("This tool does not make a path or scale feature.".into()),
+        ToolKind::Rib => Geometry::Rib {
+            body: source,
+            plane: plane()?,
+            lines: line(),
+            thickness: 2.0.into(),
+            side: faber_model::RibSide::Symmetric,
+            draft_deg: None,
+        },
+        ToolKind::Web => Geometry::Web {
+            body: source,
+            plane: plane()?,
+            lines: line(),
+            thickness: 2.0.into(),
+            draft_deg: None,
+        },
+        ToolKind::Boss => Geometry::Boss {
+            body: source,
+            plane: plane()?,
+            at: [0., 0.].map(Scalar::Number),
+            diameter: 8.0.into(),
+            height: 10.0.into(),
+            hole_diameter: None,
+            hole_depth: None,
+            draft_deg: None,
+            ribs: None,
+            fillet: None,
+        },
+        ToolKind::SnapHook => Geometry::SnapHook {
+            body: source,
+            plane: plane()?,
+            at: [0., 0.].map(Scalar::Number),
+            angle_deg: 0.0.into(),
+            length: 15.0.into(),
+            width: 5.0.into(),
+            thickness: 2.0.into(),
+            tip_thickness: None,
+            undercut: 1.5.into(),
+            hook_length: 3.0.into(),
+            lead_deg: None,
+            return_deg: None,
+            root_fillet: None,
+        },
+        ToolKind::Lip => Geometry::Lip {
+            body: source,
+            face: face(),
+            loop_: faber_model::LipLoop::Outer,
+            side: faber_model::LipSide::Inside,
+            width: 1.0.into(),
+            height: 2.0.into(),
+        },
+        ToolKind::Groove => Geometry::Groove {
+            body: source,
+            face: face(),
+            loop_: faber_model::LipLoop::Outer,
+            side: faber_model::LipSide::Inside,
+            width: 1.0.into(),
+            depth: 2.0.into(),
+            clearance: 0.15.into(),
+        },
+        _ => return Err("Select a modelling tool.".into()),
     })
 }
 
@@ -146,6 +223,107 @@ mod tests {
             serde_json::from_value(serde_json::json!({"op":"box","size":[1,1,1]})).unwrap();
         let error = new_geometry(&ToolKind::Pipe, "base".into(), &geometry).unwrap_err();
         assert_eq!(error, "Add a curve or helix feature to this part first.");
+    }
+
+    #[test]
+    fn plastic_feature_tools_open_from_the_feature_list() {
+        let dir = tempfile::tempdir().unwrap();
+        project(dir.path(), false);
+        let mut harness = open(dir.path());
+        harness.get_by_label("Plastic features").click();
+        for _ in 0..3 {
+            harness.step();
+        }
+        for label in ["Rib", "Web", "Boss", "Snap hook", "Lip", "Groove"] {
+            assert!(harness.query_by_label(label).is_some(), "Missing {label}");
+        }
+    }
+
+    fn copy_snap_box(dir: &Path) {
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/snap-box");
+        std::fs::create_dir(dir.join("parts")).unwrap();
+        for file in [
+            "faber.json",
+            "placement.json",
+            "parts/body.json",
+            "parts/lid.json",
+        ] {
+            std::fs::copy(example.join(file), dir.join(file)).unwrap();
+        }
+    }
+
+    #[test]
+    fn plastic_feature_snap_box_fits_the_bed_and_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        copy_snap_box(dir.path());
+        let mut project = faber_wiring::open(dir.path(), false, None).unwrap();
+        let report = faber_wiring::print::print_check(&project, None, [0., 0., 1.]).unwrap();
+        assert!(
+            report.fits
+                && report
+                    .findings
+                    .iter()
+                    .all(|f| f.severity != faber_print::Severity::Error)
+        );
+        assert!(
+            report.bed_contact_mm2 > 4000.,
+            "Both parts must touch the bed."
+        );
+        let mut lid = project.data.parts["lid"].clone();
+        lid.placement.translation = [0., 40., 23.7].map(Scalar::Number);
+        lid.placement.rotation = [180., 0., 0.].map(Scalar::Number);
+        project
+            .batch_strict(vec![faber_model::Edit::PutPart {
+                id: "lid".into(),
+                part: lid,
+            }])
+            .unwrap();
+        let interference =
+            faber_wiring::interference(&project.bodies, 0.01, &project.data.contacts).unwrap();
+        assert!(
+            interference.violations.is_empty(),
+            "{:?}",
+            interference.violations
+        );
+        let gap = project.measure_distance("body", "lid").unwrap().distance_mm;
+        assert!(gap > 0.05 && gap < 0.3, "Lid clearance is {gap} mm.");
+    }
+
+    #[test]
+    fn plastic_boss_form_adds_a_boss_to_the_snap_box() {
+        let dir = tempfile::tempdir().unwrap();
+        copy_snap_box(dir.path());
+        let before = faber_wiring::read(dir.path()).unwrap().1;
+        let volume = before.iter().find(|b| b.id == "body").unwrap().volume;
+        let mut harness = open(dir.path());
+        harness.get_by_label("Plastic features").scroll_to_me();
+        for _ in 0..4 {
+            harness.step();
+        }
+        harness.get_by_label("Plastic features").click();
+        for _ in 0..3 {
+            harness.step();
+        }
+        harness.get_by_label("Boss").click();
+        for _ in 0..4 {
+            harness.step();
+        }
+        harness.get_by_label("Reference plane").click();
+        for _ in 0..3 {
+            harness.step();
+        }
+        // The project tree also has a row for the floor plane.
+        harness.query_all_by_label("floor").last().unwrap().click();
+        harness.step();
+        set_field(&mut harness, "/at/0", "30");
+        set_field(&mut harness, "/at/1", "9");
+        set_field(&mut harness, "/diameter", "wall * 2");
+        set_field(&mut harness, "/height", "3");
+        let after = apply(&mut harness, dir.path());
+        assert!((after - volume - PI * 4. * 3.).abs() < 0.02);
+        let saved = saved_feature(dir.path(), "boss_1");
+        assert_eq!(saved["diameter"], "wall * 2");
+        assert_eq!(saved["plane"], "floor");
     }
 
     #[test]

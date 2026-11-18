@@ -71,6 +71,15 @@ fn l_bracket_flat_needs_no_support() {
 }
 
 #[test]
+fn a_pocket_floor_has_material_below_it() {
+    let xy = [0., 2., 12., 14.];
+    let z = [0., 2., 10.];
+    let tray = cells([&xy, &xy, &z], |[x, y, z]| z == 0 || x != 1 || y != 1);
+    let report = check(&[&tray], &printer(), UP).unwrap();
+    assert_eq!(report.islands, 0);
+}
+
+#[test]
 fn hanging_tooth_is_an_island() {
     let xs = [0., 2., 5., 7., 10., 12.];
     let zs = [0., 4., 8., 10.];

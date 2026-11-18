@@ -1,0 +1,271 @@
+{
+  "schema": 1,
+  "name": "Box",
+  "material": "petg",
+  "colour": [
+    91,
+    140,
+    148
+  ],
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "blank",
+        "geometry": {
+          "op": "box",
+          "size": [
+            "length",
+            "width",
+            "height"
+          ]
+        }
+      },
+      {
+        "id": "tray",
+        "geometry": {
+          "op": "shell",
+          "source": "blank",
+          "faces": {
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "near_centre": [
+              "length/2",
+              "width/2",
+              "height"
+            ],
+            "tolerance": 0.001,
+            "expect": 1
+          },
+          "thickness": "wall"
+        }
+      },
+      {
+        "id": "rim",
+        "geometry": {
+          "op": "lip",
+          "body": "tray",
+          "face": {
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "near_centre": [
+              "length/2",
+              "width/2",
+              "height"
+            ],
+            "tolerance": 0.001,
+            "expect": 1
+          },
+          "loop": "outer",
+          "side": "inside",
+          "width": "lip_width",
+          "height": "lip_height"
+        }
+      },
+      {
+        "id": "floor",
+        "geometry": {
+          "op": "plane",
+          "placement": {
+            "translation": [
+              0,
+              0,
+              "wall"
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "section",
+        "geometry": {
+          "op": "plane",
+          "placement": {
+            "translation": [
+              0,
+              "width/2",
+              0
+            ],
+            "rotation": [
+              90,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "corner_ribs",
+        "geometry": {
+          "op": "rib",
+          "body": "rim",
+          "plane": "section",
+          "lines": [
+            [
+              [
+                "wall+10",
+                "wall"
+              ],
+              [
+                "wall",
+                "wall+10"
+              ]
+            ],
+            [
+              [
+                "length-wall-10",
+                "wall"
+              ],
+              [
+                "length-wall",
+                "wall+10"
+              ]
+            ]
+          ],
+          "thickness": 2,
+          "side": "symmetric"
+        }
+      },
+      {
+        "id": "front_left_boss",
+        "geometry": {
+          "op": "boss",
+          "body": "corner_ribs",
+          "plane": "floor",
+          "at": [
+            10,
+            8
+          ],
+          "diameter": 7,
+          "height": 6,
+          "hole_diameter": 3,
+          "hole_depth": 5
+        }
+      },
+      {
+        "id": "front_right_boss",
+        "geometry": {
+          "op": "boss",
+          "body": "front_left_boss",
+          "plane": "floor",
+          "at": [
+            "length-10",
+            8
+          ],
+          "diameter": 7,
+          "height": 6,
+          "hole_diameter": 3,
+          "hole_depth": 5
+        }
+      },
+      {
+        "id": "rear_left_boss",
+        "geometry": {
+          "op": "boss",
+          "body": "front_right_boss",
+          "plane": "floor",
+          "at": [
+            10,
+            "width-8"
+          ],
+          "diameter": 7,
+          "height": 6,
+          "hole_diameter": 3,
+          "hole_depth": 5
+        }
+      },
+      {
+        "id": "rear_right_boss",
+        "geometry": {
+          "op": "boss",
+          "body": "rear_left_boss",
+          "plane": "floor",
+          "at": [
+            "length-10",
+            "width-8"
+          ],
+          "diameter": 7,
+          "height": 6,
+          "hole_diameter": 3,
+          "hole_depth": 5
+        }
+      },
+      {
+        "id": "latch_window",
+        "geometry": {
+          "op": "box",
+          "size": [
+            4,
+            6,
+            4
+          ]
+        }
+      },
+      {
+        "id": "left_window",
+        "geometry": {
+          "op": "transform",
+          "source": "latch_window",
+          "placement": {
+            "translation": [
+              -1,
+              "width-15",
+              "height-12"
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "left_latch_cut",
+        "geometry": {
+          "op": "difference",
+          "left": "rear_right_boss",
+          "right": "left_window"
+        }
+      },
+      {
+        "id": "right_window",
+        "geometry": {
+          "op": "transform",
+          "source": "latch_window",
+          "placement": {
+            "translation": [
+              "length-3",
+              "width-15",
+              "height-12"
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "case",
+        "geometry": {
+          "op": "difference",
+          "left": "left_latch_cut",
+          "right": "right_window"
+        }
+      }
+    ],
+    "output": "case"
+  }
+}

@@ -76,7 +76,14 @@ pub(crate) fn low_points(s: &Surface, up: DVec3, bed: f64) -> Vec<[f64; 3]> {
     let heights: Vec<_> = verts.iter().map(|&p| DVec3::from(p).dot(up)).collect();
     let mut parent: Vec<_> = (0..verts.len()).collect();
     let mut lower = vec![false; verts.len()];
-    for t in &s.mesh.triangles {
+    let mut faces_down = vec![false; verts.len()];
+    for (t, facet) in s.mesh.triangles.iter().zip(&s.facets) {
+        // A pocket floor has an upward normal and material below it.
+        if facet.n.dot(up) < -1e-8 {
+            for &vertex in t {
+                faces_down[vertex as usize] = true;
+            }
+        }
         for j in 0..3 {
             let (a, b) = (t[j] as usize, t[(j + 1) % 3] as usize);
             let dz = heights[a] - heights[b];
@@ -92,15 +99,18 @@ pub(crate) fn low_points(s: &Surface, up: DVec3, bed: f64) -> Vec<[f64; 3]> {
     let mut groups = BTreeMap::new();
     for (i, &v) in verts.iter().enumerate() {
         let idx = root(&mut parent, i);
-        let data = groups.entry(idx).or_insert((DVec3::ZERO, 0usize, true));
+        let data = groups
+            .entry(idx)
+            .or_insert((DVec3::ZERO, 0usize, true, false));
         data.0 += DVec3::from(v);
         data.1 += 1;
         data.2 &= !lower[i] && heights[i] > bed + 0.05;
+        data.3 |= faces_down[i];
     }
     groups
         .into_values()
-        .filter(|v| v.2)
-        .map(|(sum, n, _)| (sum / n as f64).into())
+        .filter(|v| v.2 && v.3)
+        .map(|(sum, n, _, _)| (sum / n as f64).into())
         .collect()
 }
 

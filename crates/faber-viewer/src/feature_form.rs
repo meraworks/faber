@@ -1,7 +1,27 @@
+mod plastic;
+pub(crate) use plastic::plane_ids;
+
 use faber_model::{Geometry, ProjectData, Scalar};
 use serde_json::Value;
 
 pub fn label(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("/lines/") {
+        let indices: Vec<_> = rest
+            .split('/')
+            .filter_map(|p| p.parse::<usize>().ok())
+            .collect();
+        if let [line, end, axis] = indices.as_slice()
+            && *end < 2
+            && *axis < 2
+        {
+            return format!(
+                "Line {} · {} · {}",
+                line + 1,
+                ["start", "end"][*end],
+                ["X", "Y"][*axis]
+            );
+        }
+    }
     let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
     parts
         .iter()
@@ -12,6 +32,7 @@ pub fn label(path: &str) -> String {
                 if matches!(
                     parent,
                     "size"
+                        | "at"
                         | "step"
                         | "translation"
                         | "rotation"
@@ -54,7 +75,8 @@ pub fn field_unit(path: &str, numeric: bool) -> Option<&'static str> {
         .rsplit('/')
         .find(|k| !k.is_empty() && !k.bytes().all(|c| c.is_ascii_digit()))?;
     match key {
-        "angle" | "angle_deg" | "rotation" | "start_deg" | "end_deg" | "sweep_deg" => Some("°"),
+        "draft_deg" | "lead_deg" | "return_deg" | "angle" | "angle_deg" | "rotation"
+        | "start_deg" | "end_deg" | "sweep_deg" => Some("°"),
         "area" => Some("mm²"),
         "count" | "expect" | "turns" | "factor" | "parallel" | "normal" | "direction"
         | "weights" | "knots" => Some("1"),
@@ -185,6 +207,24 @@ impl FeatureForm {
                 }
                 Geometry::PathPattern { .. } => {
                     "Copy the source along a curve or helix feature. Count includes the source. Without spacing, the copies span the whole path. Orient turns each copy to the path."
+                }
+                Geometry::Rib { .. } => {
+                    "Set each line in reference plane coordinates. Its ends must touch the body. The rib grows in the plane."
+                }
+                Geometry::Web { .. } => {
+                    "Set each line in reference plane coordinates. The web grows to the body along the plane normal."
+                }
+                Geometry::Boss { .. } => {
+                    "Set the centre on the reference plane. Height follows the plane normal. Set a bore, ribs or a base fillet as needed."
+                }
+                Geometry::SnapHook { .. } => {
+                    "Set the root on the reference plane. The beam grows along the plane normal. The angle turns the hook about this normal."
+                }
+                Geometry::Lip { .. } => {
+                    "Pick one planar face. Choose its outer or inner loop and the side to add material."
+                }
+                Geometry::Groove { .. } => {
+                    "Pick one planar face. Clearance adds space at both sides and at the bottom of the groove."
                 }
                 _ => "",
             },
@@ -332,6 +372,7 @@ impl FeatureForm {
 
     /// Optional fields. Scale can use one factor per axis. Pipe and path pattern can omit a field.
     pub fn option_fields(&mut self, ui: &mut eframe::egui::Ui) -> Result<(), String> {
+        self.plastic_options(ui)?;
         match self.value["op"].as_str().unwrap_or_default() {
             "scale" => {
                 let mut per_axis = self.value["factor"].is_array();
@@ -381,15 +422,18 @@ impl FeatureForm {
         self.value = value;
     }
 
-    pub(crate) fn is_face_plane(&self) -> bool {
-        self.value["op"] == "plane_on_face"
+    pub(crate) fn requires_planar_pick(&self) -> bool {
+        matches!(
+            self.value["op"].as_str(),
+            Some("plane_on_face" | "lip" | "groove")
+        )
     }
 
     pub(crate) fn pick_field(&self) -> Option<(&'static str, &'static str)> {
         match self.value["op"].as_str()? {
             "fillet" | "chamfer" => Some(("Edges", "edges")),
             "shell" | "draft" => Some(("Faces", "faces")),
-            "plane_on_face" | "thicken" => Some(("Faces", "face")),
+            "plane_on_face" | "thicken" | "lip" | "groove" => Some(("Faces", "face")),
             "hole" => Some(("Face", "placement")),
             _ => None,
         }
@@ -407,7 +451,8 @@ impl FeatureForm {
             Geometry::History { output, .. } => output.as_str(),
             _ => "source",
         };
-        if value["source"].as_str() != Some(displayed) {
+        let source = value.get("body").or_else(|| value.get("source"));
+        if source.and_then(Value::as_str) != Some(displayed) {
             return Err("The displayed solid differs from the feature source. Set the selector fields manually.".into());
         }
         value[key] = field;
@@ -494,9 +539,11 @@ fn collect(
             // The path of pipe and path pattern has a drop-down, not a text field.
             let feature_path =
                 is_path_recipe(value) && values.get("path").is_some_and(Value::is_string);
+            let op = value["op"].as_str();
             for (key, value) in values {
                 if key != "op"
                     && key != "keep"
+                    && !plastic::choice_field(op, key)
                     && !(path == "/head" && key == "kind")
                     && !(feature_path && key == "path")
                 {
@@ -519,6 +566,44 @@ fn collect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plastic_feature_angles_show_degrees() {
+        for path in ["/draft_deg", "/lead_deg", "/return_deg"] {
+            assert_eq!(field_unit(path, true), Some("°"), "{path}");
+        }
+        assert_eq!(field_unit("/ribs/count", true), Some("1"));
+        assert_eq!(field_unit("/lines/0/1/0", true), Some("mm"));
+    }
+
+    #[test]
+    fn plastic_feature_picks_one_planar_face_on_the_displayed_body() {
+        let data: ProjectData = serde_json::from_value(serde_json::json!({
+            "schema":2,"revision":0,"name":"Tray","params":{},
+            "parts":{"tray":{"name":"Tray","colour":[80,90,120],
+                "geometry":{"op":"history","output":"base",
+                    "features":[{"id":"base","geometry":{"op":"box","size":[40,40,5]}}]}}}
+        }))
+        .unwrap();
+        let selected = serde_json::json!({"normal":[0,0,1],"near_centre":[20,20,5],"tolerance":0.001,"expect":1});
+        for op in ["lip", "groove"] {
+            let mut recipe = serde_json::json!({"op":op,"body":"base","face":{"normal":[0,0,1],"tolerance":0.001,"expect":1},
+                "loop":"outer","side":"inside","width":1});
+            if op == "lip" {
+                recipe["height"] = 2.into();
+            } else {
+                recipe["depth"] = 2.into();
+                recipe["clearance"] = 0.15.into();
+            }
+            let geometry = serde_json::from_value(recipe).unwrap();
+            let mut form =
+                FeatureForm::new(data.clone(), "tray".into(), "rim".into(), &geometry).unwrap();
+            assert_eq!(form.pick_field(), Some(("Faces", "face")));
+            form.set_picked("face", selected.clone()).unwrap();
+            let saved = serde_json::to_value(form.geometry().unwrap()).unwrap();
+            assert_eq!(saved["face"]["near_centre"][2], 5.);
+        }
+    }
 
     #[test]
     fn metric_hole_presets_preserve_depth_and_placement() {

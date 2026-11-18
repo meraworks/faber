@@ -3,6 +3,7 @@
 pub mod archive;
 pub mod study;
 pub mod study_image;
+pub use faber_core::plastic::{HookCheck, checked_hook, hook_check};
 pub use faber_core::press_pull::{self, preview_feature};
 pub mod parameters;
 pub mod print;

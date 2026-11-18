@@ -998,3 +998,47 @@ Export with **3MF** in the viewer, the MCP `export` tool with `format: "3mf"`,
 or `faber export PROJECT DIRECTORY --format 3mf`. Open `assembly.3mf` in the
 slicer. The file keeps one object per part, its display colour and its build
 placement in millimetres.
+
+## Plastic features
+
+![Snap box with ribs and screw bosses in the base and two hooks on the lid.](images/snap-box.png)
+
+Select an editable part and open **Plastic features**. Rib, Web, Boss and
+Snap hook need a reference plane in the part history. To add a plane to a
+flat surface, use **References → Plane on face**. In the plastic feature
+form, select **Reference plane** and choose the plane by name. Positions and
+line ends use the X and Y axes of that plane. Enter lengths in millimetres
+and angles in degrees. Dimension fields accept parameter expressions such
+as `wall * 2`. **Apply feature** adds one step to the history.
+
+| Feature | Inputs and effect |
+| --- | --- |
+| Rib | Enter a line that touches the body at both ends. The rib grows in the reference plane to the body. Set thickness, wall side and optional draft. |
+| Web | Enter one or more lines. The web grows along the plane normal to the body. Set thickness and optional draft. Use **Add line** for crossing walls. |
+| Boss | Set the centre, diameter and height. Optional fields add a bore, draft, radial ribs and a base fillet. The hole diameter must be smaller than the boss diameter. Each rib has a length, thickness and height. The rib count must resolve to a whole number. |
+| Snap hook | Set the root, beam length, width and thickness. The beam grows along the plane normal. The head points along plane X at zero degrees. The undercut sets the deflection for the strain estimate. Set head length, tip thickness, lead angle, return angle and root fillet as needed. The default lead and return angles are 30° and 90°. |
+| Lip | Pick a planar face with **Faces**. Choose the outer or inner loop and its inside or outside. Width sets the strip across the face. Height sets the projection along the normal. |
+| Groove | Pick the mating face and set the loop, side, width and depth. Clearance adds space on both sides and at the bottom. A clearance of 0.2 mm adds 0.4 mm to the groove width. |
+
+For Jsonnet, import `faber.libsonnet`. Each helper returns a feature with an
+id. The second argument is the solid feature to change. This example adds a
+boss on a plane named `floor` to a tray named `shell`.
+
+```jsonnet
+faber.boss('post', 'shell', 'floor', [10, 8], 7, 6,
+           hole_diameter=3, hole_depth=5)
+```
+
+The other helpers are `rib`, `web`, `snap_hook`, `lip` and `groove`. Wall
+lines have the form `[[[x1, y1], [x2, y2]], ...]`. A loop is `'outer'`
+or `'inner'`. Its side is `'inside'` or `'outside'`. Select the feature
+in the history to edit or suppress it.
+
+Open [Snap box](../examples/snap-box/faber.json) for a 60 × 40 mm tray with
+two corner ribs, four bored bosses and a lip. Its lid has a matching groove
+and two hooks. Both parts lie flat beside each other for the print check.
+The hooks enter the two side windows when the lid is turned over. Use
+`feature_info` on a hook or `snap_check` with its dimensions to read the
+strain estimate. The constant-section beam estimate uses
+`1.5 × thickness × undercut / length²`. It does not model layer adhesion or
+stress at the root fillet.

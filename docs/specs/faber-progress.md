@@ -1467,3 +1467,19 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
 - All 779 workspace tests passed. Workspace Clippy passed with warnings denied.
   The release build and silent install passed. The installed CLI exported the
   example as one object with 44 triangles and its build transform in millimetres.
+
+## Fusion parity 04: Plastic features
+
+- A part history can store a rib, web, boss, snap hook, lip or groove.
+  Dimensions and the number of boss ribs can use parameter expressions.
+- The test tray has an open cavity of 36 × 36 × 18 mm. A 2 mm web adds
+  1296 mm³. The outer lip adds 312 mm³ and the inner lip adds 296 mm³.
+- The `examples/snap-box` project has a base with four screw bosses and a
+  lid with two hooks. The saved print placement fits in 130 × 40 × 21.2 mm.
+- On the curved shelf test, the web stops at the first surface. The measured
+  volume increase and the calculated increase are both 1176.73009 mm³.
+- The example has no thin wall or island at the test resolution. Four
+  overhangs give a support estimate of 193.2 mm³.
+- All 815 workspace tests passed. Workspace Clippy passed with warnings denied.
+  The release build and silent install passed. The installed CLI opened both
+  parts and reproduced the print and interference results.

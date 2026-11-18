@@ -20,6 +20,8 @@ pub struct Material {
     pub expansion_um_mk: f64,
     pub specific_heat_j_kgk: f64,
     pub layer_strength_factor: f64,
+    /// Estimated root strain limit for a short-term printed snap. See the material data guide.
+    pub snap_strain_limit: Option<f64>,
     pub colour: [u8; 3],
     pub roughness: f64,
     pub metallic: f64,
@@ -37,6 +39,7 @@ pub fn materials() -> &'static [Material] {
 const ROWS: &[Material] = &[
     Material {
         id: "abs",
+        snap_strain_limit: Some(0.5 * 19.0 / 1962.0),
         name: "ABS",
         class: Class::Polymer,
         density_g_cm3: 1.1,
@@ -55,6 +58,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "aluminium-6061-t6",
+        snap_strain_limit: None,
         name: "Aluminium 6061-T6",
         class: Class::Metal,
         density_g_cm3: 2.7,
@@ -73,6 +77,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "asa",
+        snap_strain_limit: Some(0.5 * 28.3 / 2140.0),
         name: "ASA",
         class: Class::Polymer,
         density_g_cm3: 1.08,
@@ -91,6 +96,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "brass-cw614n",
+        snap_strain_limit: None,
         name: "Brass CW614N",
         class: Class::Metal,
         density_g_cm3: 8.5,
@@ -109,6 +115,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "pa12",
+        snap_strain_limit: Some(0.5 * 32.0 * (38.5 / 46.0) / 1282.0),
         name: "Polyamide 12",
         class: Class::Polymer,
         density_g_cm3: 1.0,
@@ -127,6 +134,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "pc",
+        snap_strain_limit: Some(0.5 * 25.2 / 2394.0),
         name: "Polycarbonate",
         class: Class::Polymer,
         density_g_cm3: 1.19,
@@ -145,6 +153,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "petg",
+        snap_strain_limit: Some(0.5 * 19.0 / 1939.0),
         name: "PETG",
         class: Class::Polymer,
         density_g_cm3: 1.27,
@@ -163,6 +172,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "pla",
+        snap_strain_limit: Some(0.5 * 33.1 / 3250.0),
         name: "PLA",
         class: Class::Polymer,
         density_g_cm3: 1.24,
@@ -181,6 +191,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "stainless-304",
+        snap_strain_limit: None,
         name: "Stainless steel 304",
         class: Class::Metal,
         density_g_cm3: 7.9,
@@ -199,6 +210,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "steel-s235",
+        snap_strain_limit: None,
         name: "Steel S235JR",
         class: Class::Metal,
         density_g_cm3: 7.85,
@@ -217,6 +229,7 @@ const ROWS: &[Material] = &[
     },
     Material {
         id: "tpu-95a",
+        snap_strain_limit: None,
         name: "TPU 95A",
         class: Class::Polymer,
         density_g_cm3: 1.22,

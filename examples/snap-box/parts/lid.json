@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "name": "Snap lid",
+  "material": "petg",
+  "colour": [
+    223,
+    170,
+    95
+  ],
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "plate",
+        "geometry": {
+          "op": "box",
+          "size": [
+            "length",
+            "width",
+            "lid_thickness"
+          ]
+        }
+      },
+      {
+        "id": "rim_groove",
+        "geometry": {
+          "op": "groove",
+          "body": "plate",
+          "face": {
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "near_centre": [
+              "length/2",
+              "width/2",
+              "lid_thickness"
+            ],
+            "tolerance": 0.001,
+            "expect": 1
+          },
+          "loop": "outer",
+          "side": "inside",
+          "width": "lip_width",
+          "depth": "lip_height",
+          "clearance": "fit_clearance"
+        }
+      },
+      {
+        "id": "inside",
+        "geometry": {
+          "op": "plane",
+          "placement": {
+            "translation": [
+              0,
+              0,
+              "lid_thickness"
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "left_hook",
+        "geometry": {
+          "op": "snap_hook",
+          "body": "rim_groove",
+          "plane": "inside",
+          "at": [
+            "wall+1.5",
+            12
+          ],
+          "angle_deg": 180,
+          "length": 12,
+          "width": 4.5,
+          "thickness": 1.8,
+          "undercut": 1.2,
+          "hook_length": 3
+        }
+      },
+      {
+        "id": "right_hook",
+        "geometry": {
+          "op": "snap_hook",
+          "body": "left_hook",
+          "plane": "inside",
+          "at": [
+            "length-wall-1.5",
+            12
+          ],
+          "angle_deg": 0,
+          "length": 12,
+          "width": 4.5,
+          "thickness": 1.8,
+          "undercut": 1.2,
+          "hook_length": 3
+        }
+      }
+    ],
+    "output": "right_hook"
+  }
+}

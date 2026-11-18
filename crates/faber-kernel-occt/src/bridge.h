@@ -21,3 +21,8 @@ struct FaberEdgeLineData {
 extern "C" int faber_edge_lines(const void* shape, double tolerance, FaberEdgeLineData* result,
     char* error, std::size_t capacity) noexcept;
 extern "C" void faber_free_edge_lines(void* lines) noexcept;
+
+extern "C" int faber_linear_form(const void* body, const void* profile, const double* direction,
+    double thickness, double offset, void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_inset_face(const void* face, std::uint32_t loop, double distance,
+    void** result, char* error, std::size_t capacity) noexcept;

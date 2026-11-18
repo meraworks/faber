@@ -793,6 +793,26 @@ pub(crate) fn build(
         | Geometry::PlaceAtPoint {
             source: name,
             point: reference,
+        }
+        | Geometry::Rib {
+            body: name,
+            plane: reference,
+            ..
+        }
+        | Geometry::Web {
+            body: name,
+            plane: reference,
+            ..
+        }
+        | Geometry::Boss {
+            body: name,
+            plane: reference,
+            ..
+        }
+        | Geometry::SnapHook {
+            body: name,
+            plane: reference,
+            ..
         } = &feature.geometry
         {
             vec![
@@ -844,6 +864,9 @@ pub(crate) fn build(
                 | Geometry::Draft { source: name, .. }
                 | Geometry::Fillet { source: name, .. }
                 | Geometry::Chamfer { source: name, .. } => vec![source(name)?.clone()],
+                Geometry::Lip { body, .. } | Geometry::Groove { body, .. } => {
+                    vec![source(body)?.clone()]
+                }
                 Geometry::Union { left, right }
                 | Geometry::Difference { left, right }
                 | Geometry::Intersection { left, right } => {
@@ -930,6 +953,25 @@ pub(crate) fn build(
         }
         let build = || -> Result<Shape> {
             match &feature.geometry {
+                geometry @ (Geometry::Rib { body, plane, .. }
+                | Geometry::Web { body, plane, .. }
+                | Geometry::Boss { body, plane, .. }
+                | Geometry::SnapHook { body, plane, .. }) => {
+                    let Built::Plane(work) = previous(plane)? else {
+                        return Err(format!("Feature {plane} is not a reference plane"));
+                    };
+                    let body = source(body)?;
+                    match geometry {
+                        Geometry::Boss { .. } => crate::plastic::boss(kernel, body, work, geometry),
+                        Geometry::SnapHook { .. } => {
+                            crate::plastic::snap_hook(kernel, body, work, geometry)
+                        }
+                        _ => crate::plastic_walls::walls(kernel, body, work, geometry),
+                    }
+                }
+                geometry @ (Geometry::Lip { body, .. } | Geometry::Groove { body, .. }) => {
+                    crate::plastic_walls::rim(kernel, source(body)?, geometry)
+                }
                 Geometry::RevolveAround {
                     source: name,
                     axis,

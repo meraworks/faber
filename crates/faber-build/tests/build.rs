@@ -20,6 +20,52 @@ fn read_file(root: &Path, rel: &str) -> Vec<u8> {
 }
 
 #[test]
+fn plastic_helpers_preserve_the_recipe_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"
+local f = import 'faber.libsonnet';
+local l = [[[0,1],[3,4]]];
+local s = {normal:[0,0,1],tolerance:0.001,expect:1};
+{ parts: { box: f.part('Box', [
+    f.box('base',[10,10,2]),
+    f.rib('r','base','floor',l,'wall',side='left',draft_deg=1),
+    f.web('w','r','floor',l,2),
+    f.boss('b','w','floor',[4,4],8,6,hole_diameter=3,hole_depth=4,
+           draft_deg=2,ribs={count:'n+2',thickness:1,length:2,height:3},fillet=0.4),
+    f.snap_hook('h','b','floor',[4,4],90,15,5,2,1.5,3,tip_thickness=1,
+                lead_deg=40,return_deg=80,root_fillet=0.5),
+    f.lip('l','h',s,'inner','outside',1,2),
+    f.groove('g','l',s,'outer','inside',1,2,0.15)
+], 'g') } }"#,
+    );
+    let current = serde_json::from_value(serde_json::json!({
+        "schema":2,"revision":0,"name":"Test","params":{},"parts":{}
+    }))
+    .unwrap();
+    let data = faber_build::evaluate(dir.path(), &current).unwrap().data;
+    let Geometry::History { features, .. } = &data.parts["box"].geometry else {
+        panic!()
+    };
+    let recipes: Vec<_> = features
+        .iter()
+        .map(|f| serde_json::to_value(&f.geometry).unwrap())
+        .collect();
+    assert_eq!(recipes[1]["thickness"], "wall");
+    assert_eq!(recipes[1]["side"], "left");
+    assert_eq!(recipes[2]["op"], "web");
+    assert!(recipes[2].get("draft_deg").is_none());
+    assert_eq!(recipes[3]["ribs"]["count"], "n+2");
+    assert_eq!(recipes[3]["hole_depth"], 4.);
+    assert_eq!(recipes[4]["return_deg"], 80.);
+    assert_eq!(recipes[4]["root_fillet"], 0.5);
+    assert_eq!(recipes[5]["loop"], "inner");
+    assert_eq!(recipes[6]["clearance"], 0.15);
+}
+
+#[test]
 fn builds_parts_and_params() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

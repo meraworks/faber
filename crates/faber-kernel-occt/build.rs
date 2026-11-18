@@ -68,6 +68,7 @@ fn main() {
         "TKDE",
         "TKFillet",
         "TKOffset",
+        "TKHLR",
         "TKBin",
     ] {
         println!("cargo:rustc-link-lib=dylib={library}");

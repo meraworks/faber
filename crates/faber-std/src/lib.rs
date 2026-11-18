@@ -1,7 +1,9 @@
 //! Metric standard tables: thread pitch, clearance holes, tap drills and screw heads.
 //! Lengths are in millimetres.
 
+mod inserts;
 pub mod materials;
+pub use inserts::{InsertHole, insert_hole};
 pub mod printers;
 mod table;
 

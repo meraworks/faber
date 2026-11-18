@@ -31,6 +31,12 @@ printer profile. The viewer shows thin faces and can apply a chosen placement.
 MCP also checks cylindrical fits and tolerance stacks. A 3MF assembly keeps
 part colours and placements for the slicer. The support volume is an estimate.
 
+## Plastic features
+
+Part histories support ribs, webs, bosses, snap hooks, lips and grooves.
+The snap check estimates the strain from the deflection of a rectangular
+beam. The material limit, when supplied, applies to a short deflection.
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under

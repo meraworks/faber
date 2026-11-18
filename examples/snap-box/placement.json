@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "parts": {
+    "body": {
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    },
+    "lid": {
+      "translation": [
+        70,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

@@ -864,6 +864,15 @@ pub struct FeatureInfoArgs {
     feature: String,
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SnapCheckArgs {
+    length: f64,
+    thickness: f64,
+    undercut: f64,
+    material: Option<String>,
+}
+
 /// How part_info lists the features of a history.
 #[derive(Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -1754,6 +1763,9 @@ impl Faber {
         self.with(|p| {
             let info = p.feature_info(&args.part, &args.feature)?;
             let mut reply = json!({"schema":1,"part":args.part,"feature":args.feature,"kind":info.kind,"revision":p.data.revision});
+            if let Some(check) = info.hook_check {
+                reply["hook_check"]=json!(check);
+            }
             match info.reading {
                 Reading::Solid { volume_mm3, bounds_mm, faces, edges, suppressed, depends_on } => {
                     reply["volume_mm3"] = json!(volume_mm3);
@@ -1778,6 +1790,43 @@ impl Faber {
             }
             Ok(reply)
         })
+    }
+
+    #[tool(
+        description = "Estimate root strain of a snap hook from length, root thickness and undercut in mm. An optional material id supplies its strain limit."
+    )]
+    fn snap_check(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<SnapCheckArgs>>,
+    ) -> CallToolResult {
+        result((|| {
+            let limit = if let Some(id) = args.material {
+                let mut guard = self.project.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(open) = guard.as_mut() {
+                    faber_wiring::refresh(&open.path, &mut open.project)?;
+                }
+                let rows =
+                    faber_core::materials::catalogue(guard.as_ref().map(|open| &open.project.data));
+                rows.get(id.as_str())
+                    .ok_or_else(|| {
+                        schema_tool::unknown(
+                            "material",
+                            &id,
+                            &rows.keys().copied().collect::<Vec<_>>(),
+                            "Read the material list.",
+                        )
+                    })?
+                    .snap_strain_limit
+            } else {
+                None
+            };
+            Ok(json!(faber_wiring::checked_hook(
+                args.length,
+                args.thickness,
+                args.undercut,
+                limit
+            )?))
+        })())
     }
 
     #[tool(description = "Read shared parameter expressions and calculated values.")]

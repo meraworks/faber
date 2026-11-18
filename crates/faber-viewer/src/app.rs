@@ -188,6 +188,12 @@ pub(crate) enum ToolKind {
     Scale,
     Pipe,
     PathPattern,
+    Rib,
+    Web,
+    Boss,
+    SnapHook,
+    Lip,
+    Groove,
     Fillet,
     Chamfer,
     Offset,
@@ -214,7 +220,7 @@ fn reference_ids(
     }
 }
 
-fn is_plane(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
+pub(crate) fn is_plane(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
     use faber_model::Geometry;
     matches!(
         geometry,
@@ -1175,6 +1181,12 @@ impl Shell {
             ToolKind::Hole => "hole",
             ToolKind::Thread => "thread",
             ToolKind::Split => "split",
+            ToolKind::Rib => "rib",
+            ToolKind::Web => "web",
+            ToolKind::Boss => "boss",
+            ToolKind::SnapHook => "snap_hook",
+            ToolKind::Lip => "lip",
+            ToolKind::Groove => "groove",
             ToolKind::Scale => "scale",
             ToolKind::Pipe => "pipe",
             ToolKind::PathPattern => "path_pattern",
@@ -1431,7 +1443,15 @@ impl Shell {
             }
         } else if matches!(
             kind,
-            ToolKind::Scale | ToolKind::Pipe | ToolKind::PathPattern
+            ToolKind::Scale
+                | ToolKind::Pipe
+                | ToolKind::PathPattern
+                | ToolKind::Rib
+                | ToolKind::Web
+                | ToolKind::Boss
+                | ToolKind::SnapHook
+                | ToolKind::Lip
+                | ToolKind::Groove
         ) {
             feature_tools::new_geometry(&kind, source, &part.geometry)?
         } else if matches!(kind, ToolKind::Circular) {
@@ -2272,6 +2292,28 @@ impl Shell {
                     self.run_command(ui.ctx(), keys::Command::Feature(kind));
                 }
             }
+            ui.menu_button("Plastic features", |ui| {
+                for (label, kind) in [
+                    ("Rib", ToolKind::Rib),
+                    ("Web", ToolKind::Web),
+                    ("Boss", ToolKind::Boss),
+                    ("Snap hook", ToolKind::SnapHook),
+                    ("Lip", ToolKind::Lip),
+                    ("Groove", ToolKind::Groove),
+                ] {
+                    if ui
+                        .add_enabled(
+                            part_id.is_some() && self.pending.is_none(),
+                            egui::Button::new(label),
+                        )
+                        .on_disabled_hover_text("Select a part first.")
+                        .clicked()
+                    {
+                        self.run_command(ui.ctx(), keys::Command::Feature(kind));
+                        ui.close();
+                    }
+                }
+            });
             ui.menu_button("References", |ui| {
                 for (label, kind) in [
                     ("Reference plane", ToolKind::Plane),

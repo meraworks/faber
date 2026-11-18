@@ -9,6 +9,7 @@ use faber_ports::Result;
 pub struct FeatureInfo {
     pub kind: &'static str,
     pub reading: Reading,
+    pub hook_check: Option<crate::plastic::HookCheck>,
 }
 
 /// What a feature gives in part coordinates.
@@ -105,9 +106,33 @@ impl Project {
                 }
             }
         };
+        let hook_check = if let faber_model::Geometry::SnapHook {
+            length,
+            thickness,
+            undercut,
+            ..
+        } = &entry.geometry
+            && !entry.suppressed
+        {
+            let values = self.params()?;
+            let material = part
+                .material
+                .as_deref()
+                .map(|id| crate::materials::get(&self.data, id))
+                .transpose()?;
+            Some(crate::plastic::checked_hook(
+                crate::number(length, &values)?,
+                crate::number(thickness, &values)?,
+                crate::number(undercut, &values)?,
+                material.and_then(|m| m.snap_strain_limit),
+            )?)
+        } else {
+            None
+        };
         Ok(FeatureInfo {
             kind: history::operation_kind(&entry.geometry),
             reading,
+            hook_check,
         })
     }
 }

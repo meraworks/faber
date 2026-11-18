@@ -32,6 +32,41 @@ safety factor for TPU has no physical interpretation. Large strains require
 a nonlinear material model. The single layer factor for each printed material
 does not describe a full directional stiffness or failure law.
 
+## Snap hooks
+
+For ABS, ASA, PA12, PC, PETG and PLA, Faber estimates a short-term strain limit
+from the tensile specimens above. It divides the reference yield stress by the
+reference modulus, then multiplies by the measured layer strength factor
+and by 0.5. Faber uses 0.5 as a design allowance. The resulting strain is a
+fraction. For example, the PLA limit is 0.00509, or about 0.51%.
+
+These values are estimates for printed parts. The sources measure tensile
+specimens. They do not qualify the snap for a particular number of cycles.
+Set a project limit from tests with the actual material, print direction and
+joint. TPU and metal rows have no default snap limit. The calculation uses a
+straight, uniform rectangular beam with a small deflection at its end.
+Taper, stress concentration at the root and compliance of the wall can change
+the strain. As an example of the effect of repeated assembly on moulded
+parts, Covestro gives 4% for a single assembly of unreinforced Makrolon PC
+and about 2.4% for frequent assembly. [Covestro snap joint design guide, table 2](https://solutions.covestro.com/-/media/covestro/solution-center/brands/downloads/imported/1557218421.pdf?hash=22F446F128CE207636C795C45D855208&rev=9d9865c6a3f548359154e63ab8494a57)
+
+## Heat-set insert holes
+
+The insert table uses SPIROL Series 19 long brass inserts for straight holes
+in unfilled thermoplastic. Dimensions are in millimetres. The hole diameter
+comes from the catalogue. The blind depth is the insert length plus two
+thread pitches. The least boss diameter in the table uses twice the knurl
+diameter, the low end of the manufacturer's suggested range. Check the
+actual hole after printing. Other insert families and filled materials can
+need different dimensions. [SPIROL insert catalogue, page 8](https://my.spirol.com/assets/files/ins-threaded-inserts-design-guide-uk.pdf) and [SPIROL hole design guide](https://www.spirol.com/resources/white-papers/how-to-design-the-proper-hole-for-heat-ultrasonic-inserts/).
+
+| Designation | Hole diameter | Blind depth | Least boss diameter |
+| --- | ---: | ---: | ---: |
+| M2-insert | 3.20 | 4.79 | 7.26 |
+| M3-insert | 3.99 | 6.74 | 9.50 |
+| M4-insert | 5.61 | 9.55 | 12.76 |
+| M5-insert | 6.40 | 11.13 | 14.32 |
+
 ## Density, thermal properties and appearance
 
 The density represents solid material. Porosity, infill and moisture change

@@ -216,6 +216,24 @@ unsafe extern "C" {
     fn faber_occt_version() -> *const c_char;
     fn faber_limit_threads(count: i32, error: *mut c_char, capacity: usize) -> i32;
     fn faber_thread_count() -> i32;
+    fn faber_linear_form(
+        body: *const c_void,
+        profile: *const c_void,
+        direction: *const f64,
+        thickness: f64,
+        offset: f64,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
+    fn faber_inset_face(
+        face: *const c_void,
+        index: u32,
+        distance: f64,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
     fn faber_face_shape(
         input: *const c_void,
         index: u32,
@@ -843,6 +861,41 @@ impl Kernel for OcctKernel {
                 error,
                 len,
             )
+        })
+    }
+    fn linear_form(
+        &self,
+        body: &Shape,
+        profile: &Shape,
+        direction: [f64; 3],
+        thickness: f64,
+        offset: f64,
+    ) -> Result<Shape> {
+        positive(thickness)?;
+        if !(-1.0..=1.0).contains(&offset) || DVec3::from(direction).try_normalize().is_none() {
+            return Err("Invalid wall direction or side offset".into());
+        }
+        let (body, profile) = (pointer(body)?, pointer(profile)?);
+        shape_call(|out, error, len| unsafe {
+            faber_linear_form(
+                body,
+                profile,
+                direction.as_ptr(),
+                thickness,
+                offset,
+                out,
+                error,
+                len,
+            )
+        })
+    }
+    fn inset_face(&self, face: &Shape, index: u32, distance: f64) -> Result<Shape> {
+        if !distance.is_finite() || distance.abs() > 1e6 {
+            return Err("The loop offset exceeds the supported range".into());
+        }
+        let face = pointer(face)?;
+        shape_call(|out, error, len| unsafe {
+            faber_inset_face(face, index, distance, out, error, len)
         })
     }
     fn face_shape(&self, shape: &Shape, index: u32) -> Result<Shape> {
