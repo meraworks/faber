@@ -3,7 +3,7 @@
 Status: written 2026-11-18. Not started. Run it after the plan
 `docs/specs/2026-11-18-review-speed-modular-plan.md` is complete and pushed.
 
-This file is the index and the specification for sixteen plans. Each plan is one
+This file is the index and the specification for eighteen plans. Each plan is one
 chunk. Each chunk gives working, tested software on its own. Run one chunk at a
 time with `superpowers:subagent-driven-development`.
 
@@ -37,9 +37,12 @@ picture that a person can read, and a statement of its limits.
 | 14 | `14-machining.md` | 3-axis toolpaths, verification, G-code | 01, 05 |
 | 15 | `15-render-and-animation.md` | Studio render, path tracer, turntable, exploded view | 01 |
 | 16 | `16-subdivision-forms.md` | Subdivision cage modelling | 05 |
+| 17 | `17-viewer-usability.md` | Windows that close, Fusion keys, canvas selection, view cube, forms with units | none |
+| 18 | `18-direct-manipulation.md` | Face and edge picking, picks in feature tools, press-pull, marking menu | 01, 17 |
 
-Recommended order: 01, 02, 03, 04, 05, 06, 07, then the others in number
-order. Chunks with no common "Needs" entry can run one after the other in any
+Recommended order: 17, 01, 18, 02, 03, 04, 05, 06, 07, then the others in
+number order. Chunk 17 runs first: every later chunk adds panels to the same
+viewer code. Its evidence is `viewer-usability-audit.md`. Chunks with no common "Needs" entry can run one after the other in any
 order. Do not run two chunks at the same time: the PC cannot build twice.
 
 Fusion workspace to chunk: Simulation = 02 and 11. Generative Design = the
