@@ -279,3 +279,22 @@ fn changing_only_the_material_is_in_the_build_report() {
         Some("steel-s235")
     );
 }
+
+#[test]
+fn source_study_helpers_write_the_load_and_keep_it_when_studies_are_omitted() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let source_text = r#"local f=import 'faber.libsonnet';
+local face(n)={normal:n,tolerance:0.001,expect:1};
+{parts:{bar:f.part('Bar',[f.box('beam',[20,4,4])],'beam',material='pla')},
+ studies:{bend:f.study('bar',[f.fixed(face([-1,0,0]))],[f.force(face([1,0,0]),[0,0,-1])])}}"#;
+    write(root, "design.jsonnet", source_text);
+    let report = source().ensure_built(root).unwrap().unwrap();
+    assert!(report.written.iter().any(|p| p == "analysis.json"));
+    let saved = faber_files::read(root).unwrap().studies;
+    assert_eq!(saved["bend"].part, "bar");
+    let parts_only = source_text.split(",\n studies:").next().unwrap().to_owned() + "}";
+    write(root, "design.jsonnet", &parts_only);
+    source().ensure_built(root).unwrap().unwrap();
+    assert_eq!(faber_files::read(root).unwrap().studies, saved);
+}

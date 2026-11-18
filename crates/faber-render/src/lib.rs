@@ -5,13 +5,35 @@ use bytemuck::{Pod, Zeroable};
 use faber_ports::{Body, Mesh, Result};
 use faber_scene::{Camera, Section, section};
 use face_marks::FaceMarks;
-use glam::Vec3;
 use std::{collections::BTreeSet, path::Path};
 use wgpu::util::DeviceExt;
 
 static HEADLESS_GPU: std::sync::Mutex<Option<Gpu>> = std::sync::Mutex::new(None);
 
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+const STRESS_RAMP: [[u8; 3]; 4] = [[28, 65, 210], [31, 184, 108], [250, 209, 44], [202, 36, 33]];
+
+/// Return the sRGB legend colour for a stress in megapascals.
+pub fn stress_colour(value: f32, max: f32) -> [u8; 3] {
+    let t = if max > 0. {
+        (value / max).clamp(0., 1.) * 3.
+    } else {
+        0.
+    };
+    let i = (t as usize).min(2);
+    std::array::from_fn(|c| {
+        let a = f32::from(STRESS_RAMP[i][c]);
+        let b = f32::from(STRESS_RAMP[i + 1][c]);
+        (a + (b - a) * (t - i as f32)).round() as u8
+    })
+}
+
+#[derive(Clone, Copy)]
+enum VertexField<'a> {
+    Colour(&'a [[u8; 3]]),
+    Stress(&'a [f32]),
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -31,6 +53,7 @@ struct Uniform {
     selected: [u32; 4],
     hovered: [u32; 4],
     section_style: [f32; 4],
+    stress_ramp: [[f32; 4]; 4],
 }
 
 pub struct Gpu {
@@ -352,6 +375,63 @@ impl Gpu {
         selected: Option<&str>,
         paint: &std::collections::BTreeMap<String, Vec<[u8; 3]>>,
     ) -> Result<DrawList> {
+        self.upload_colours(bodies, hidden, plane, selected, paint, None)
+    }
+
+    /// One colour per vertex. The GPU interpolates the field over each triangle.
+    pub fn upload_vertex_painted(
+        &self,
+        bodies: &[Body],
+        part: &str,
+        colours: &[[u8; 3]],
+    ) -> Result<DrawList> {
+        self.upload_field(bodies, part, VertexField::Colour(colours))
+    }
+
+    /// Interpolate the stress ratio before looking up the colour at each pixel.
+    pub fn upload_stress(&self, bodies: &[Body], part: &str, ratios: &[f32]) -> Result<DrawList> {
+        self.upload_field(bodies, part, VertexField::Stress(ratios))
+    }
+
+    fn upload_field(
+        &self,
+        bodies: &[Body],
+        part: &str,
+        field: VertexField<'_>,
+    ) -> Result<DrawList> {
+        let body = bodies
+            .iter()
+            .find(|b| b.id == part)
+            .ok_or("Unknown field part.")?;
+        let n = body.mesh.vertices.len();
+        match field {
+            VertexField::Colour(rgb) if n != rgb.len() => {
+                return Err("Each mesh vertex needs one colour.".into());
+            }
+            VertexField::Stress(v) if n != v.len() || v.iter().any(|v| !(0. ..=1.).contains(v)) => {
+                return Err("Each mesh vertex needs a stress ratio between zero and one.".into());
+            }
+            _ => {}
+        }
+        self.upload_colours(
+            bodies,
+            &BTreeSet::new(),
+            None,
+            None,
+            &Default::default(),
+            Some((part, field)),
+        )
+    }
+
+    fn upload_colours(
+        &self,
+        bodies: &[Body],
+        hidden: &BTreeSet<String>,
+        plane: Option<Section>,
+        selected: Option<&str>,
+        paint: &std::collections::BTreeMap<String, Vec<[u8; 3]>>,
+        vertex_colours: Option<(&str, VertexField<'_>)>,
+    ) -> Result<DrawList> {
         let mut vertices = Vec::new();
         let mut face_ranges = Default::default();
         let mut ranges = std::collections::BTreeMap::new();
@@ -383,7 +463,10 @@ impl Gpu {
             } else {
                 FaceMarks::index(&mut face_ranges, &body.id, start, &body.face_of_triangle);
                 let paint = paint.get(&body.id).map(Vec::as_slice);
-                append_painted(&mut vertices, &body.mesh, colour, 0., paint);
+                let field = vertex_colours
+                    .filter(|(id, _)| *id == body.id)
+                    .map(|(_, v)| v);
+                append_painted(&mut vertices, &body.mesh, colour, 0., paint, field);
             }
             ranges.insert(body.id.clone(), [start, vertices.len() as u32]);
         }
@@ -544,6 +627,14 @@ impl Gpu {
             .cut_colour
             .map_or([-1.; 3], |rgb| rgb.map(|c| (c as f32 / 255.).powf(2.2)));
         let u = Uniform {
+            stress_ramp: STRESS_RAMP.map(|c| {
+                [
+                    f32::from(c[0]) / 255.,
+                    f32::from(c[1]) / 255.,
+                    f32::from(c[2]) / 255.,
+                    1.,
+                ]
+            }),
             section_style: [tint[0], tint[1], tint[2], if self.hatch { 1. } else { 0. }],
             matrix: camera
                 .matrix(target.width as f32 / target.height as f32)
@@ -658,7 +749,7 @@ impl Gpu {
 }
 
 fn append(vertices: &mut Vec<Vertex>, mesh: &Mesh, colour: [u8; 3], kind: f32) {
-    append_painted(vertices, mesh, colour, kind, None);
+    append_painted(vertices, mesh, colour, kind, None, None);
 }
 
 /// Adds a mesh. A paint list gives one colour per triangle in place of `colour`.
@@ -668,6 +759,7 @@ fn append_painted(
     colour: [u8; 3],
     kind: f32,
     paint: Option<&[[u8; 3]]>,
+    field: Option<VertexField<'_>>,
 ) {
     let tint = |c: [u8; 3]| c.map(|c| (c as f32 / 255.).powf(2.2));
     let colour = tint(colour);
@@ -708,13 +800,19 @@ fn append_painted(
         let colour = paint
             .and_then(|paint| paint.get(index))
             .map_or(colour, |c| tint(*c));
-        let points = t.map(|i| Vec3::from(mesh.vertices[i as usize].map(|v| v as f32)));
-        vertices.extend(points.into_iter().zip(normals).map(|(p, normal)| Vertex {
-            position: p.to_array(),
-            normal,
-            colour,
-            kind,
-        }));
+        for (&corner, normal) in t.iter().zip(normals) {
+            let (colour, kind) = match field {
+                Some(VertexField::Colour(rgb)) => (tint(rgb[corner as usize]), kind),
+                Some(VertexField::Stress(ratios)) => ([ratios[corner as usize], 0., 0.], -1.),
+                None => (colour, kind),
+            };
+            vertices.push(Vertex {
+                position: mesh.vertices[corner as usize].map(|x| x as f32),
+                normal,
+                colour,
+                kind,
+            });
+        }
     }
 }
 
@@ -747,6 +845,60 @@ pub fn save_view(
     )
 }
 
+/// Renders a field without a window.
+pub fn vertex_image(
+    body: &Body,
+    colours: &[[u8; 3]],
+    width: u32,
+    height: u32,
+    view: faber_scene::View,
+) -> Result<image::RgbaImage> {
+    field_image(body, VertexField::Colour(colours), width, height, view)
+}
+
+/// Render stress ratios with the same colour ramp as the viewer.
+pub fn stress_image(
+    body: &Body,
+    ratios: &[f32],
+    width: u32,
+    height: u32,
+    view: faber_scene::View,
+) -> Result<image::RgbaImage> {
+    field_image(body, VertexField::Stress(ratios), width, height, view)
+}
+
+fn field_image(
+    body: &Body,
+    field: VertexField<'_>,
+    width: u32,
+    height: u32,
+    view: faber_scene::View,
+) -> Result<image::RgbaImage> {
+    if !(64..=4096).contains(&width) || !(64..=4096).contains(&height) {
+        return Err("Image size must be between 64 and 4096 pixels".into());
+    }
+    with_headless(|gpu| {
+        let bodies = std::slice::from_ref(body);
+        let target = gpu.target(width, height);
+        let list = gpu.upload_field(bodies, &body.id, field)?;
+        let mut camera = Camera::fit(bodies);
+        camera.set_view(view);
+        gpu.draw(&target, &list, camera);
+        image::RgbaImage::from_raw(width, height, gpu.read(&target)?)
+            .ok_or("Invalid image size.".into())
+    })
+}
+
+fn with_headless<T>(render: impl FnOnce(&Gpu) -> Result<T>) -> Result<T> {
+    let mut cached = HEADLESS_GPU
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if cached.is_none() {
+        *cached = Some(Gpu::headless()?);
+    }
+    render(cached.as_ref().ok_or("Renderer is not available")?)
+}
+
 /// Writes an image. A paint entry gives per-triangle sRGB colours for one body.
 pub fn save_painted(
     bodies: &[Body],
@@ -757,29 +909,24 @@ pub fn save_painted(
     height: u32,
     view: faber_scene::View,
 ) -> Result<()> {
-    let mut cached = HEADLESS_GPU
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if cached.is_none() {
-        *cached = Some(Gpu::headless()?);
-    }
-    let gpu = cached.as_ref().ok_or("Renderer is not available")?;
-    let target = gpu.target(width, height);
-    let list = gpu.upload_painted(bodies, &BTreeSet::new(), plane, None, paint)?;
-    let mut camera = Camera::fit(bodies);
-    camera.set_view(view);
-    gpu.draw(&target, &list, camera);
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    image::save_buffer(
-        path,
-        &gpu.read(&target)?,
-        target.width,
-        target.height,
-        image::ColorType::Rgba8,
-    )
-    .map_err(|e| e.to_string())
+    with_headless(|gpu| {
+        let target = gpu.target(width, height);
+        let list = gpu.upload_painted(bodies, &BTreeSet::new(), plane, None, paint)?;
+        let mut camera = Camera::fit(bodies);
+        camera.set_view(view);
+        gpu.draw(&target, &list, camera);
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        image::save_buffer(
+            path,
+            &gpu.read(&target)?,
+            target.width,
+            target.height,
+            image::ColorType::Rgba8,
+        )
+        .map_err(|e| e.to_string())
+    })
 }
 
 #[cfg(all(test, debug_assertions))]

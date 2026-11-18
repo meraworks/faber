@@ -1,0 +1,332 @@
+{
+  "schema": 1,
+  "name": "Shelf bracket",
+  "material": "pla",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "wall",
+        "geometry": {
+          "op": "box",
+          "size": [
+            8,
+            34,
+            68
+          ]
+        }
+      },
+      {
+        "id": "arm_outline",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "path",
+              "start": [
+                0,
+                0
+              ],
+              "segments": [
+                {
+                  "kind": "line",
+                  "end": [
+                    15,
+                    0
+                  ]
+                },
+                {
+                  "kind": "bezier",
+                  "control1": [
+                    24,
+                    0
+                  ],
+                  "control2": [
+                    23,
+                    12
+                  ],
+                  "end": [
+                    34,
+                    12
+                  ]
+                },
+                {
+                  "kind": "line",
+                  "end": [
+                    "reach",
+                    12
+                  ]
+                },
+                {
+                  "kind": "line",
+                  "end": [
+                    "reach",
+                    22
+                  ]
+                },
+                {
+                  "kind": "line",
+                  "end": [
+                    34,
+                    22
+                  ]
+                },
+                {
+                  "kind": "bezier",
+                  "control1": [
+                    23,
+                    22
+                  ],
+                  "control2": [
+                    24,
+                    34
+                  ],
+                  "end": [
+                    15,
+                    34
+                  ]
+                },
+                {
+                  "kind": "line",
+                  "end": [
+                    0,
+                    34
+                  ]
+                },
+                {
+                  "kind": "line",
+                  "end": [
+                    0,
+                    0
+                  ]
+                }
+              ]
+            }
+          },
+          "placement": {
+            "translation": [
+              0,
+              0,
+              60
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "shelf_arm",
+        "geometry": {
+          "op": "extrude_sketch",
+          "source": "arm_outline",
+          "vector": [
+            0,
+            0,
+            8
+          ]
+        }
+      },
+      {
+        "id": "bracket",
+        "geometry": {
+          "op": "union",
+          "left": "wall",
+          "right": "shelf_arm"
+        }
+      },
+      {
+        "id": "root_fillet",
+        "geometry": {
+          "op": "fillet",
+          "source": "bracket",
+          "edges": {
+            "near_centre": [
+              8,
+              17,
+              60
+            ],
+            "expect": 1,
+            "tolerance": 1e-05
+          },
+          "radius": 6
+        }
+      },
+      {
+        "id": "pad_blank",
+        "geometry": {
+          "op": "cylinder",
+          "radius": 10,
+          "height": 6
+        }
+      },
+      {
+        "id": "lower_pad",
+        "geometry": {
+          "op": "transform",
+          "source": "pad_blank",
+          "placement": {
+            "translation": [
+              0,
+              17,
+              15
+            ],
+            "rotation": [
+              0,
+              -90,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "lower_joint",
+        "geometry": {
+          "op": "union",
+          "left": "root_fillet",
+          "right": "lower_pad"
+        }
+      },
+      {
+        "id": "upper_pad",
+        "geometry": {
+          "op": "transform",
+          "source": "pad_blank",
+          "placement": {
+            "translation": [
+              0,
+              17,
+              45
+            ],
+            "rotation": [
+              0,
+              -90,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "upper_joint",
+        "geometry": {
+          "op": "union",
+          "left": "lower_joint",
+          "right": "upper_pad"
+        }
+      },
+      {
+        "id": "pad_fillets",
+        "geometry": {
+          "op": "fillet",
+          "source": "upper_joint",
+          "edges": {
+            "radius": 10,
+            "in_box": [
+              [
+                -0.01,
+                16.9,
+                14.9
+              ],
+              [
+                0.01,
+                17.1,
+                45.1
+              ]
+            ],
+            "expect": 2,
+            "tolerance": 0.0001
+          },
+          "radius": 4
+        }
+      },
+      {
+        "id": "lower_bore",
+        "geometry": {
+          "op": "hole",
+          "source": "pad_fillets",
+          "diameter": 5.5,
+          "depth": 14,
+          "placement": {
+            "translation": [
+              8,
+              17,
+              15
+            ],
+            "rotation": [
+              0,
+              -90,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "upper_bore",
+        "geometry": {
+          "op": "hole",
+          "source": "lower_bore",
+          "diameter": 5.5,
+          "depth": 14,
+          "placement": {
+            "translation": [
+              8,
+              17,
+              45
+            ],
+            "rotation": [
+              0,
+              -90,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "bearing_pad",
+        "geometry": {
+          "op": "box",
+          "size": [
+            12,
+            10,
+            2
+          ]
+        }
+      },
+      {
+        "id": "end_pad",
+        "geometry": {
+          "op": "transform",
+          "source": "bearing_pad",
+          "placement": {
+            "translation": [
+              "reach - 12",
+              12,
+              68
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "id": "assembly",
+        "geometry": {
+          "op": "union",
+          "left": "upper_bore",
+          "right": "end_pad"
+        }
+      }
+    ],
+    "output": "assembly"
+  },
+  "colour": [
+    128,
+    151,
+    160
+  ]
+}

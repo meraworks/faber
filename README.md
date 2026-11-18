@@ -24,6 +24,10 @@ Start **Faber** from the application menu after installation. Choose **New proje
 
 For an MCP client, use the installed `faber` executable as the command and `mcp` as its argument. The viewer reads saved changes from the same project folder. Lengths are in millimetres and Z is up.
 
+To try a stress study, open the PLA shelf bracket and run `shelf_load`. The result shows stress, displacement and the support reaction under a 100 N load. [Shelf bracket example](examples/shelf-bracket-study) · [Stress study guide](docs/modelling-guide.md#stress-study)
+
+![Stress in the tapered shelf bracket under a 100 N load. The peak is 23.92 MPa.](docs/images/shelf-stress.png)
+
 ### Build from source
 
 Windows builds need the pinned OCCT SDK. See
@@ -202,7 +206,7 @@ an open top. There are no robot parts or other mechanisms.
 - Left-drag: orbit. Right-drag or middle-drag: pan. Scroll: zoom.
 - Click a face or a tree row: select a body.
 - Tree checkbox: show or hide a body.
-- `F`: fit the model. `S`: enable or disable section analysis.
+- `F`: fit the model. `S`: search for a command. `Shift+S`: enable or disable section analysis.
 - Section controls: choose a plane, move it and reverse its direction.
 - Azimuth and Tilt rotate the section plane for oblique cuts.
 - Edit parameters: change expressions, then apply or cancel. The model builds

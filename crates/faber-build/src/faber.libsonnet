@@ -17,6 +17,15 @@
       geometry: { op: 'history', features: features, output: output },
     } + (if material == null then {} else { material: material }),
 
+  // A static study of one part. A face selector uses part coordinates.
+  study(part, fixtures, loads, material=null, resolution_mm=null)::
+    { part: part, fixtures: fixtures, loads: loads }
+    + (if material == null then {} else { material: material })
+    + (if resolution_mm == null then {} else { resolution_mm: resolution_mm }),
+
+  fixed(face):: { kind: 'fixed', face: face },
+  force(face, newtons):: { kind: 'force', face: face, newtons: newtons },
+
   // A feature with an id, an operation and its fields.
   feature(id, op, fields)::
     { id: id, geometry: { op: op } + fields },

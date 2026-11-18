@@ -208,6 +208,13 @@ fn check_box(bounds: &Option<[[f64; 3]; 2]>) -> Result<()> {
 
 /// Refuse a malformed face selector before any kernel query.
 fn check_face_selector(shape: &Shape, selector: &FaceSelector) -> Result<()> {
+    if selector.created_by.is_some() && shape.face_origins().is_none() {
+        return Err("Face history is not available for this source".into());
+    }
+    check_face_fields(selector)
+}
+
+pub(crate) fn check_face_fields(selector: &FaceSelector) -> Result<()> {
     if selector.expect == 0 || !selector.tolerance.is_finite() || selector.tolerance <= 0. {
         return Err("Face selector needs a positive tolerance and expected count".into());
     }
@@ -235,9 +242,6 @@ fn check_face_selector(shape: &Shape, selector: &FaceSelector) -> Result<()> {
         return Err("Cylinder radius must be positive".into());
     }
     check_box(&selector.in_box)?;
-    if selector.created_by.is_some() && shape.face_origins().is_none() {
-        return Err("Face history is not available for this source".into());
-    }
     Ok(())
 }
 

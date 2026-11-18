@@ -1312,6 +1312,7 @@ dependencies = [
  "faber-scene",
  "faber-std",
  "faber-wiring",
+ "image",
  "rmcp",
  "schemars",
  "serde",
@@ -1455,6 +1456,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "faber-sim"
+version = "0.1.0"
+dependencies = [
+ "faber-geometry",
+ "faber-ports",
+ "glam",
+ "rayon",
+]
+
+[[package]]
 name = "faber-std"
 version = "0.1.0"
 
@@ -1493,7 +1504,9 @@ dependencies = [
  "faber-ports",
  "faber-render",
  "faber-scene",
+ "faber-sim",
  "glam",
+ "image",
  "parry3d-f64",
  "serde",
  "serde_json",

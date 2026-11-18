@@ -81,3 +81,24 @@ fn painted_triangles_change_only_their_own_faces() {
         "{plain:?}"
     );
 }
+
+#[test]
+fn vertex_colours_interpolate_across_the_solid() {
+    let body = cube();
+    let paint: Vec<_> = body
+        .mesh
+        .vertices
+        .iter()
+        .map(|p| if p[0] == 0. { [0, 0, 255] } else { [255, 0, 0] })
+        .collect();
+    let img = faber_render::vertex_image(&body, &paint, SIZE, SIZE, View::Top).unwrap();
+    let mixed = img
+        .pixels()
+        .filter(|p| p[0] > 75 && p[2] > 75 && p[1] < 50)
+        .count();
+    assert!(
+        mixed > 70,
+        "Need an interpolated field, got {mixed} pixels."
+    );
+    assert!(faber_render::vertex_image(&body, &paint[..7], SIZE, SIZE, View::Top).is_err());
+}

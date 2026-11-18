@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
 glam.workspace = true
 serde.workspace = true
 faber-clash = { path = "../faber-clash" }
@@ -17,6 +18,7 @@ faber-files = { path = "../faber-files" }
 faber-geometry = { path = "../faber-geometry" }
 faber-kernel-occt = { path = "../faber-kernel-occt" }
 faber-render = { path = "../faber-render" }
+faber-sim = { path = "../faber-sim" }
 faber-scene = { path = "../faber-scene" }
 
 tempfile.workspace = true

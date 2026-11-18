@@ -64,6 +64,7 @@ struct Design {
     #[serde(default)]
     params: BTreeMap<String, String>,
     parts: BTreeMap<String, Value>,
+    studies: Option<BTreeMap<String, faber_model::study::Study<Scalar>>>,
 }
 
 /// The project that the source gives. Nothing is written yet.
@@ -134,7 +135,10 @@ pub fn evaluate(root: &Path, current: &ProjectData) -> Result<Candidate> {
         parts.insert(id, part);
     }
     let name = design.name.unwrap_or_else(|| current.name.clone());
-    let data = faber_core::regenerate(current, name, design.params, parts)?;
+    let mut data = faber_core::regenerate(current, name, design.params, parts)?;
+    if let Some(studies) = design.studies {
+        data.studies = studies;
+    }
     Ok(Candidate { data, inputs })
 }
 
@@ -250,6 +254,9 @@ fn written_files(before: &ProjectData, after: &ProjectData) -> Vec<String> {
     };
     if placements(before) != placements(after) {
         files.push("placement.json".into());
+    }
+    if before.studies != after.studies {
+        files.push("analysis.json".into());
     }
     if !files.is_empty() {
         files.push("faber.json".into());

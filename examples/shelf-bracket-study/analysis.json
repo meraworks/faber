@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "sections": {},
+  "studies": {
+    "shelf_load": {
+      "part": "bracket",
+      "fixtures": [
+        {
+          "kind": "fixed",
+          "face": {
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "near_centre": [
+              -6,
+              17,
+              15
+            ],
+            "expect": 1,
+            "tolerance": 0.01
+          }
+        },
+        {
+          "kind": "fixed",
+          "face": {
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "near_centre": [
+              -6,
+              17,
+              45
+            ],
+            "expect": 1,
+            "tolerance": 0.01
+          }
+        }
+      ],
+      "loads": [
+        {
+          "kind": "force",
+          "face": {
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "near_centre": [
+              "reach - 6",
+              17,
+              70
+            ],
+            "tolerance": 1e-05,
+            "expect": 1
+          },
+          "newtons": [
+            0,
+            0,
+            -100
+          ]
+        }
+      ],
+      "print_direction": [
+        0,
+        0,
+        1
+      ],
+      "note": "The two mounting pads meet a rigid wall at the M5 screws. The tapered arm carries 100 N on its 12 by 10 mm shelf contact pad. The study assumes a solid print."
+    }
+  }
+}

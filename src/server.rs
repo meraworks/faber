@@ -386,6 +386,57 @@ pub struct SetContact {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct SetStudy {
+    id: String,
+    /// Read the study fields with schema, kind study.
+    #[schemars(with = "BTreeMap<String, serde_json::Value>")]
+    study: faber_model::study::Study<Scalar>,
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveStudy {
+    id: String,
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StudyImage {
+    path: String,
+    width: Option<u32>,
+    height: Option<u32>,
+    deform_scale: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunStudy {
+    id: String,
+    resolution_mm: Option<f64>,
+    render: Option<StudyImage>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FaceForce {
+    face: faber_model::FaceSelector<Scalar>,
+    newtons: [Scalar; 3],
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuickStress {
+    part: String,
+    fixed: faber_model::FaceSelector<Scalar>,
+    force: FaceForce,
+    material: Option<String>,
+    resolution_mm: Option<f64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetSection {
     /// Section id. Up to 100 letters, digits, `_` or `-`.
     id: String,
@@ -1125,6 +1176,84 @@ impl Faber {
                 .find(|b| b.id == args.id)
                 .ok_or("Part has no solid.")?;
             Ok(json!({"id":args.id,"revision":p.data.revision,"volume_mm3":body.volume}))
+        })
+    }
+
+    #[tool(
+        description = "Store a static stress study for one part. Fixtures and loads refer to faces."
+    )]
+    fn set_study(&self, Parameters(Checked(a)): Parameters<Checked<SetStudy>>) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, a.expected_revision)?;
+            p.set_study(a.id.clone(), a.study)?;
+            Ok(json!({"id":a.id,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(description = "Remove one saved stress study.")]
+    fn remove_study(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<RemoveStudy>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, a.expected_revision)?;
+            p.remove_study(&a.id)?;
+            Ok(json!({"id":a.id,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(
+        description = "Solve a saved stress study. Set render.path for a stress map with a legend in MPa."
+    )]
+    fn run_study(&self, Parameters(Checked(a)): Parameters<Checked<RunStudy>>) -> CallToolResult {
+        self.with(|p| {
+            let (report, field) = faber_wiring::study::run_stress(p, &a.id, a.resolution_mm)?;
+            if let Some(r) = a.render {
+                let b = p
+                    .bodies
+                    .iter()
+                    .find(|b| b.id == report.part)
+                    .ok_or("Study part is missing.")?;
+                faber_wiring::study_image::save(
+                    b,
+                    &report,
+                    &field,
+                    std::path::Path::new(&r.path),
+                    r.width.unwrap_or(800),
+                    r.height.unwrap_or(600),
+                    r.deform_scale.unwrap_or(0.),
+                )?;
+            }
+            Ok(json!(report))
+        })
+    }
+
+    #[tool(
+        description = "Estimate stress on one part with a fixed face and a force in newtons. The study is temporary."
+    )]
+    fn quick_stress(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<QuickStress>>,
+    ) -> CallToolResult {
+        use faber_model::study::{Fixture, FixtureKind, Study, StudyLoad};
+        self.with(|p| {
+            let study = Study {
+                part: a.part,
+                fixtures: vec![Fixture {
+                    face: a.fixed,
+                    kind: FixtureKind::Fixed,
+                }],
+                loads: vec![StudyLoad::Force {
+                    face: a.force.face,
+                    newtons: a.force.newtons,
+                }],
+                material: a.material,
+                resolution_mm: None,
+                print_direction: None,
+                note: String::new(),
+            };
+            let (report, _) = faber_wiring::study::quick_stress(p, &study, a.resolution_mm)?;
+            Ok(json!(report))
         })
     }
 

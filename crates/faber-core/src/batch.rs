@@ -342,6 +342,18 @@ impl Project {
     pub fn batch_strict(&mut self, operations: Vec<Edit>) -> Result<()> {
         self.batch_operations(to_operations(operations), true)
     }
+    pub fn set_study(
+        &mut self,
+        id: String,
+        study: faber_model::study::Study<Scalar>,
+    ) -> Result<()> {
+        self.batch(vec![Edit::SetStudy { id, study }])
+    }
+
+    pub fn remove_study(&mut self, id: &str) -> Result<()> {
+        self.batch(vec![Edit::RemoveStudy { id: id.to_owned() }])
+    }
+
     pub fn batch_operations(&mut self, operations: Vec<Operation>, strict: bool) -> Result<()> {
         self.sync()?;
         self.refuse_generated_operations(&operations)?;

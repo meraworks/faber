@@ -1434,3 +1434,21 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   change gives 6000 mm³.
 - All 696 workspace tests passed. Workspace Clippy passed with warnings denied.
 - The release build and silent install passed. The installed CLI read the practice block.
+
+## Fusion parity 02: Static stress
+
+- A study saves face fixtures, loads and an optional material. The viewer can
+  run a study, show its stress field and stop the solve. MCP can run a saved
+  study or a temporary study and export the result with a legend.
+- The solver checks for loose bodies, free motion and convergence. The axial,
+  bending, rotation, hole and gravity cases passed. With four threads, the
+  release tests took 0.009 s for axial load, 0.137 s for bending, 0.059 s for
+  rotation, 5.381 s for the hole and 0.013 s for gravity.
+- The separate model commit passed 697 workspace tests.
+- The tapered shelf bracket under 100 N gave 23.92 MPa at a cell size of
+  1.045 mm and 25.41 MPa at 0.523 mm. The difference was 5.89 % of the fine
+  result. The default solve took 3.10 s. The guide also records the larger
+  change for a sharp bracket with fixed screw bores.
+- All 737 workspace tests passed. Workspace Clippy passed with warnings denied.
+  The release build and silent install passed. The installed CLI opened the
+  bracket and its MCP server exported the stress map at the default resolution.

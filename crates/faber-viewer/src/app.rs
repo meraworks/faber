@@ -34,6 +34,7 @@ mod press_pull_tests;
 mod selection;
 #[cfg(test)]
 mod selection_tests;
+mod study;
 #[cfg(test)]
 mod suppress_tests;
 mod view_cube;
@@ -233,6 +234,7 @@ fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
 }
 
 pub struct Shell {
+    study: study::StudyPanel,
     window: WindowState,
     search: command_search::CommandSearch,
     marking: marking_menu::MarkingMenu,
@@ -370,6 +372,7 @@ impl Shell {
         let modified = faber_wiring::project_fingerprint(&root).ok();
         Self {
             project_loaded: true,
+            study: Default::default(),
             recent_file: None,
             dialog: None,
             new_parameter: Default::default(),
@@ -2406,6 +2409,9 @@ impl Shell {
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
+        if self.study_panel(ui) {
+            return;
+        }
         self.pick_inspector(ui);
         self.motion_controls(ui);
         ui.add_space(12.);
@@ -3023,10 +3029,16 @@ impl Shell {
             self.target = Some(target);
             self.dirty = true;
         }
+        let study_paint = self.study.paint.as_ref().filter(|_| self.press.is_none());
+        if study_paint.is_some() {
+            self.gpu.hovered = None;
+        }
         let display_bodies = self
             .press
             .as_ref()
             .and_then(|tool| tool.preview.as_ref())
+            .map(|b| b.as_slice())
+            .or_else(|| study_paint.map(|p| p.bodies.as_slice()))
             .unwrap_or(&self.bodies);
         if self.list.is_none() {
             self.cut_indices = std::sync::Arc::new(
@@ -3035,11 +3047,14 @@ impl Shell {
                     .map(|b| faber_scene::SectionIndex::new(&b.mesh))
                     .collect(),
             );
-            let paint = self.overhang.paint(display_bodies);
-            match self
-                .gpu
-                .upload_painted(display_bodies, &BTreeSet::new(), None, None, &paint)
-            {
+            let uploaded = if let Some(p) = study_paint {
+                self.gpu.upload_stress(display_bodies, &p.part, &p.ratios)
+            } else {
+                let paint = self.overhang.paint(display_bodies);
+                self.gpu
+                    .upload_painted(display_bodies, &BTreeSet::new(), None, None, &paint)
+            };
+            match uploaded {
                 Ok(list) => self.list = Some(list),
                 Err(e) => self.error = Some(e),
             }
@@ -3073,8 +3088,14 @@ impl Shell {
         {
             list.mark_faces(
                 &self.gpu.queue,
-                self.picks.iter().filter_map(Pick::face_key),
-                self.hover_pick.as_ref().and_then(Pick::face_key),
+                self.picks
+                    .iter()
+                    .filter(|_| study_paint.is_none())
+                    .filter_map(Pick::face_key),
+                self.hover_pick
+                    .as_ref()
+                    .filter(|_| study_paint.is_none())
+                    .and_then(Pick::face_key),
             );
         }
         if self.dirty
@@ -3085,10 +3106,13 @@ impl Shell {
                 target,
                 list,
                 self.camera,
-                self.selected.as_deref().filter(|_| {
-                    self.select_filter == SelectFilter::Body
-                        || matches!(self.picks.last(), Some(Pick::Body(_)))
-                }),
+                self.selected
+                    .as_deref()
+                    .filter(|_| study_paint.is_none())
+                    .filter(|_| {
+                        self.select_filter == SelectFilter::Body
+                            || matches!(self.picks.last(), Some(Pick::Body(_)))
+                    }),
                 self.cap_plane,
                 self.caps.as_ref(),
                 &self.move_poses(),
@@ -3105,7 +3129,10 @@ impl Shell {
                 Color32::WHITE,
             );
         }
-        self.draw_pick_edges(ui, rect);
+        if study_paint.is_none() {
+            self.draw_pick_edges(ui, rect);
+        }
+        self.study_markers(ui, rect);
         self.view_cube(ui, rect);
         let painter = ui.painter();
         if let Some((centre, tip, grips, _, arcs, corners)) = handle {
@@ -3214,6 +3241,7 @@ impl eframe::App for Shell {
         let ctx = ui.ctx().clone();
         self.poll_dialog(&ctx);
         self.poll(&ctx);
+        self.poll_study(&ctx);
         self.poll_press();
         self.shortcut(&ctx);
         if !self.project_loaded {

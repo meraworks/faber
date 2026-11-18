@@ -18,6 +18,7 @@ pub enum Kind {
     SketchLoop,
     Selector,
     Section,
+    Study,
     Edit,
 }
 
@@ -30,6 +31,7 @@ impl Kind {
             Kind::SketchLoop => "sketch_loop",
             Kind::Selector => "selector",
             Kind::Section => "section",
+            Kind::Study => "study",
             Kind::Edit => "edit",
         }
     }
@@ -69,6 +71,7 @@ fn definition(kind: Kind) -> Value {
             "face": schema_json::<FaceSelector<Scalar>>(),
         }),
         Kind::Section => schema_json::<SectionAnalysis<Scalar>>(),
+        Kind::Study => schema_json::<faber_model::study::Study<Scalar>>(),
         Kind::Edit => edit_schema(),
     }
 }

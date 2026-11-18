@@ -17,6 +17,13 @@ Chunk 01 adds material assignment and a mass read with the effective density.
 Triangle indices link a placed mesh to its solid faces. The ray queries and
 vector writers supply geometry for picking, drawings and analysis.
 
+## Static stress
+
+The viewer and MCP can solve a linear elastic study on one part. The result
+gives displacement, von Mises stress, fixture reactions and a safety factor.
+The cell size controls the approximation at curved surfaces. Contact between
+parts, large displacement and plastic deformation are outside this study.
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under

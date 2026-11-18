@@ -24,6 +24,7 @@ mod read_cache;
 mod scale;
 mod section;
 mod select;
+pub mod study;
 mod thread;
 
 pub use batch::{Operation, PartInfo, PartInfoOperation};
@@ -358,7 +359,7 @@ impl Project {
     }
 
     /// Runs a read once for each revision. The result is kept in the read cache.
-    fn cached<T: Clone + Send + 'static>(
+    pub fn cached<T: Clone + Send + 'static>(
         &self,
         tool: &'static str,
         key: &str,
@@ -734,15 +735,22 @@ fn validate_data(data: &ProjectData) -> Result<()> {
         return Err("Project name is empty".into());
     }
     materials::validate(data)?;
-    for (id, study) in &data.studies {
-        if !valid_id(id) {
-            return Err(format!("Invalid study id: {id}"));
-        }
-        if !data.parts.contains_key(&study.part) {
-            return Err(format!(
-                "Study {id} refers to an unknown part: {}",
-                study.part
-            ));
+    if !data.studies.is_empty() {
+        let values = faber_expr::resolve(&data.params)?;
+        for (id, study) in &data.studies {
+            if !valid_id(id) {
+                return Err(format!("Invalid study id: {id}"));
+            }
+            study::resolve_study(study, &values)?;
+            if let Some(material) = &study.material {
+                materials::get(data, material)?;
+            }
+            if !data.parts.contains_key(&study.part) {
+                return Err(format!(
+                    "Study {id} refers to an unknown part: {}",
+                    study.part
+                ));
+            }
         }
     }
     if data.parts.len() > 2000 {

@@ -896,3 +896,58 @@ the last operation. Use the middle button to pan.
 For MCP, use `topology` to find a planar face and `press_pull` to move it.
 Supply the revision at which you read the face index and a signed distance
 in millimetres. The reply gives the new revision and part volume.
+
+
+## Stress study
+
+Open `examples/shelf-bracket-study` and select the bracket. Open the stress
+study panel and choose `shelf_load`. Two M5 screws pass through the
+20 mm mounting pads on the back of the flange. The annular end faces of both
+pads are fixed. The arm tapers from 34 mm to 10 mm. Its 12 by 10 mm bearing
+face carries 100 N downwards at the end of the shelf. Run the study to see stress in
+MPa, displacement in mm, the safety factor and the support reaction in N.
+The deformed shape has a display scale. It does not change the recipe.
+
+The colour scale shows von Mises stress. Use the five marked points to inspect
+the regions with the highest calculated values. A fixed fixture holds all
+three translations. A slide fixture holds motion normal to a planar face.
+A force is the total across its selected faces in N. Positive pressure acts
+inward and uses MPa. The safety factor divides the material yield stress by
+the largest calculated stress. For a printed polymer,
+give a print direction to also check the normal stress across the layers.
+
+From MCP, use `quick_stress` for one fixed face and one force. To save several
+fixtures or loads, use `schema` with kind `study`, then `set_study`. Use
+`run_study` to solve it. Set `render.path` to save a colour map. A selector
+uses part coordinates. Forces, gravity and print directions use world axes.
+
+This linear elastic model assumes small displacement. It studies one solid
+and uses the specified bulk material. It omits screw contact, preload, infill,
+creep and failure after yield. The model approximates curved surfaces with
+partly filled cells. A local stress at a sharp corner can change with cell
+size. Compare results at two resolutions before you use the peak value.
+
+The saved example gave these results in a release build with four solver threads.
+Time includes the mesh, solve and report, and depends on the computer.
+
+| Cell size (mm) | Active cells | Iterations | Time (s) | Peak stress (MPa) | Safety factor |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1.0454 | 29,901 | 1,553 | 3.099 | 23.92 | 2.20 |
+| 0.5227 | 220,922 | 2,973 | 54.759 | 25.41 | 2.07 |
+
+The peak stress changed by 5.89 % relative to the fine result. The display
+samples the stress field across each face. Additional display triangles keep
+the original surface and face indices. The display has a limit of 150,000
+triangles for this subdivision. Peak values in the report use all active cells.
+
+The first bracket had a sharp shelf junction and two fully fixed bore walls.
+Its peak near the upper screw increased from 17.12 MPa to 23.86 MPa when the
+cell size decreased from 0.651 mm to 0.326 mm. The difference was 28.24 %
+relative to the fine result. A fixed bore wall represents a bonded joint.
+The example uses separate mounting pads, blends at the flange and a tapered
+shelf arm. Both grids locate its peak in the bend of the arm, about 32 mm
+from the rear face of the flange.
+
+A design source can set the `studies` map with `f.study`, `f.fixed` and
+`f.force` from `faber.libsonnet`. An explicit map replaces the saved studies.
+Omit the field to keep studies that you made in the project.

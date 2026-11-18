@@ -338,3 +338,75 @@ fn press_pull_uses_the_picked_face_and_checks_the_revision() {
             .contains("revision")
     );
 }
+
+#[test]
+fn quick_stress_replies_small_and_run_study_writes_the_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::start();
+    open_project(&mut session, dir.path());
+    session.ok("put_part",json!({"id":"bar","part":{"name":"Bar","material":"aluminium-6061-t6","colour":[50,100,150],"geometry":{"op":"box","size":[20,4,4]}}}));
+    let fixed = json!({"normal":[-1,0,0],"expect":1,"tolerance":0.0001});
+    let end = json!({"normal":[1,0,0],"expect":1,"tolerance":0.0001});
+    let load = json!({"face":end,"newtons":[0,0,-1]});
+    let result = session.ok(
+        "quick_stress",
+        json!({"part":"bar","fixed":fixed,"force":load,"resolution_mm":1}),
+    );
+    assert!(result.to_string().len() < 2000);
+    assert!(!result["limits"].as_array().unwrap().is_empty());
+    assert!((result["reaction_n"][2].as_f64().unwrap() - 1.).abs() < 0.01);
+    let study = json!({"part":"bar","fixtures":[{"kind":"fixed","face":fixed}],"loads":[{"kind":"force","face":end,"newtons":[0,0,-1]}],"resolution_mm":1});
+    assert!(
+        session
+            .refused(
+                "set_study",
+                json!({"id":"bend","study":study,"expected_revision":0})
+            )
+            .contains("revision")
+    );
+    let mut bad = study.clone();
+    bad["resolution_mm"] = json!(-1);
+    assert!(
+        session
+            .refused(
+                "set_study",
+                json!({"id":"bend","study":bad,"expected_revision":1})
+            )
+            .contains("resolution")
+    );
+    assert!(!dir.path().join("analysis.json").exists());
+    session.ok(
+        "set_study",
+        json!({"id":"bend","study":study,"expected_revision":1}),
+    );
+    let manifest = dir.path().join("faber.json");
+    let bytes = std::fs::read(&manifest).unwrap();
+    assert!(
+        session
+            .refused("run_study", json!({"id":"bend","render":{"path":manifest}}))
+            .contains("PNG")
+    );
+    assert_eq!(std::fs::read(&manifest).unwrap(), bytes);
+    let path = dir.path().join("field.png");
+    let saved = session.ok(
+        "run_study",
+        json!({"id":"bend","render":{"path":path,"width":360,"height":240,"deform_scale":3}}),
+    );
+    assert_eq!(result["max_von_mises_mpa"], saved["max_von_mises_mpa"]);
+    let image = image::open(path).unwrap().into_rgb8();
+    assert_eq!(image.dimensions(), (360, 240));
+    let (mut red, mut blue) = (0, 0);
+    for p in image.pixels() {
+        if p[0] > 130 && p[0] / 2 > p[2] {
+            red += 1;
+        }
+        if p[2] > 130 && p[2] / 2 > p[0] {
+            blue += 1;
+        }
+    }
+    assert!(
+        red >= 20 && blue >= 20,
+        "Need red and blue on the stress map: {red}, {blue}."
+    );
+    session.ok("remove_study", json!({"id":"bend","expected_revision":2}));
+}
