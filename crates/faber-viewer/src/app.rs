@@ -1,10 +1,26 @@
+mod windows;
+use windows::{Draft, ToolWindow, WindowEvent, WindowState, tool_window};
 mod assembly;
+#[cfg(test)]
+mod camera_tests;
+mod command_search;
+#[cfg(test)]
+mod controls_fixture;
+mod dialogs;
 mod feature_tools;
+#[cfg(test)]
+mod forms_tests;
+mod keys;
+#[cfg(test)]
+mod keys_tests;
 mod motion_relations;
 mod move_tool;
 mod selection;
 #[cfg(test)]
+mod selection_tests;
+#[cfg(test)]
 mod suppress_tests;
+mod view_cube;
 use crate::mark;
 use eframe::{egui, egui_wgpu};
 use egui::{Color32, RichText, Sense, Vec2};
@@ -123,6 +139,7 @@ fn zero_fields() -> [String; 3] {
     std::array::from_fn(|_| "0".to_owned())
 }
 
+#[cfg(not(test))]
 fn is_archive_path(path: &std::path::Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("f3d"))
@@ -134,7 +151,8 @@ struct ProjectDraft {
     name: String,
 }
 
-enum ToolKind {
+#[derive(Clone, Copy)]
+pub(crate) enum ToolKind {
     Plane,
     FacePlane,
     Axis,
@@ -199,8 +217,14 @@ fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
 }
 
 pub struct Shell {
+    window: WindowState,
+    search: command_search::CommandSearch,
+    deleting: Option<String>,
+    delete_notice: Option<(String, Instant)>,
     project_loaded: bool,
     recent_file: Option<PathBuf>,
+    dialog: Option<dialogs::PendingDialog>,
+    new_parameter: [String; 2],
     recent: Vec<(String, PathBuf)>,
     motion: assembly::Controls,
     root: PathBuf,
@@ -215,6 +239,9 @@ pub struct Shell {
     extra_selected: BTreeSet<String>,
     // Press point of a rectangle selection on empty space.
     box_drag: Option<egui::Pos2>,
+    hover_pos: Option<egui::Pos2>,
+    reveal_features: bool,
+    copied_placement: Option<(String, faber_model::Placement<faber_model::Scalar>)>,
     pub section_selected: Option<String>,
     section_pending: Option<mpsc::Receiver<(String, Result<Section, String>)>>,
     pub hidden: BTreeSet<String>,
@@ -316,6 +343,8 @@ impl Shell {
         Self {
             project_loaded: true,
             recent_file: None,
+            dialog: None,
+            new_parameter: Default::default(),
             recent: Vec::new(),
             motion: Default::default(),
             root,
@@ -332,6 +361,9 @@ impl Shell {
             selected: None,
             extra_selected: BTreeSet::new(),
             box_drag: None,
+            hover_pos: None,
+            reveal_features: false,
+            copied_placement: None,
             section_selected: None,
             section_pending: None,
             hidden: BTreeSet::new(),
@@ -374,34 +406,45 @@ impl Shell {
             export_force: false,
             export_pending: None,
             export_message: None,
+            window: Default::default(),
+            search: Default::default(),
+            deleting: None,
+            delete_notice: None,
         }
     }
 
     fn fit(&mut self) {
-        self.camera = Camera::fit(&self.bodies);
+        let fitted = Camera::fit(&self.bodies);
+        self.camera.target = fitted.target;
+        self.camera.distance = fitted.distance;
         self.dirty = true;
     }
 
     fn view_controls(&mut self, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.selectable_label(self.section_on, "Section").clicked() {
-                self.section_on = !self.section_on;
-                self.mesh_dirty = true;
+            if ui
+                .selectable_label(self.section_on, "Section")
+                .on_hover_text("Section analysis (Shift+S)")
+                .clicked()
+            {
+                self.run_command(ui.ctx(), keys::Command::ToggleSection);
             }
             ui.add_space(10.);
-            if ui.button("Fit").clicked() {
-                self.fit();
+            if ui.button("Fit").on_hover_text("Fit view (F)").clicked() {
+                self.run_command(ui.ctx(), keys::Command::Fit);
             }
-            if ui.button("Top").clicked() {
-                self.camera.set_view(faber_scene::View::Top);
-                self.dirty = true;
+            if ui.button("Top").on_hover_text("Top view").clicked() {
+                self.run_command(ui.ctx(), keys::Command::Top);
             }
-            if ui.button("Front").clicked() {
-                self.camera.set_view(faber_scene::View::Front);
-                self.dirty = true;
+            if ui.button("Front").on_hover_text("Front view").clicked() {
+                self.run_command(ui.ctx(), keys::Command::Front);
             }
-            if ui.button("Iso").clicked() {
-                self.fit();
+            if ui
+                .button("Iso")
+                .on_hover_text("Fit the isometric view")
+                .clicked()
+            {
+                self.run_command(ui.ctx(), keys::Command::Iso);
             }
         });
     }
@@ -412,64 +455,59 @@ impl Shell {
         };
         if !draft.create {
             self.project_draft = None;
-            #[cfg(not(test))]
-            let choice = {
-                let mut dialog = rfd::FileDialog::new()
-                    .set_parent(frame)
-                    .set_title("Open faber.json or a Fusion archive")
-                    .add_filter("Faber projects and Fusion archives", &["json", "f3d"]);
-                if self.root.is_dir() {
-                    dialog = dialog.set_directory(&self.root);
+            self.window.cancel();
+            if self.dialog.is_none() {
+                #[cfg(not(test))]
+                {
+                    self.dialog = Some(dialogs::open(frame, &self.root));
                 }
-                dialog.pick_file()
-            };
-            #[cfg(test)]
-            let choice = self.picked_file.take();
-            let Some(path) = choice else {
-                return;
-            };
-            if is_archive_path(&path) {
-                let name = format!(
-                    "{}-Faber",
-                    path.file_stem().unwrap_or_default().to_string_lossy()
-                );
-                let Some(destination) = rfd::FileDialog::new()
-                    .set_parent(frame)
-                    .set_title("Choose a new folder name for the imported project")
-                    .set_directory(path.parent().unwrap_or(&path))
-                    .set_file_name(name)
-                    .save_file()
-                else {
-                    return;
-                };
-                self.start_project_load(ctx, path, destination, None, true);
-            } else if path
-                .file_name()
-                .is_some_and(|name| name.eq_ignore_ascii_case("faber.json"))
-            {
-                if let Some(root) = path.parent() {
-                    self.start_project_load(ctx, root.to_owned(), root.to_owned(), None, false);
+                #[cfg(test)]
+                {
+                    let path = self.picked_file.take();
+                    self.dialog = Some(dialogs::PendingDialog::new(async move {
+                        dialogs::project_choice(path)
+                    }));
                 }
-            } else {
-                self.error = Some("Select faber.json in the project folder.".into());
+                ctx.request_repaint();
             }
             return;
         }
         let mut apply = false;
         let mut cancel = false;
-        egui::Window::new("Create project")
-            .default_width(460.)
-            .show(ctx, |ui| {
+        let (event, _) = tool_window(
+            ctx,
+            &mut self.window,
+            ToolWindow::CreateProject,
+            egui::Window::new("Create project").default_width(460.),
+            ctx.content_rect(),
+            |ui, _, can_apply| {
                 ui.add_enabled_ui(!self.saving, |ui| {
                     let label = ui.label("Project folder");
                     ui.horizontal(|ui| {
                         ui.text_edit_singleline(&mut draft.path)
                             .labelled_by(label.id);
-                        if ui.button("Browse").clicked()
-                            && let Some(folder) =
-                                rfd::FileDialog::new().set_parent(frame).pick_folder()
+                        if ui
+                            .add_enabled(self.dialog.is_none(), egui::Button::new("Browse"))
+                            .clicked()
                         {
-                            draft.path = folder.display().to_string();
+                            #[cfg(not(test))]
+                            {
+                                let picker = rfd::AsyncFileDialog::new().set_parent(frame);
+                                self.dialog = Some(dialogs::PendingDialog::new(async move {
+                                    dialogs::Choice::Folder(
+                                        picker.pick_folder().await.map(|f| f.path().to_owned()),
+                                    )
+                                }));
+                            }
+                            #[cfg(test)]
+                            {
+                                let _ = frame;
+                                let path = self.picked_file.take();
+                                self.dialog = Some(dialogs::PendingDialog::new(async move {
+                                    dialogs::Choice::Folder(path)
+                                }));
+                            }
+                            ctx.request_repaint();
                         }
                     });
                     let label = ui.label("Project name");
@@ -478,7 +516,9 @@ impl Shell {
                     ui.horizontal(|ui| {
                         apply = ui
                             .add_enabled(
-                                self.pending.is_none() && !draft.path.trim().is_empty(),
+                                can_apply
+                                    && self.pending.is_none()
+                                    && !draft.path.trim().is_empty(),
                                 egui::Button::new("Load project"),
                             )
                             .clicked();
@@ -488,21 +528,22 @@ impl Shell {
                 if self.saving {
                     ui.spinner();
                 }
-                if let Some(error) = &self.error {
-                    ui.colored_label(Color32::LIGHT_RED, error);
-                }
-            });
+            },
+        );
+        cancel |= event == WindowEvent::Cancel;
+        apply |=
+            event == WindowEvent::Apply && self.pending.is_none() && !draft.path.trim().is_empty();
         if apply {
             let path = PathBuf::from(draft.path.trim());
             if !path.is_absolute() {
-                self.error = Some("Use an absolute project folder path".into());
+                self.window.error = Some("Use an absolute project folder path".into());
             } else {
                 let name = Some(draft.name.trim().to_owned());
                 self.start_project_load(ctx, path.clone(), path, name, false);
             }
         }
         if cancel {
-            self.project_draft = None;
+            self.cancel_window();
         }
     }
 
@@ -519,6 +560,7 @@ impl Shell {
         self.pending = Some(rx);
         self.pending_project = Some(destination.clone());
         self.saving = true;
+        self.window.saving = self.window.open.is_some();
         self.error = None;
         std::thread::spawn(move || {
             let loaded = if archive {
@@ -539,35 +581,67 @@ impl Shell {
         let mut apply = false;
         let mut cancel = false;
         let group = !draft.others.is_empty();
-        egui::Window::new("Move / rotate part").default_width(380.).show(ctx, |ui| {
-            if group {
-                ui.heading(format!("{} parts", draft.others.len() + 1));
-                ui.label("Relative move. Each value adds to every selected part, in mm and degrees.");
-                ui.label("The turn is about the common centre of the parts.");
-            } else {
-                ui.heading(&draft.part);
-                ui.label("Position uses mm. Rotation uses degrees, X then Y then Z, about the part origin.");
-                ui.label("Values can use project parameters.");
-            }
-            ui.add_enabled_ui(!self.saving, |ui| {
-                egui::Grid::new("placement_fields").show(ui, |ui| {
-                    let names = if group { ("Move", "Turn") } else { ("Position", "Rotation") };
-                    for (prefix, values) in [(names.0, &mut draft.translation), (names.1, &mut draft.rotation)] {
-                        for (axis, value) in ["X", "Y", "Z"].into_iter().zip(values) {
-                            let label = ui.label(format!("{prefix} {axis}"));
-                            ui.text_edit_singleline(value).labelled_by(label.id);
-                            ui.end_row();
+        let (event, _) = tool_window(
+            ctx,
+            &mut self.window,
+            ToolWindow::MoveRotate,
+            egui::Window::new("Move / rotate part").default_width(380.),
+            ctx.content_rect(),
+            |ui, _, can_apply| {
+                if group {
+                    ui.heading(format!("{} parts", draft.others.len() + 1));
+                    ui.label(
+                        "Relative move. Each value adds to every selected part, in mm and degrees.",
+                    );
+                    ui.label("The turn is about the common centre of the parts.");
+                } else {
+                    ui.heading(&draft.part);
+                    ui.label("Position uses mm. Rotation uses degrees, X then Y then Z, about the part origin.");
+                    ui.label("Values can use project parameters.");
+                }
+                ui.add_enabled_ui(!self.saving, |ui| {
+                    egui::Grid::new("placement_fields").show(ui, |ui| {
+                        let names = if group {
+                            ("Move", "Turn")
+                        } else {
+                            ("Position", "Rotation")
+                        };
+                        for (prefix, values) in [
+                            (names.0, &mut draft.translation),
+                            (names.1, &mut draft.rotation),
+                        ] {
+                            for (axis, value) in ["X", "Y", "Z"].into_iter().zip(values) {
+                                let resolved =
+                                    faber_expr::resolve(&draft.expected.params).unwrap_or_default();
+                                let unit = if prefix == names.0 { "mm" } else { "°" };
+                                crate::feature_form::field(
+                                    ui,
+                                    &format!("{prefix} {axis}"),
+                                    value,
+                                    Some(unit),
+                                    &resolved,
+                                );
+                                ui.end_row();
+                            }
                         }
-                    }
+                    });
+                    ui.horizontal(|ui| {
+                        apply = ui
+                            .add_enabled(
+                                can_apply && self.pending.is_none(),
+                                egui::Button::new("Apply placement"),
+                            )
+                            .clicked();
+                        cancel = ui.button("Cancel placement").clicked();
+                    });
                 });
-                ui.horizontal(|ui| {
-                    apply = ui.add_enabled(self.pending.is_none(), egui::Button::new("Apply placement")).clicked();
-                    cancel = ui.button("Cancel placement").clicked();
-                });
-            });
-            if self.saving { ui.spinner(); }
-            if let Some(error) = &self.error { ui.colored_label(Color32::LIGHT_RED, error); }
-        });
+                if self.saving {
+                    ui.spinner();
+                }
+            },
+        );
+        cancel |= event == WindowEvent::Cancel;
+        apply |= event == WindowEvent::Apply && self.pending.is_none();
         if apply && group {
             let ids: Vec<String> = std::iter::once(draft.part.clone())
                 .chain(draft.others.iter().cloned())
@@ -594,13 +668,14 @@ impl Shell {
                     let (tx, rx) = mpsc::channel();
                     self.pending = Some(rx);
                     self.saving = true;
+                    self.window.saving = self.window.open.is_some();
                     self.error = None;
                     std::thread::spawn(move || {
                         let _ = tx.send(move_tool::commit(&root, &expected, moves, false, strict));
                         ctx.request_repaint();
                     });
                 }
-                Err(error) => self.error = Some(error),
+                Err(error) => self.window.error = Some(error),
             }
         } else if apply {
             let root = self.root.clone();
@@ -618,6 +693,7 @@ impl Shell {
             let (tx, rx) = mpsc::channel();
             self.pending = Some(rx);
             self.saving = true;
+            self.window.saving = self.window.open.is_some();
             self.error = None;
             std::thread::spawn(move || {
                 let _ = tx.send(crate::edit::place(
@@ -627,7 +703,7 @@ impl Shell {
             });
         }
         if cancel {
-            self.placement_draft = None;
+            self.cancel_window();
         }
     }
 
@@ -637,9 +713,13 @@ impl Shell {
         };
         let mut apply = false;
         let mut cancel = false;
-        egui::Window::new("Import model")
-            .default_width(460.)
-            .show(ctx, |ui| {
+        let (event, _) = tool_window(
+            ctx,
+            &mut self.window,
+            ToolWindow::Import,
+            egui::Window::new("Import model").default_width(460.),
+            ctx.content_rect(),
+            |ui, _, can_apply| {
                 ui.label("Import a model. The project keeps a copy of the source file.");
                 ui.label("STEP, STL, 3MF, OBJ, PLY or OFF. Mesh files keep their faces.");
                 ui.add_enabled_ui(!self.saving, |ui| {
@@ -663,7 +743,8 @@ impl Shell {
                     ui.horizontal(|ui| {
                         apply = ui
                             .add_enabled(
-                                self.pending.is_none()
+                                can_apply
+                                    && self.pending.is_none()
                                     && !draft.path.trim().is_empty()
                                     && !draft.name.trim().is_empty(),
                                 egui::Button::new("Import file"),
@@ -675,10 +756,13 @@ impl Shell {
                 if self.saving {
                     ui.spinner();
                 }
-                if let Some(error) = &self.error {
-                    ui.colored_label(Color32::LIGHT_RED, error);
-                }
-            });
+            },
+        );
+        cancel |= event == WindowEvent::Cancel;
+        apply |= event == WindowEvent::Apply
+            && self.pending.is_none()
+            && !draft.path.trim().is_empty()
+            && !draft.name.trim().is_empty();
         if apply {
             let root = self.root.clone();
             let source = PathBuf::from(draft.path.trim());
@@ -700,6 +784,7 @@ impl Shell {
             let (tx, rx) = mpsc::channel();
             self.pending = Some(rx);
             self.saving = true;
+            self.window.saving = self.window.open.is_some();
             self.error = None;
             std::thread::spawn(move || {
                 let _ = tx.send(crate::edit::import(
@@ -709,7 +794,7 @@ impl Shell {
             });
         }
         if cancel {
-            self.import_draft = None;
+            self.cancel_window();
         }
     }
 
@@ -717,10 +802,16 @@ impl Shell {
         if !self.export_open {
             return;
         }
-        let mut open = true;
+        let mut cancel = false;
         let mut run = false;
-        egui::Window::new("Export design").open(&mut open).default_width(500.).show(ctx, |ui| {
-            ui.add_enabled_ui(self.export_pending.is_none(), |ui| {
+        let (event, _) = tool_window(
+            ctx,
+            &mut self.window,
+            ToolWindow::Export,
+            egui::Window::new("Export design").default_width(500.),
+            ctx.content_rect(),
+            |ui, _, can_apply| {
+                ui.add_enabled_ui(self.export_pending.is_none(), |ui| {
                 let label = ui.label("Output directory");
                 ui.text_edit_singleline(&mut self.export_path).labelled_by(label.id);
                 ui.horizontal(|ui| {
@@ -730,12 +821,24 @@ impl Shell {
                 ui.checkbox(&mut self.export_force,"Export despite check findings");
                 ui.label(format!("Revision {} · {} bodies · mm",self.data.revision,self.bodies.len()));
                 ui.label("Exports include hidden bodies and the full solids before section analysis.");
-                run = ui.add_enabled(self.pending.is_none() && !self.export_path.trim().is_empty(),egui::Button::new("Write files")).clicked();
+                run = ui.add_enabled(can_apply && self.pending.is_none() && !self.export_path.trim().is_empty(),egui::Button::new("Write files")).clicked();
             });
-            if self.export_pending.is_some() { ui.spinner(); ui.label("Checking and writing files…"); }
-            if let Some(message) = &self.export_message { ui.label(message); }
-        });
-        self.export_open = open;
+                if self.export_pending.is_some() {
+                    ui.spinner();
+                    ui.label("Checking and writing files…");
+                }
+
+                cancel = ui.button("Cancel").clicked();
+            },
+        );
+        cancel |= event == WindowEvent::Cancel;
+        run |= event == WindowEvent::Apply
+            && self.pending.is_none()
+            && self.export_pending.is_none()
+            && !self.export_path.trim().is_empty();
+        if cancel {
+            self.cancel_window();
+        }
         if run {
             let path = PathBuf::from(&self.export_path);
             let path = if path.is_absolute() {
@@ -750,6 +853,7 @@ impl Shell {
             let revision = self.data.revision;
             let ctx = ctx.clone();
             let (tx, rx) = mpsc::channel();
+            self.window.running = true;
             self.export_pending = Some(rx);
             self.export_message = None;
             std::thread::spawn(move || {
@@ -766,17 +870,20 @@ impl Shell {
         if !self.checks_open {
             return;
         }
-        let mut open = true;
+        let mut cancel = false;
         let mut run = false;
-        egui::Window::new("Design checks")
-            .open(&mut open)
-            .default_width(480.)
-            .show(ctx, |ui| {
+        let (event, _) = tool_window(
+            ctx,
+            &mut self.window,
+            ToolWindow::Checks,
+            egui::Window::new("Design checks").default_width(480.),
+            ctx.content_rect(),
+            |ui, _, can_apply| {
                 ui.label("Mesh interference and clearance below 0.1 mm. Depth is approximate.");
                 ui.checkbox(&mut self.strict_edits, "Refuse edits that add check errors");
                 run = ui
                     .add_enabled(
-                        self.check_pending.is_none() && self.pending.is_none(),
+                        self.check_pending.is_none() && can_apply && self.pending.is_none(),
                         egui::Button::new("Run interference check"),
                     )
                     .clicked();
@@ -823,13 +930,21 @@ impl Shell {
                             });
                     }
                 }
-            });
-        self.checks_open = open;
+                cancel = ui.button("Cancel").clicked();
+            },
+        );
+        cancel |= event == WindowEvent::Cancel;
+        run |=
+            event == WindowEvent::Apply && self.pending.is_none() && self.check_pending.is_none();
+        if cancel {
+            self.cancel_window();
+        }
         if run {
             let bodies = self.bodies.clone();
             let data = self.data.clone();
             let ctx = ctx.clone();
             let (tx, rx) = mpsc::channel();
+            self.window.running = true;
             self.check_pending = Some(rx);
             std::thread::spawn(move || {
                 let result = faber_wiring::interference(&bodies, 0.1, &data.contacts);
@@ -840,15 +955,7 @@ impl Shell {
     }
 
     fn move_history(&mut self, ctx: &egui::Context, redo: bool) {
-        if self.pending.is_some()
-            || self.parameter_draft.is_some()
-            || self.feature_draft.is_some()
-            || self.sketch_draft.is_some()
-            || self.import_draft.is_some()
-            || self.placement_draft.is_some()
-            || self.move_draft.is_some()
-            || self.project_draft.is_some()
-        {
+        if self.pending.is_some() {
             return;
         }
         let root = self.root.clone();
@@ -865,33 +972,93 @@ impl Shell {
     }
 
     fn parameter_editor(&mut self, ctx: &egui::Context) {
-        let Some((_, values)) = &mut self.parameter_draft else {
+        let Some((expected, values)) = &mut self.parameter_draft else {
             return;
         };
+        let parameter_count = values.len();
         let mut apply = false;
         let mut cancel = false;
-        egui::Window::new("Edit parameters")
-            .collapsible(false)
-            .resizable(true)
-            .default_width(420.)
-            .show(ctx, |ui| {
+        let (event, _) = tool_window(
+            ctx,
+            &mut self.window,
+            ToolWindow::Parameters,
+            egui::Window::new("Edit parameters")
+                .collapsible(false)
+                .resizable(true)
+                .default_width(420.),
+            ctx.content_rect(),
+            |ui, error, can_apply| {
                 ui.label("Enter a value or an expression. Lengths use mm.");
                 ui.add_enabled_ui(!self.saving, |ui| {
                     egui::ScrollArea::vertical()
                         .max_height(360.)
                         .show(ui, |ui| {
                             egui::Grid::new("parameter_editor").show(ui, |ui| {
-                                for (name, expression) in values {
-                                    let label = ui.label(name);
-                                    ui.text_edit_singleline(expression).labelled_by(label.id);
+                                let resolved = faber_expr::resolve(values).unwrap_or_default();
+                                let mut remove = None;
+                                for (name, expression) in values.iter_mut() {
+                                    crate::feature_form::field(
+                                        ui,
+                                        name,
+                                        expression,
+                                        Some(""),
+                                        &resolved,
+                                    );
+                                    if ui.button(format!("Remove {name}")).clicked() {
+                                        remove = Some(name.clone());
+                                    }
                                     ui.end_row();
+                                }
+                                if let Some(name) = remove {
+                                    if let Some(owner) =
+                                        crate::edit::parameter_user(expected, values, &name)
+                                    {
+                                        *error =
+                                            Some(format!("Parameter {name} is used by {owner}."));
+                                    } else {
+                                        values.remove(&name);
+                                        *error = None;
+                                    }
                                 }
                             });
                         });
+                    egui::Grid::new("new_parameter").show(ui, |ui| {
+                        for (label, text) in ["Parameter name", "Expression"]
+                            .into_iter()
+                            .zip(&mut self.new_parameter)
+                        {
+                            let response = ui.label(label);
+                            ui.text_edit_singleline(text).labelled_by(response.id);
+                            ui.end_row();
+                        }
+                    });
+                    if ui
+                        .add_enabled(
+                            self.new_parameter.iter().all(|s| !s.trim().is_empty()),
+                            egui::Button::new("Add parameter"),
+                        )
+                        .clicked()
+                    {
+                        let name = self.new_parameter[0].trim();
+                        if values.contains_key(name) {
+                            *error = Some(format!("Parameter {name} already exists."));
+                        } else {
+                            let mut next = values.clone();
+                            next.insert(name.into(), self.new_parameter[1].trim().into());
+                            match faber_expr::resolve(&next) {
+                                Ok(_) => {
+                                    *values = next;
+                                    self.new_parameter = Default::default();
+                                    *error = None;
+                                }
+                                Err(e) => *error = Some(e),
+                            }
+                        }
+                    }
                     ui.horizontal(|ui| {
                         apply = ui
                             .add_enabled(
-                                self.pending.is_none(),
+                                can_apply && self.pending.is_none(),
                                 egui::Button::new("Apply parameters"),
                             )
                             .clicked();
@@ -902,12 +1069,13 @@ impl Shell {
                     ui.spinner();
                     ui.label("Building model…");
                 }
-                if let Some(error) = &self.error {
-                    ui.colored_label(Color32::LIGHT_RED, error);
-                }
-            });
+            },
+        );
+        self.window.dirty |= values.len() != parameter_count;
+        cancel |= event == WindowEvent::Cancel;
+        apply |= event == WindowEvent::Apply && self.pending.is_none();
         if cancel {
-            self.parameter_draft = None;
+            self.cancel_window();
         }
         if apply && let Some((expected, values)) = self.parameter_draft.clone() {
             let root = self.root.clone();
@@ -915,24 +1083,11 @@ impl Shell {
             let (tx, rx) = mpsc::channel();
             self.pending = Some(rx);
             self.saving = true;
+            self.window.saving = self.window.open.is_some();
             self.error = None;
             let strict = self.strict_edits;
             std::thread::spawn(move || {
-                let result = if strict {
-                    crate::edit::strict_edit(
-                        &root,
-                        &expected,
-                        values
-                            .into_iter()
-                            .map(|(name, expression)| faber_model::Edit::SetParam {
-                                name,
-                                expression,
-                            })
-                            .collect(),
-                    )
-                } else {
-                    crate::edit::parameters(&root, &expected, values)
-                };
+                let result = crate::edit::parameters(&root, &expected, values, strict);
                 let _ = tx.send(result);
                 ctx.request_repaint();
             });
@@ -1242,7 +1397,7 @@ impl Shell {
             &geometry,
         )?;
         form.create = true;
-        self.feature_draft = Some(form);
+        self.request_window(Draft::Feature(form));
         self.error = None;
         Ok(())
     }
@@ -1251,61 +1406,80 @@ impl Shell {
         let Some(form) = &mut self.feature_draft else {
             return;
         };
+        let mut preset_changed = false;
         let mut apply = false;
         let mut cancel = false;
-        egui::Window::new(if form.create {
-            "New feature"
-        } else {
-            "Edit feature"
-        })
-        .default_width(460.)
-        .show(ctx, |ui| {
-            ui.heading(&form.id);
-            ui.label("Lengths use mm. Angles use degrees.");
-            if !form.help.is_empty() {
-                ui.label(form.help);
-            }
-            ui.add_enabled_ui(!self.saving, |ui| {
-                if let Err(error) = form.hole_options(ui) {
-                    self.error = Some(error);
+        let (event, _) = tool_window(
+            ctx,
+            &mut self.window,
+            ToolWindow::Feature,
+            egui::Window::new(if form.create {
+                "New feature"
+            } else {
+                "Edit feature"
+            })
+            .default_width(460.),
+            ctx.content_rect(),
+            |ui, window_error, can_apply| {
+                ui.heading(&form.id);
+                ui.label("Lengths use mm. Angles use degrees.");
+                if !form.help.is_empty() {
+                    ui.label(form.help);
                 }
-                form.split_options(ui);
-                form.path_options(ui);
-                if let Err(error) = form.option_fields(ui) {
-                    self.error = Some(error);
-                }
-                egui::ScrollArea::vertical()
-                    .max_height(420.)
-                    .show(ui, |ui| {
-                        egui::Grid::new("feature_fields").show(ui, |ui| {
-                            for (path, enabled) in &mut form.flags {
-                                ui.checkbox(enabled, crate::feature_form::label(path));
-                                ui.end_row();
-                            }
-                            for (path, text, _) in &mut form.fields {
-                                let label = ui.label(crate::feature_form::label(path));
-                                ui.text_edit_singleline(text).labelled_by(label.id);
-                                ui.end_row();
-                            }
+                ui.add_enabled_ui(!self.saving, |ui| {
+                    match form.hole_options(ui) {
+                        Ok(changed) => preset_changed = changed,
+                        Err(error) => *window_error = Some(error),
+                    }
+                    form.split_options(ui);
+                    form.path_options(ui);
+                    if let Err(error) = form.option_fields(ui) {
+                        *window_error = Some(error);
+                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(420.)
+                        .show(ui, |ui| {
+                            egui::Grid::new("feature_fields").show(ui, |ui| {
+                                for (path, enabled) in &mut form.flags {
+                                    ui.checkbox(enabled, crate::feature_form::label(path));
+                                    ui.end_row();
+                                }
+                                let resolved =
+                                    faber_expr::resolve(&form.expected.params).unwrap_or_default();
+                                for (path, text, numeric) in &mut form.fields {
+                                    let unit = crate::feature_form::field_unit(path, *numeric);
+                                    crate::feature_form::field(
+                                        ui,
+                                        &crate::feature_form::label(path),
+                                        text,
+                                        unit,
+                                        &resolved,
+                                    );
+                                    ui.end_row();
+                                }
+                            });
                         });
+                    ui.horizontal(|ui| {
+                        apply = ui
+                            .add_enabled(
+                                can_apply && self.pending.is_none(),
+                                egui::Button::new("Apply feature"),
+                            )
+                            .clicked();
+                        cancel = ui.button("Cancel feature").clicked();
                     });
-                ui.horizontal(|ui| {
-                    apply = ui
-                        .add_enabled(self.pending.is_none(), egui::Button::new("Apply feature"))
-                        .clicked();
-                    cancel = ui.button("Cancel feature").clicked();
                 });
-            });
-            if self.saving {
-                ui.spinner();
-            }
-            if let Some(error) = &self.error {
-                ui.colored_label(Color32::LIGHT_RED, error);
-            }
-        });
+                if self.saving {
+                    ui.spinner();
+                }
+            },
+        );
+        self.window.dirty |= preset_changed;
+        cancel |= event == WindowEvent::Cancel;
+        apply |= event == WindowEvent::Apply && self.pending.is_none();
         if apply {
             match form.geometry() {
-                Err(error) => self.error = Some(error),
+                Err(error) => self.window.error = Some(error),
                 Ok(geometry) => {
                     let root = self.root.clone();
                     let expected = form.expected.clone();
@@ -1315,6 +1489,7 @@ impl Shell {
                     let (tx, rx) = mpsc::channel();
                     self.pending = Some(rx);
                     self.saving = true;
+                    self.window.saving = self.window.open.is_some();
                     self.error = None;
                     let strict = self.strict_edits;
                     let create = form.create;
@@ -1338,7 +1513,7 @@ impl Shell {
             }
         }
         if cancel {
-            self.feature_draft = None;
+            self.cancel_window();
         }
     }
 
@@ -1346,26 +1521,33 @@ impl Shell {
         let Some(draft) = &mut self.sketch_draft else {
             return;
         };
+        let point_count = draft.points.len();
         let mut create = false;
         let mut cancel = false;
-        egui::Window::new("Create sketch")
-            .default_width(640.)
-            .collapsible(false)
-            .show(ctx, |ui| {
+        let (event, _) = tool_window(
+            ctx,
+            &mut self.window,
+            ToolWindow::Sketch,
+            egui::Window::new("Create sketch")
+                .default_width(640.)
+                .collapsible(false),
+            ctx.content_rect(),
+            |ui, _, can_apply| {
                 ui.add_enabled_ui(!self.saving, |ui| {
-                    create = draft.ui(ui);
+                    create = draft.ui(ui, can_apply && self.pending.is_none());
                     cancel = ui.button("Cancel sketch").clicked();
                 });
                 if self.saving {
                     ui.spinner();
                 }
-                if let Some(error) = &self.error {
-                    ui.colored_label(Color32::LIGHT_RED, error);
-                }
-            });
+            },
+        );
+        self.window.dirty |= draft.points.len() != point_count;
+        cancel |= event == WindowEvent::Cancel;
+        create |= event == WindowEvent::Apply && self.pending.is_none();
         if create && self.pending.is_none() {
             match draft.part() {
-                Err(error) => self.error = Some(error),
+                Err(error) => self.window.error = Some(error),
                 Ok(part) => {
                     let root = self.root.clone();
                     let expected = draft.expected.clone();
@@ -1373,6 +1555,7 @@ impl Shell {
                     let (tx, rx) = mpsc::channel();
                     self.pending = Some(rx);
                     self.saving = true;
+                    self.window.saving = self.window.open.is_some();
                     self.error = None;
                     let strict = self.strict_edits;
                     std::thread::spawn(move || {
@@ -1383,7 +1566,7 @@ impl Shell {
             }
         }
         if cancel {
-            self.sketch_draft = None;
+            self.cancel_window();
         }
     }
 
@@ -1472,7 +1655,12 @@ impl Shell {
                 Ok((revision, files)) => {
                     format!("Exported {} files from revision {revision}.", files.len())
                 }
-                Err(error) => error,
+                Err(error) => {
+                    if self.window.running && self.window.open == Some(ToolWindow::Export) {
+                        self.window.error = Some(error.clone());
+                    }
+                    error
+                }
             });
             self.export_pending = None;
         }
@@ -1481,7 +1669,12 @@ impl Shell {
         {
             match result {
                 Ok(report) => self.check_result = Some((data, report)),
-                Err(error) => self.error = Some(error),
+                Err(error) => {
+                    if self.window.running && self.window.open == Some(ToolWindow::Checks) {
+                        self.window.error = Some(error.clone());
+                    }
+                    self.error = Some(error);
+                }
             }
             self.check_pending = None;
         }
@@ -1494,8 +1687,16 @@ impl Shell {
         if let Some(rx) = &self.pending
             && let Ok(result) = rx.try_recv()
         {
+            let deleted = self.deleting.take();
             match result {
                 Ok((data, bodies)) => {
+                    if let Some(names) = deleted {
+                        self.delete_notice = Some((
+                            format!("Deleted {names}. Ctrl+Z restores it."),
+                            Instant::now(),
+                        ));
+                        ctx.request_repaint_after(Duration::from_secs(6));
+                    }
                     let changing_project = self.pending_project.is_some();
                     if let Some(root) = self.pending_project.take() {
                         self.project_loaded = true;
@@ -1513,17 +1714,15 @@ impl Shell {
                         self.checks_open = false;
                         self.export_open = false;
                         self.export_path.clear();
-                        self.export_message = None;
-                        self.export_pending = None;
                     }
-                    if self.saving {
-                        self.parameter_draft = None;
-                        self.feature_draft = None;
-                        self.sketch_draft = None;
-                        self.import_draft = None;
-                        self.placement_draft = None;
-                        self.move_draft = None;
-                        self.project_draft = None;
+                    if self.window.saving || changing_project {
+                        self.cancel_window();
+                    } else if data != self.data {
+                        if self.window.dirty {
+                            self.window.reload();
+                        } else {
+                            self.cancel_window();
+                        }
                     }
                     if self.data.motion != data.motion || changing_project {
                         self.motion = Default::default();
@@ -1540,11 +1739,17 @@ impl Shell {
                     self.hidden.retain(|id| self.data.parts.contains_key(id));
                     self.prune_selection();
                 }
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    if self.window.saving {
+                        self.window.error = Some(e.clone());
+                    }
+                    self.error = Some(e);
+                }
             }
             self.pending = None;
             self.pending_project = None;
             self.saving = false;
+            self.window.saving = false;
         }
         if self.project_loaded
             && self.pending.is_none()
@@ -1690,13 +1895,6 @@ impl Shell {
 
     fn placement_available(&self) -> bool {
         self.pending.is_none()
-            && self.parameter_draft.is_none()
-            && self.feature_draft.is_none()
-            && self.sketch_draft.is_none()
-            && self.import_draft.is_none()
-            && self.placement_draft.is_none()
-            && self.move_draft.is_none()
-            && self.project_draft.is_none()
     }
 
     fn start_placement(&mut self, id: &str) {
@@ -1718,13 +1916,13 @@ impl Shell {
             } else {
                 (zero_fields(), zero_fields())
             };
-            self.placement_draft = Some(PlacementDraft {
+            self.request_window(Draft::Placement(PlacementDraft {
                 expected: self.data.clone(),
                 part: id.to_owned(),
                 translation,
                 rotation,
                 others,
-            });
+            }));
             self.error = None;
         }
     }
@@ -1740,7 +1938,7 @@ impl Shell {
                 )
                 .clicked()
             {
-                self.start_move(&id);
+                self.run_command(ui.ctx(), keys::Command::Move);
                 ui.close();
             }
             if ui
@@ -1750,14 +1948,31 @@ impl Shell {
                 )
                 .clicked()
             {
-                self.start_move_in(&id, move_tool::MoveMode::PointToPoint);
+                self.run_command(ui.ctx(), keys::Command::PointToPoint);
                 ui.close();
             }
             if ui
                 .add_enabled(self.placement_available(), egui::Button::new("Align to…"))
                 .clicked()
             {
-                self.start_move_in(&id, move_tool::MoveMode::Align);
+                self.run_command(ui.ctx(), keys::Command::Align);
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    matches!(
+                        self.data.parts[&id].geometry,
+                        faber_model::Geometry::History { .. }
+                    ),
+                    egui::Button::new("Edit features"),
+                )
+                .clicked()
+            {
+                self.run_command(ui.ctx(), keys::Command::EditFeatures);
+                ui.close();
+            }
+            if ui.button("Copy placement").clicked() {
+                self.run_command(ui.ctx(), keys::Command::CopyPlacement);
                 ui.close();
             }
             let hidden = self.hidden.contains(&id);
@@ -1777,13 +1992,7 @@ impl Shell {
                 ui.close();
             }
             if ui.button(format!("Isolate {plural}")).clicked() {
-                self.hidden = self
-                    .bodies
-                    .iter()
-                    .filter(|body| !ids.contains(&body.id))
-                    .map(|body| body.id.clone())
-                    .collect();
-                self.mesh_dirty = true;
+                self.run_command(ui.ctx(), keys::Command::Isolate);
                 ui.close();
             }
             let delete = if ids.len() > 1 {
@@ -1795,14 +2004,37 @@ impl Shell {
                 .add_enabled(self.placement_available(), egui::Button::new(delete))
                 .clicked()
             {
-                let removals = ids
-                    .iter()
-                    .map(|part| faber_model::Edit::RemovePart { id: part.clone() })
-                    .collect();
-                self.save_sections(ui.ctx(), removals);
+                self.run_command(ui.ctx(), keys::Command::Delete);
                 ui.close();
             }
             ui.separator();
+        }
+        if self.selected.is_none() {
+            if ui
+                .add_enabled(self.pending.is_none(), egui::Button::new("New sketch"))
+                .clicked()
+            {
+                self.run_command(ui.ctx(), keys::Command::Sketch);
+                ui.close();
+            }
+            if ui
+                .selectable_label(self.section_on, "Section analysis")
+                .clicked()
+            {
+                self.run_command(ui.ctx(), keys::Command::ToggleSection);
+                ui.close();
+            }
+        }
+        if self.copied_placement.is_some()
+            && ui
+                .add_enabled(
+                    self.command_enabled(keys::Command::PastePlacement),
+                    egui::Button::new("Paste placement"),
+                )
+                .clicked()
+        {
+            self.run_command(ui.ctx(), keys::Command::PastePlacement);
+            ui.close();
         }
         if ui
             .add_enabled(
@@ -1811,12 +2043,11 @@ impl Shell {
             )
             .clicked()
         {
-            self.hidden.clear();
-            self.mesh_dirty = true;
+            self.run_command(ui.ctx(), keys::Command::ShowAll);
             ui.close();
         }
         if ui.button("Fit view").clicked() {
-            self.fit();
+            self.run_command(ui.ctx(), keys::Command::Fit);
             ui.close();
         }
     }
@@ -1825,24 +2056,14 @@ impl Shell {
         ui.horizontal(|ui| {
             for (label, create) in [("New project", true), ("Open project", false)] {
                 if ui
-                    .add_enabled(
-                        self.pending.is_none()
-                            && self.parameter_draft.is_none()
-                            && self.feature_draft.is_none()
-                            && self.sketch_draft.is_none()
-                            && self.import_draft.is_none()
-                            && self.placement_draft.is_none()
-                            && self.move_draft.is_none()
-                            && self.project_draft.is_none(),
-                        egui::Button::new(label),
-                    )
+                    .add_enabled(self.pending.is_none(), egui::Button::new(label))
                     .clicked()
                 {
-                    self.project_draft = Some(ProjectDraft {
+                    self.request_window(Draft::Project(ProjectDraft {
                         create,
                         path: String::new(),
                         name: "Untitled".into(),
-                    });
+                    }));
                     self.error = None;
                 }
             }
@@ -1892,14 +2113,15 @@ impl Shell {
                 if row.clicked() || row.secondary_clicked() {
                     let (ctrl, shift) =
                         ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
-                    if row.clicked() && shift {
+                    if row.secondary_clicked() {
+                        self.select_menu_target(Some(body.id.clone()));
+                    } else if shift {
                         self.select_range(&body.id);
                     } else if row.clicked() && ctrl {
                         self.toggle_part(&body.id);
                     } else if row.clicked() && chosen.len() == 1 && selected {
                         self.select_only(None);
-                    } else if !(row.secondary_clicked() && selected) {
-                        // A right click on a selected part keeps the group for the menu.
+                    } else {
                         self.select_only(Some(body.id.clone()));
                     }
                     self.select_part_joint();
@@ -1913,16 +2135,14 @@ impl Shell {
             self.hidden.clear();
             self.mesh_dirty = true;
         }
-        let part_id = self
-            .selected
-            .clone()
-            .or_else(|| self.data.parts.keys().next().cloned());
+        let part_id = self.selected.clone();
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
                     part_id.is_some() && self.placement_available(),
                     egui::Button::new("Move/Copy"),
                 )
+                .on_disabled_hover_text("Select a part first.")
                 .clicked()
                 && let Some(id) = &part_id
             {
@@ -1933,6 +2153,7 @@ impl Shell {
                     part_id.is_some() && self.placement_available(),
                     egui::Button::new("Exact placement"),
                 )
+                .on_disabled_hover_text("Select a part first.")
                 .clicked()
                 && let Some(id) = &part_id
             {
@@ -1959,17 +2180,10 @@ impl Shell {
             ] {
                 if ui
                     .add_enabled(
-                        part_id.is_some()
-                            && self.pending.is_none()
-                            && self.parameter_draft.is_none()
-                            && self.feature_draft.is_none()
-                            && self.sketch_draft.is_none()
-                            && self.import_draft.is_none()
-                            && self.placement_draft.is_none()
-                            && self.move_draft.is_none()
-                            && self.project_draft.is_none(),
+                        part_id.is_some() && self.pending.is_none(),
                         egui::Button::new(label),
                     )
+                    .on_disabled_hover_text("Select a part first.")
                     .clicked()
                     && let Some(id) = &part_id
                     && let Err(error) = self.new_feature(id, kind)
@@ -1992,17 +2206,10 @@ impl Shell {
                 ] {
                     if ui
                         .add_enabled(
-                            part_id.is_some()
-                                && self.pending.is_none()
-                                && self.parameter_draft.is_none()
-                                && self.feature_draft.is_none()
-                                && self.sketch_draft.is_none()
-                                && self.import_draft.is_none()
-                                && self.placement_draft.is_none()
-                                && self.move_draft.is_none()
-                                && self.project_draft.is_none(),
+                            part_id.is_some() && self.pending.is_none(),
                             egui::Button::new(label),
                         )
+                        .on_disabled_hover_text("Select a part first.")
                         .clicked()
                     {
                         if let Some(id) = &part_id
@@ -2018,15 +2225,18 @@ impl Shell {
         let part = self
             .selected
             .as_ref()
-            .and_then(|id| self.data.parts.get(id))
-            .or_else(|| self.data.parts.values().next());
+            .and_then(|id| self.data.parts.get(id));
         if let Some(part) = part
             && let faber_model::Geometry::History { features, output } = &part.geometry
         {
             ui.add_space(20.);
             ui.separator();
             ui.add_space(12.);
-            ui.label(RichText::new("FEATURES").size(11.).color(MUTED));
+            let heading = ui.label(RichText::new("FEATURES").size(11.).color(MUTED));
+            if std::mem::take(&mut self.reveal_features) {
+                heading.scroll_to_me(Some(egui::Align::Min));
+            }
+            let mut next_feature = None;
             let mut suppress: Option<(String, bool)> = None;
             egui::ScrollArea::vertical()
                 .id_salt("feature_list")
@@ -2041,13 +2251,7 @@ impl Shell {
                             );
                             if ui
                                 .add_enabled(
-                                    self.pending.is_none()
-                                        && self.parameter_draft.is_none()
-                                        && self.sketch_draft.is_none()
-                                        && self.import_draft.is_none()
-                                        && self.placement_draft.is_none()
-                                        && self.move_draft.is_none()
-                                        && self.project_draft.is_none(),
+                                    self.pending.is_none(),
                                     egui::Button::new(if feature.suppressed {
                                         RichText::new(&feature.id).color(MUTED).strikethrough()
                                     } else {
@@ -2067,7 +2271,7 @@ impl Shell {
                                     feature.id.clone(),
                                     &feature.geometry,
                                 ) {
-                                    Ok(form) => self.feature_draft = Some(form),
+                                    Ok(form) => next_feature = Some(form),
                                     Err(error) => self.error = Some(error),
                                 }
                             }
@@ -2095,6 +2299,9 @@ impl Shell {
                         });
                     }
                 });
+            if let Some(form) = next_feature {
+                self.request_window(Draft::Feature(form));
+            }
             if let Some((id, suppressed)) = suppress
                 && let Some(part) = &part_id
             {
@@ -2109,25 +2316,19 @@ impl Shell {
                 );
             }
         }
-        if !self.data.params.is_empty() {
+        {
             ui.add_space(20.);
             ui.separator();
             ui.add_space(12.);
             ui.label(RichText::new("PARAMETERS").size(11.).color(MUTED));
             if ui
-                .add_enabled(
-                    self.pending.is_none()
-                        && self.feature_draft.is_none()
-                        && self.sketch_draft.is_none()
-                        && self.import_draft.is_none()
-                        && self.placement_draft.is_none()
-                        && self.move_draft.is_none()
-                        && self.project_draft.is_none(),
-                    egui::Button::new("Edit parameters"),
-                )
+                .add_enabled(self.pending.is_none(), egui::Button::new("Edit parameters"))
                 .clicked()
             {
-                self.parameter_draft = Some((self.data.clone(), self.data.params.clone()));
+                self.request_window(Draft::Parameters(
+                    self.data.clone(),
+                    self.data.params.clone(),
+                ));
             }
             egui::ScrollArea::vertical()
                 .id_salt("parameter_list")
@@ -2299,18 +2500,18 @@ impl Shell {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
             ui.add_space(12.);
             ui.label(
-                RichText::new("F  Fit view     S  Section")
+                RichText::new("F  Fit view     S  Commands     Shift+S  Section")
                     .small()
                     .color(MUTED),
             );
             ui.label(
                 RichText::new(
-                    "Drag empty space to select. Middle drag to pan.\nShift + middle drag or Alt + left drag to orbit. Scroll to zoom.",
+                    "Drag empty space to select. Middle or right drag to pan.\nShift + middle drag or Alt + left drag to orbit. Scroll to zoom.",
                 )
                     .small()
                     .color(MUTED),
             );
-            ui.label(RichText::new("Right-drag to pan").small().color(MUTED));
+
         });
     }
 
@@ -2321,13 +2522,26 @@ impl Shell {
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::Role::Unknown, ui.is_enabled(), "Model viewport")
         });
-        if ui.rect_contains_pointer(rect) {
+        if response.hovered()
+            && let Some(pos) = response.hover_pos()
+        {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0. {
-                self.camera.distance =
-                    (self.camera.distance * (-scroll * 0.002).exp()).clamp(1., 1e7);
+                let factor = (-scroll * 0.002).exp();
+                if let Some((_, point)) = self.pick_surface(rect, pos) {
+                    self.camera.zoom_about(point.as_vec3(), factor);
+                } else {
+                    let ndc = [
+                        2. * (pos.x - rect.left()) / rect.width() - 1.,
+                        1. - 2. * (pos.y - rect.top()) / rect.height(),
+                    ];
+                    self.camera.zoom_at(rect.aspect_ratio(), ndc, factor);
+                }
                 self.dirty = true;
             }
+        }
+        if response.double_clicked_by(egui::PointerButton::Middle) {
+            self.fit();
         }
         if !self.section_on {
             self.section_pivot = None;
@@ -2674,9 +2888,7 @@ impl Shell {
         let pan = response.dragged_by(egui::PointerButton::Secondary)
             || (response.dragged_by(egui::PointerButton::Middle) && !shift);
         if pan {
-            let forward = (self.camera.target - self.camera.eye()).normalize();
-            let right = forward.cross(glam::Vec3::Z).normalize();
-            let up = right.cross(forward);
+            let (right, up) = self.camera.screen_axes();
             self.camera.target +=
                 (-right * delta.x + up * delta.y) * self.camera.distance / rect.height();
             self.dirty = true;
@@ -2688,20 +2900,24 @@ impl Shell {
         {
             let picked = self.pick_body(rect, pos);
             let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
-            // A right click on a selected part keeps the group for the menu.
-            let keep = response.secondary_clicked()
-                && picked
-                    .as_ref()
-                    .is_some_and(|id| self.selection().contains(id));
-            if ctrl {
-                if let Some(id) = picked {
-                    self.toggle_part(&id);
-                }
-            } else if !keep {
-                self.select_only(picked);
+            if response.secondary_clicked() {
+                self.select_menu_target(picked);
+            } else {
+                self.select_picked(picked, ctrl, shift);
             }
-            self.select_part_joint();
-            self.mesh_dirty = true;
+        }
+        let hover = if busy || boxed || ui.input(|i| i.pointer.any_down()) {
+            None
+        } else {
+            response.hover_pos().filter(|_| response.hovered())
+        };
+        if self.hover_pos != hover {
+            self.hover_pos = hover;
+            let id = hover.and_then(|pos| self.pick_body(rect, pos));
+            if self.gpu.hovered != id {
+                self.gpu.hovered = id;
+                self.dirty = true;
+            }
         }
         response.context_menu(|ui| self.body_menu(ui));
         let width = (rect.width() * ui.ctx().pixels_per_point())
@@ -2800,6 +3016,7 @@ impl Shell {
                 Color32::WHITE,
             );
         }
+        self.view_cube(ui, rect);
         let painter = ui.painter();
         if let Some((centre, tip, grips, _, arcs, corners)) = handle {
             let painter = painter.with_clip_rect(rect);
@@ -2878,6 +3095,7 @@ impl Shell {
             egui::FontId::monospace(11.),
             MUTED,
         );
+
         let centre = rect.right_bottom() + Vec2::new(-52., -52.);
         let matrix = self.camera.matrix(rect.aspect_ratio());
         let target = matrix.project_point3(self.camera.target);
@@ -2903,7 +3121,9 @@ impl Shell {
 impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.poll_dialog(&ctx);
         self.poll(&ctx);
+        self.shortcut(&ctx);
         if !self.project_loaded {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
@@ -2934,11 +3154,11 @@ impl eframe::App for Shell {
                                     )
                                     .clicked()
                                 {
-                                    self.project_draft = Some(ProjectDraft {
+                                    self.request_window(Draft::Project(ProjectDraft {
                                         create,
                                         path: String::new(),
                                         name: "Untitled".into(),
-                                    });
+                                    }));
                                     self.error = None;
                                 }
                                 ui.add_space(12.);
@@ -2978,22 +3198,8 @@ impl eframe::App for Shell {
                 });
             });
             self.project_panel(&ctx, frame);
+            self.discard_question(&ctx);
             return;
-        }
-        self.move_keys(&ctx);
-        self.selection_keys(&ctx);
-        if !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::F)) {
-            self.fit();
-        }
-        if !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::S)) {
-            self.section_on = !self.section_on;
-            self.mesh_dirty = true;
-        }
-        if !ctx.egui_wants_keyboard_input()
-            && ctx.input(|i| i.modifiers.is_none() && i.key_pressed(egui::Key::M))
-            && let Some(id) = self.selected.clone()
-        {
-            self.start_move(&id);
         }
         let panel = || {
             egui::Frame::new()
@@ -3019,56 +3225,42 @@ impl eframe::App for Shell {
                         egui::Label::new(RichText::new(&self.data.name).color(MUTED)).truncate(),
                     )
                     .on_hover_text(&self.data.name);
-                    if ui.button("Checks").clicked() {
-                        self.checks_open = true;
-                    }
-                    if ui.button("Export").clicked() {
-                        self.export_open = true;
-                        if self.export_path.is_empty() {
-                            self.export_path = self.root.join("out").to_string_lossy().into_owned();
-                        }
+                    if self.strict_edits
+                        && ui
+                            .selectable_label(true, "Strict")
+                            .on_hover_text("Turn off strict edits")
+                            .clicked()
+                    {
+                        self.run_command(&ctx, keys::Command::ToggleStrict);
                     }
                     if ui
-                        .add_enabled(
-                            self.pending.is_none()
-                                && self.parameter_draft.is_none()
-                                && self.feature_draft.is_none()
-                                && self.sketch_draft.is_none()
-                                && self.import_draft.is_none()
-                                && self.placement_draft.is_none()
-                                && self.move_draft.is_none()
-                                && self.project_draft.is_none(),
-                            egui::Button::new("Import model"),
-                        )
+                        .button("Checks")
+                        .on_hover_text("Inspect the design")
                         .clicked()
                     {
-                        self.import_draft = Some(ImportDraft {
-                            bought: false,
-                            source: String::new(),
-                            licence: String::new(),
-                            designation: String::new(),
-                            expected: self.data.clone(),
-                            path: String::new(),
-                            name: "Imported part".into(),
-                        });
+                        self.run_command(&ctx, keys::Command::Checks);
+                    }
+                    if ui
+                        .button("Export")
+                        .on_hover_text("Export the design")
+                        .clicked()
+                    {
+                        self.run_command(&ctx, keys::Command::Export);
+                    }
+                    if ui
+                        .add_enabled(self.pending.is_none(), egui::Button::new("Import model"))
+                        .on_hover_text("Add an existing model")
+                        .clicked()
+                    {
+                        self.run_command(&ctx, keys::Command::Import);
                         self.error = None;
                     }
                     if ui
-                        .add_enabled(
-                            self.pending.is_none()
-                                && self.parameter_draft.is_none()
-                                && self.feature_draft.is_none()
-                                && self.sketch_draft.is_none()
-                                && self.import_draft.is_none()
-                                && self.placement_draft.is_none()
-                                && self.move_draft.is_none()
-                                && self.project_draft.is_none(),
-                            egui::Button::new("New sketch"),
-                        )
+                        .add_enabled(self.pending.is_none(), egui::Button::new("New sketch"))
+                        .on_hover_text("Draw a profile")
                         .clicked()
                     {
-                        self.sketch_draft =
-                            Some(crate::sketch::SketchDraft::new(self.data.clone()));
+                        self.run_command(&ctx, keys::Command::Sketch);
                         self.error = None;
                     }
                     ui.add_enabled_ui(
@@ -3081,11 +3273,11 @@ impl eframe::App for Shell {
                             && self.move_draft.is_none()
                             && self.project_draft.is_none(),
                         |ui| {
-                            if ui.button("Undo").clicked() {
-                                self.move_history(&ctx, false);
+                            if ui.button("Undo").on_hover_text("Undo (Ctrl+Z)").clicked() {
+                                self.run_command(&ctx, keys::Command::Undo);
                             }
-                            if ui.button("Redo").clicked() {
-                                self.move_history(&ctx, true);
+                            if ui.button("Redo").on_hover_text("Redo (Ctrl+Y)").clicked() {
+                                self.run_command(&ctx, keys::Command::Redo);
                             }
                         },
                     );
@@ -3108,11 +3300,18 @@ impl eframe::App for Shell {
                 ui.horizontal(|ui| {
                     if let Some(error) = &self.error {
                         ui.colored_label(Color32::LIGHT_RED, error);
+                    } else if let Some((message, at)) = &self.delete_notice
+                        && at.elapsed() < Duration::from_secs(6)
+                    {
+                        ui.label(message);
                     } else if self.saving {
                         ui.spinner();
                         ui.label("Building model…");
                     } else {
                         ui.label(RichText::new("Saved").color(ACCENT));
+                    }
+                    if let Some(message) = &self.export_message {
+                        ui.label(message);
                     }
                     ui.label(
                         RichText::new(format!(
@@ -3181,7 +3380,9 @@ impl eframe::App for Shell {
         self.import_panel(&ctx);
         self.placement_panel(&ctx);
         self.move_panel(&ctx);
+        self.command_search(&ctx);
         self.project_panel(&ctx, frame);
+        self.discard_question(&ctx);
     }
 }
 
@@ -3489,6 +3690,8 @@ mod tests {
             for _ in 0..3 {
                 harness.step();
             }
+            harness.get_by_label("Model viewport").click();
+            harness.step();
             let hole = matches!(tool, "Hole" | "Counterbore" | "Countersink");
             if tool.starts_with("Reference ")
                 || matches!(tool, "Plane on face" | "Plane through points")
@@ -3604,6 +3807,8 @@ mod tests {
         for _ in 0..3 {
             harness.step();
         }
+        harness.get_by_label("Model viewport").click();
+        harness.step();
         harness.get_by_label("Shell").click();
         for _ in 0..3 {
             harness.step();
@@ -3797,7 +4002,7 @@ mod tests {
         for _ in 0..5 {
             harness.step();
         }
-        harness.key_press(egui::Key::S);
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::S);
         for _ in 0..3 {
             harness.step();
         }
@@ -3879,7 +4084,7 @@ mod tests {
         for _ in 0..5 {
             harness.step();
         }
-        harness.key_press(egui::Key::S);
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::S);
         for _ in 0..3 {
             harness.step();
         }
@@ -4007,10 +4212,9 @@ mod tests {
                 .starts_with("Exported 1 files")
         );
         assert!(dir.path().join("out/bin.step").exists());
-        harness.state_mut().export_open = false;
+        harness.state_mut().cancel_window();
         harness.step();
-        harness.get_by_label("FEATURES");
-        harness.get_by_label("walls");
+
         harness.get_by_label("PARAMETERS");
         harness.get_by_label("wall = 4");
         assert!(harness.state().error.is_none());
@@ -4025,7 +4229,14 @@ mod tests {
                 &native[at..at + 4]
             );
         }
-        harness.key_press(egui::Key::S);
+        harness.get_by_label("Model viewport").click();
+        for _ in 0..3 {
+            harness.step();
+        }
+        assert_eq!(harness.state().selected.as_deref(), Some("bin"));
+        harness.get_by_label("FEATURES");
+        harness.get_by_label("walls");
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::S);
         for _ in 0..3 {
             harness.step();
         }
@@ -4157,7 +4368,7 @@ mod tests {
         }
         assert_eq!(harness.state().data.revision, 3);
         assert_eq!(harness.state().bodies[0].colour, [210, 130, 80]);
-        harness.key_press(egui::Key::S);
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::S);
         harness.step();
         assert!(!harness.state().section_on);
         harness.get_by_label("Checks").click();
@@ -4189,7 +4400,7 @@ mod tests {
         harness.step();
         harness.get_by_label("Design changed. Run the check again.");
         harness.state_mut().data.name = name;
-        harness.state_mut().checks_open = false;
+        harness.state_mut().cancel_window();
         harness.step();
         drop(project);
         harness.get_by_label("Edit parameters").click();
@@ -4809,3 +5020,6 @@ mod tests {
         assert!((plane.offset - 15.).abs() < 1e-6, "offset {}", plane.offset);
     }
 }
+
+#[cfg(test)]
+mod windows_tests;

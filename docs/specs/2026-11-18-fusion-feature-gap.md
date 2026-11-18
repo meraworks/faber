@@ -4,6 +4,11 @@ Date: 2026-11-18. Fusion is the behavioural reference. This note compares the
 installed Fusion command set with Faber. It is static evidence from shipped
 files. Fusion was not run.
 
+## Viewer controls
+
+Chunk 17 adds canvas selection, a view cube, command search and keyboard
+control of edit windows. Face and edge selection are in chunk 18.
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under

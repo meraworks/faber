@@ -1,6 +1,6 @@
 use faber_model::ProjectData;
 use faber_ports::Body;
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 pub fn load_project(root: &Path, name: Option<String>) -> Result<(ProjectData, Vec<Body>), String> {
     if let Some(name) = name {
@@ -218,18 +218,7 @@ pub fn history(
     Ok((project.data, project.bodies))
 }
 
-pub fn parameters(
-    root: &Path,
-    expected: &ProjectData,
-    values: BTreeMap<String, String>,
-) -> Result<(ProjectData, Vec<Body>), String> {
-    let mut project = faber_wiring::open(root, false, None)?;
-    if project.data != *expected {
-        return Err("Project changed. Reload the parameter editor.".into());
-    }
-    project.set_params(values)?;
-    Ok((project.data, project.bodies))
-}
+pub use faber_wiring::parameters::{parameter_user, parameters};
 
 #[cfg(test)]
 mod tests {
@@ -424,6 +413,7 @@ mod tests {
             dir.path(),
             &expected,
             [("height".into(), "40".into())].into(),
+            false,
         )
         .unwrap();
         assert!((bodies[0].volume - 8000.).abs() < 1e-6);
@@ -431,11 +421,20 @@ mod tests {
             parameters(
                 dir.path(),
                 &expected,
-                [("height".into(), "50".into())].into()
+                [("height".into(), "50".into())].into(),
+                false,
             )
             .is_err()
         );
-        assert!(parameters(dir.path(), &data, [("height".into(), "-1".into())].into()).is_err());
+        assert!(
+            parameters(
+                dir.path(),
+                &data,
+                [("height".into(), "-1".into())].into(),
+                false
+            )
+            .is_err()
+        );
         assert_eq!(faber_wiring::read(dir.path()).unwrap().0, data);
     }
 }

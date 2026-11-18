@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "name": "Pin",
+  "colour": [
+    221,
+    155,
+    70
+  ],
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "base",
+        "geometry": {
+          "op": "cylinder",
+          "radius": 7,
+          "height": 22
+        }
+      }
+    ],
+    "output": "base"
+  },
+  "group": "",
+  "note": ""
+}

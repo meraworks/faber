@@ -1384,3 +1384,17 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
 - A warm open still computes the unplaced properties (about 1.6 s). Storing
   volume and bounds with the mesh cache entry is open work.
 - 569 tests pass. Format and workspace Clippy pass.
+
+## Fusion parity 17: Viewer controls
+
+- Edit windows keep a draft until Apply or Discard. Escape closes one item at
+  a time. Command search, undo and redo share the viewer key map.
+- The canvas supports group selection, crossing selection and context actions.
+  The view cube sets a face, edge or corner view. Wheel zoom keeps the picked
+  point under the cursor.
+- The parameter editor shows expression values and checks the use of a
+  parameter before removal. The file picker lets the viewer draw while it waits.
+- The headless example is `examples/viewer-controls`. It contains a plate and
+  a pin. Use the pin to check selection, parameter edits and wheel zoom.
+- The workspace passed 622 tests. Workspace Clippy passed with warnings denied.
+- The release installer passed a silent install. Both installed programs match the release binaries. The installed CLI read both example parts.

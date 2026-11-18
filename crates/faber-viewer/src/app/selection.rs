@@ -3,9 +3,8 @@
 //! `Shell::selected` is the primary part, the last one clicked.
 //! `Shell::extra_selected` holds the other selected parts.
 
-use super::move_tool::screen_point;
 use super::*;
-use glam::DVec3;
+use faber_scene::{RectMode, mesh_in_rect};
 
 /// Least drag, in pixels, that draws a rectangle. A shorter drag is a click.
 const BOX_MIN_PX: f32 = 4.;
@@ -34,17 +33,33 @@ impl Shell {
 
     /// A click on the canvas at a screen point. Ctrl toggles the part under the pointer.
     /// A plain click selects that part, or clears the selection on empty space.
-    pub(super) fn click_at(&mut self, rect: egui::Rect, pos: egui::Pos2, ctrl: bool) {
-        let picked = self.pick_body(rect, pos);
+    pub(super) fn select_picked(&mut self, picked: Option<String>, ctrl: bool, shift: bool) {
         if ctrl {
             if let Some(id) = picked {
                 self.toggle_part(&id);
+            }
+        } else if shift {
+            if let Some(id) = picked {
+                self.extra_selected.remove(&id);
+                if let Some(old) = self.selected.replace(id.clone())
+                    && old != id
+                {
+                    self.extra_selected.insert(old);
+                }
             }
         } else {
             self.select_only(picked);
         }
         self.select_part_joint();
         self.mesh_dirty = true;
+    }
+
+    /// A menu uses the clicked body as its primary part and keeps its group.
+    pub(super) fn select_menu_target(&mut self, picked: Option<String>) {
+        let member = picked.as_ref().is_some_and(|id| {
+            self.extra_selected.contains(id) || self.selected.as_ref() == Some(id)
+        });
+        self.select_picked(picked, false, member);
     }
 
     /// The other selected parts that move with a part. Empty when the part is not selected.
@@ -58,6 +73,7 @@ impl Shell {
 
     /// Selects one part. None clears the selection.
     pub(super) fn select_only(&mut self, id: Option<String>) {
+        self.mesh_dirty |= self.selected != id || !self.extra_selected.is_empty();
         self.extra_selected.clear();
         self.selected = id;
     }
@@ -93,6 +109,7 @@ impl Shell {
 
     /// Selects these parts. The last id becomes the primary part.
     pub(super) fn select_many(&mut self, mut ids: Vec<String>) {
+        self.mesh_dirty = true;
         self.selected = ids.pop();
         self.extra_selected = ids.into_iter().collect();
     }
@@ -106,26 +123,6 @@ impl Shell {
             .map(|body| body.id.clone())
             .collect();
         self.select_many(ids);
-    }
-
-    /// Escape clears the selection. Ctrl + A selects all visible parts.
-    pub(super) fn selection_keys(&mut self, ctx: &egui::Context) {
-        self.prune_selection();
-        if self.move_draft.is_some() || ctx.egui_wants_keyboard_input() {
-            return;
-        }
-        let (escape, select_all) = ctx.input(|i| {
-            (
-                i.key_pressed(egui::Key::Escape),
-                (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::A),
-            )
-        });
-        if escape {
-            self.select_only(None);
-        }
-        if select_all {
-            self.select_visible();
-        }
     }
 
     /// Left drag on empty space draws a rectangle. Returns true while the rectangle runs,
@@ -175,7 +172,8 @@ impl Shell {
         self.box_drag = None;
         if (current - start).length() < BOX_MIN_PX {
             // A short drag is a click. egui reports it as a drag, so the canvas click does not run.
-            self.click_at(rect, current, ctrl);
+            let picked = self.pick_body(rect, current);
+            self.select_picked(picked, ctrl, ui.input(|i| i.modifiers.shift));
             return true;
         }
         self.select_in_box(
@@ -190,28 +188,30 @@ impl Shell {
     /// Left to right needs a part inside the area. Right to left needs a part that the area touches.
     fn select_in_box(&mut self, canvas: egui::Rect, area: egui::Rect, left_to_right: bool) {
         let matrix = self.camera.matrix(canvas.aspect_ratio());
+        let ndc = |pos: egui::Pos2| {
+            [
+                2. * (pos.x - canvas.left()) / canvas.width() - 1.,
+                1. - 2. * (pos.y - canvas.top()) / canvas.height(),
+            ]
+        };
+        let rect = [ndc(area.left_bottom()), ndc(area.right_top())];
+        let mode = if left_to_right {
+            RectMode::Window
+        } else {
+            RectMode::Crossing
+        };
         let mut ids = Vec::new();
         for body in self.bodies.iter() {
             if self.hidden.contains(&body.id) {
                 continue;
             }
-            let mut screen = egui::Rect::NOTHING;
-            for corner in 0..8 {
-                let point = DVec3::from(std::array::from_fn(|axis| {
-                    body.bounds[(corner >> axis) & 1][axis]
-                }));
-                if let Some(pos) = screen_point(canvas, matrix, point) {
-                    screen.extend_with(pos);
-                }
-            }
-            if screen == egui::Rect::NOTHING {
-                continue;
-            }
-            let hit = if left_to_right {
-                area.contains(screen.min) && area.contains(screen.max)
-            } else {
-                area.intersects(screen)
-            };
+            let transform = self
+                .motion
+                .poses
+                .get(&body.id)
+                .copied()
+                .unwrap_or(glam::Mat4::IDENTITY);
+            let hit = mesh_in_rect(&body.mesh, transform.as_dmat4(), matrix, rect, mode);
             if hit {
                 ids.push(body.id.clone());
             }

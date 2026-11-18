@@ -1,6 +1,7 @@
 //! Adapter composition.
 
 pub mod archive;
+pub mod parameters;
 
 pub mod motion_check;
 
@@ -324,6 +325,14 @@ fn regenerated(path: &Path, data: ProjectData) -> Result<ProjectData> {
 }
 
 pub fn open(path: &Path, create: bool, name: Option<String>) -> Result<Project> {
+    open_with_store(path, create, name).map(|(project, _)| project)
+}
+
+fn open_with_store(
+    path: &Path,
+    create: bool,
+    name: Option<String>,
+) -> Result<(Project, Arc<FileStore>)> {
     let source = design_source();
     let generated = source.has_source(path);
     if !create && !generated && !path.join("faber.json").exists() {
@@ -345,7 +354,7 @@ pub fn open(path: &Path, create: bool, name: Option<String>) -> Result<Project> 
         store.save(None, &data)?;
     }
     let mut project = Project::open_with_cache(
-        store,
+        store.clone(),
         Arc::new(OcctKernel),
         Some(Arc::new(faber_files::FileAssets::new(path))),
         Some(Arc::new(faber_files::FileFeatureCache::new(path))),
@@ -355,7 +364,7 @@ pub fn open(path: &Path, create: bool, name: Option<String>) -> Result<Project> 
     if generated {
         refresh(path, &mut project)?;
     }
-    Ok(project)
+    Ok((project, store))
 }
 
 pub fn read(path: &Path) -> Result<(ProjectData, Vec<Body>)> {

@@ -45,6 +45,51 @@ pub fn label(path: &str) -> String {
         .join(" · ")
 }
 
+/// Unit of a number or a parameter expression at a recipe path.
+pub fn field_unit(path: &str, numeric: bool) -> Option<&'static str> {
+    if !numeric {
+        return None;
+    }
+    let key = path
+        .rsplit('/')
+        .find(|k| !k.is_empty() && !k.bytes().all(|c| c.is_ascii_digit()))?;
+    match key {
+        "angle" | "angle_deg" | "rotation" | "start_deg" | "end_deg" | "sweep_deg" => Some("°"),
+        "area" => Some("mm²"),
+        "count" | "expect" | "turns" | "factor" | "parallel" | "normal" | "direction"
+        | "weights" | "knots" => Some("1"),
+        "mass_g" => Some("g"),
+        "axis" | "degree" | "sides" => Some("1"),
+        _ => Some("mm"),
+    }
+}
+
+pub fn field(
+    ui: &mut eframe::egui::Ui,
+    label: &str,
+    value: &mut String,
+    unit: Option<&str>,
+    params: &std::collections::BTreeMap<String, f64>,
+) {
+    let label = ui.label(label);
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(value).labelled_by(label.id);
+            if let Some(unit) = unit.filter(|u| !u.is_empty()) {
+                ui.label(unit);
+            }
+        });
+        if let Some(unit) = unit
+            && value.parse::<f64>().is_err()
+            && let Ok(n) = faber_expr::evaluate(value, |id| {
+                params.get(id).copied().ok_or_else(|| id.to_owned())
+            })
+        {
+            ui.small(format!("= {n} {unit}").trim_end());
+        }
+    });
+}
+
 pub struct FeatureForm {
     pub help: &'static str,
     pub create: bool,
@@ -66,7 +111,7 @@ impl FeatureForm {
         let value = serde_json::to_value(geometry).map_err(|e| e.to_string())?;
         let mut fields = vec![];
         let mut flags = vec![];
-        collect(&value, "", &mut fields, &mut flags);
+        collect_fields(&value, &mut fields, &mut flags);
         Ok(Self {
             help: match geometry {
                 Geometry::PlaneOnFace { .. } => {
@@ -170,9 +215,9 @@ impl FeatureForm {
         self.value["keep"] = Value::String(selected);
     }
 
-    pub fn hole_options(&mut self, ui: &mut eframe::egui::Ui) -> Result<(), String> {
+    pub fn hole_options(&mut self, ui: &mut eframe::egui::Ui) -> Result<bool, String> {
         if self.value["op"] != "hole" {
-            return Ok(());
+            return Ok(false);
         }
         let mut preset = None;
         ui.menu_button("Metric preset", |ui| {
@@ -215,10 +260,10 @@ impl FeatureForm {
             value["head"] = head;
             self.fields.clear();
             self.flags.clear();
-            collect(&value, "", &mut self.fields, &mut self.flags);
+            collect_fields(&value, &mut self.fields, &mut self.flags);
             self.value = value;
         }
-        Ok(())
+        Ok(preset.is_some())
     }
 
     fn apply_metric(&mut self, name: &str, tap: bool) -> Result<(), String> {
@@ -249,7 +294,7 @@ impl FeatureForm {
         });
         self.fields.clear();
         self.flags.clear();
-        collect(&value, "", &mut self.fields, &mut self.flags);
+        collect_fields(&value, &mut self.fields, &mut self.flags);
         self.value = value;
         Ok(())
     }
@@ -332,7 +377,7 @@ impl FeatureForm {
     fn replace_value(&mut self, value: Value) {
         self.fields.clear();
         self.flags.clear();
-        collect(&value, "", &mut self.fields, &mut self.flags);
+        collect_fields(&value, &mut self.fields, &mut self.flags);
         self.value = value;
     }
 
@@ -383,6 +428,24 @@ fn toggle_field(value: &mut Value, key: &str, on: bool, default: f64) {
         }
     } else if let Some(object) = value.as_object_mut() {
         object.remove(key);
+    }
+}
+
+fn collect_fields(
+    value: &Value,
+    fields: &mut Vec<(String, String, bool)>,
+    flags: &mut Vec<(String, bool)>,
+) {
+    collect(value, "", fields, flags);
+    // Resolve the type of string fields without evaluating parameter expressions.
+    let numeric = serde_json::from_value::<Geometry<Scalar>>(value.clone())
+        .ok()
+        .and_then(|geometry| geometry.map_numbers(&mut |_| Ok(1.0)).ok())
+        .and_then(|geometry| serde_json::to_value(geometry).ok());
+    if let Some(numeric) = numeric {
+        for (path, _, number) in fields {
+            *number |= numeric.pointer(path).is_some_and(Value::is_number);
+        }
     }
 }
 

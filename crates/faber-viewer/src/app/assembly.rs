@@ -75,6 +75,14 @@ impl Shell {
     }
 
     pub(super) fn pick_body(&self, rect: egui::Rect, pos: egui::Pos2) -> Option<String> {
+        self.pick_surface(rect, pos).map(|(id, _)| id)
+    }
+
+    pub(super) fn pick_surface(
+        &self,
+        rect: egui::Rect,
+        pos: egui::Pos2,
+    ) -> Option<(String, DVec3)> {
         let point = [
             2. * (pos.x - rect.left()) / rect.width() - 1.,
             1. - 2. * (pos.y - rect.top()) / rect.height(),
@@ -115,7 +123,7 @@ impl Shell {
                     .map(|d| (d, &b.id))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, id)| id.clone())
+            .map(|(d, id)| (id.clone(), eye + d * ray))
     }
 
     pub(super) fn select_part_joint(&mut self) {

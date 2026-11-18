@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "parts": {
+    "plate": {
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    },
+    "pin": {
+      "translation": [
+        34,
+        29,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

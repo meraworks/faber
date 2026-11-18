@@ -6,6 +6,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod rectangle;
+pub use rectangle::{RectMode, mesh_in_rect};
+
 /// Display normals per triangle corner.
 pub fn corner_normals(mesh: &Mesh) -> Vec<[[f32; 3]; 3]> {
     if !mesh.normals.is_empty() && mesh.normals.len() == mesh.vertices.len() {
@@ -98,6 +101,8 @@ pub enum View {
     Right,
     Top,
     Bottom,
+    Edge([i8; 3]),
+    Corner([i8; 3]),
 }
 
 pub fn section(mesh: &Mesh, plane: Section) -> Result<Cut> {
@@ -352,14 +357,32 @@ pub struct Camera {
 impl Camera {
     pub fn set_view(&mut self, view: View) {
         (self.yaw, self.pitch) = match view {
-            View::Iso => (-55., 24.),
+            View::Iso => (-45., (1.0_f32 / 3.0_f32.sqrt()).asin().to_degrees()),
             View::Front => (-90., 0.),
             View::Back => (90., 0.),
             View::Left => (180., 0.),
             View::Right => (0., 0.),
             View::Top => (-90., 90.),
             View::Bottom => (-90., -90.),
+            View::Edge(axes) | View::Corner(axes) => {
+                let [x, y, z] = axes.map(f32::from);
+                (y.atan2(x).to_degrees(), z.atan2(x.hypot(y)).to_degrees())
+            }
         };
+    }
+    /// Zoom about the point at the target depth under the pointer.
+    pub fn zoom_at(&mut self, aspect: f32, ndc: [f32; 2], factor: f32) {
+        let (origin, ray) = self.ray(aspect, ndc);
+        let normal = (self.target - self.eye()).normalize().as_dvec3();
+        let depth = (self.target.as_dvec3() - origin).dot(normal) / ray.dot(normal);
+        self.zoom_about((origin + ray * depth).as_vec3(), factor);
+    }
+
+    /// Keep a picked point at its screen position as the distance changes.
+    pub fn zoom_about(&mut self, point: Vec3, factor: f32) {
+        let distance = (self.distance * factor).clamp(1., 1e7);
+        self.target += (point - self.target) * (1. - distance / self.distance);
+        self.distance = distance;
     }
     pub fn fit(bodies: &[faber_ports::Body]) -> Self {
         let mut lo = Vec3::splat(f32::INFINITY);
@@ -384,18 +407,27 @@ impl Camera {
         let (sp, cp) = self.pitch.to_radians().sin_cos();
         self.target + Vec3::new(c * cp, s * cp, sp) * self.distance
     }
-    pub fn matrix(&self, aspect: f32) -> Mat4 {
-        let up = if self.pitch.abs() >= 89.99 {
+    fn reference_up(&self) -> Vec3 {
+        if self.pitch.abs() >= 89.99 {
             Vec3::Y
         } else {
             Vec3::Z
-        };
+        }
+    }
+
+    pub fn screen_axes(&self) -> (Vec3, Vec3) {
+        let outward = (self.eye() - self.target).normalize();
+        let right = self.reference_up().cross(outward).normalize();
+        (right, outward.cross(right))
+    }
+
+    pub fn matrix(&self, aspect: f32) -> Mat4 {
         glam::camera::rh::proj::directx::perspective(
             38f32.to_radians(),
             aspect.max(0.01),
             self.distance * 0.001,
             self.distance * 10. + 1000.,
-        ) * glam::camera::rh::view::look_at_mat4(self.eye(), self.target, up)
+        ) * glam::camera::rh::view::look_at_mat4(self.eye(), self.target, self.reference_up())
     }
     pub fn ray(&self, aspect: f32, point: [f32; 2]) -> (DVec3, DVec3) {
         let inverse = self.matrix(aspect).inverse();

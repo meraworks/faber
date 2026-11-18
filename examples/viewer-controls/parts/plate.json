@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "name": "Angle plate",
+  "colour": [
+    77,
+    145,
+    160
+  ],
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "base",
+        "geometry": {
+          "op": "extrude",
+          "profile": {
+            "outer": [
+              [
+                0,
+                0
+              ],
+              [
+                55,
+                0
+              ],
+              [
+                55,
+                10
+              ],
+              [
+                10,
+                10
+              ],
+              [
+                10,
+                45
+              ],
+              [
+                0,
+                45
+              ]
+            ],
+            "holes": []
+          },
+          "height": "height"
+        }
+      }
+    ],
+    "output": "base"
+  },
+  "group": "",
+  "note": ""
+}

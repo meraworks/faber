@@ -813,3 +813,30 @@ faber.merge([
   faber.prefix(bracket.bracket(80, 40, 4, 6), 'right_'),
 ])
 ```
+
+## Viewer controls
+
+Open `examples/viewer-controls` to try the controls on an angle plate and a pin.
+Click a part to select it. Shift-click adds a part. Ctrl-click adds or removes
+a part. Drag from left to right to select whole parts inside the rectangle.
+Drag from right to left to select parts that touch the rectangle. Right-click
+a part for its tools.
+
+| Action | Control |
+| --- | --- |
+| Pan | Middle drag or right drag |
+| Orbit | Shift + middle drag or Alt + left drag |
+| Zoom at the pointer | Wheel |
+| Fit the model | F or double-click the middle button |
+| Set a view | Click a face, edge or corner on the view cube |
+| Fit the isometric view | Home on the view cube |
+| Find a command | S, then enter its name |
+| Move the selection | M |
+| Show or hide the section | Shift + S |
+| Select all visible parts | Ctrl + A |
+| Delete the selection | Delete |
+| Undo | Ctrl + Z |
+| Redo | Ctrl + Y or Ctrl + Shift + Z |
+
+Enter applies the open form. Escape first closes a menu, then stops a pick,
+then cancels a tool, then clears the selection. Each press does one action.

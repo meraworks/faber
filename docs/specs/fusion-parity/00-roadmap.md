@@ -1,7 +1,7 @@
 # Fusion parity roadmap
 
-Status: written 2026-11-18. Not started. Run it after the plan
-`docs/specs/2026-11-18-review-speed-modular-plan.md` is complete and pushed.
+Status: chunk 17 supplies the viewer controls. Chunk 01 is next.
+See `docs/specs/faber-progress.md` for the checks for each finished chunk.
 
 This file is the index and the specification for eighteen plans. Each plan is one
 chunk. Each chunk gives working, tested software on its own. Run one chunk at a

@@ -861,7 +861,7 @@ impl Shell {
             }
             None => (DVec3::from(base.translation), 5.),
         };
-        self.move_draft = Some(MoveDraft {
+        self.request_window(super::Draft::Move(Box::new(MoveDraft {
             expected: self.data.clone(),
             part: id.to_owned(),
             base,
@@ -893,20 +893,20 @@ impl Shell {
             align: AlignPanel::new(id, &self.data.parts),
             viewport: None,
             panel_rect: None,
-        });
+        })));
         self.error = None;
         self.dirty = true;
     }
 
     pub(super) fn cancel_move(&mut self) {
         self.move_draft = None;
-        self.error = None;
+        self.window.cancel();
         self.dirty = true;
     }
 
     /// Starts the save in a background thread.
-    fn confirm_move(&mut self, ctx: &egui::Context) {
-        if self.pending.is_some() {
+    pub(super) fn confirm_move(&mut self, ctx: &egui::Context) {
+        if self.pending.is_some() || self.window.stale {
             return;
         }
         let Some(draft) = &mut self.move_draft else {
@@ -930,6 +930,7 @@ impl Shell {
         let (tx, rx) = mpsc::channel();
         self.pending = Some(rx);
         self.saving = true;
+        self.window.saving = true;
         self.error = None;
         std::thread::spawn(move || {
             let _ = tx.send(commit(&root, &expected, moves, copy, strict));
@@ -937,18 +938,10 @@ impl Shell {
         });
     }
 
-    /// Enter confirms and Escape cancels.
-    pub(super) fn move_keys(&mut self, ctx: &egui::Context) {
-        if self.move_draft.is_none() {
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.cancel_move();
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            self.confirm_move(ctx);
-        }
+    pub(super) fn stop_pick(&mut self) -> bool {
+        self.move_draft
+            .as_mut()
+            .is_some_and(|d| d.points.picking.take().is_some())
     }
 
     /// Command panel at the right of the viewport. It does not change the viewport layout.
@@ -972,14 +965,20 @@ impl Shell {
         let anchor = viewport.right_top() + Vec2::new(-PANEL_WIDTH - PANEL_MARGIN, PANEL_MARGIN);
         let mut apply = false;
         let mut cancel = false;
-        let shown = egui::Window::new("MOVE/COPY")
-            .fixed_pos(anchor)
-            .min_width(PANEL_WIDTH)
-            .max_width(PANEL_WIDTH)
-            .collapsible(false)
-            .resizable(false)
-            .movable(false)
-            .show(ctx, |ui| {
+        let (event, shown) = super::tool_window(
+            ctx,
+            &mut self.window,
+            super::ToolWindow::MoveCopy,
+            egui::Window::new("MOVE/COPY")
+                .fixed_pos(anchor)
+                .min_width(PANEL_WIDTH)
+                .max_width(PANEL_WIDTH)
+                .collapsible(false)
+                .resizable(false)
+                .movable(false),
+            viewport,
+            |ui, _, can_apply| {
+                ui.add_enabled_ui(!self.saving, |ui| {
                 caption(ui, "Object");
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(part_name.as_str()).strong());
@@ -1097,15 +1096,24 @@ impl Shell {
                             PivotMode::Centre,
                             "Bounding box centre",
                         );
-                        ui.selectable_value(&mut draft.pivot_mode, PivotMode::Origin, "Part origin");
-                        ui.selectable_value(&mut draft.pivot_mode, PivotMode::World, "World origin");
+                        ui.selectable_value(
+                            &mut draft.pivot_mode,
+                            PivotMode::Origin,
+                            "Part origin",
+                        );
+                        ui.selectable_value(
+                            &mut draft.pivot_mode,
+                            PivotMode::World,
+                            "World origin",
+                        );
                     });
                 ui.add_space(4.);
                 ui.checkbox(&mut draft.copy, "Create copy");
+                });
                 ui.horizontal(|ui| {
                     apply = ui
                         .add_enabled(
-                            self.pending.is_none() && draft.error.is_none(),
+                            can_apply && self.pending.is_none() && draft.error.is_none(),
                             egui::Button::new("OK"),
                         )
                         .on_hover_text("Enter: OK. Saves the move in one edit.")
@@ -1114,9 +1122,8 @@ impl Shell {
                         .button("Cancel")
                         .on_hover_text("Escape: Cancel. The part does not move.")
                         .clicked();
-                    ui.label("?").on_hover_text(
-                        "Snap: 1 mm and 15 degrees. Hold Shift for no snap.",
-                    );
+                    ui.label("?")
+                        .on_hover_text("Snap: 1 mm and 15 degrees. Hold Shift for no snap.");
                     if self.saving {
                         ui.spinner();
                     }
@@ -1124,13 +1131,11 @@ impl Shell {
                 if let Some(error) = draft.error {
                     ui.colored_label(Color32::LIGHT_RED, error);
                 }
-                if let Some(error) = &self.error {
-                    ui.colored_label(Color32::LIGHT_RED, error);
-                }
-            });
-        if let Some(inner) = shown {
-            draft.panel_rect = Some(inner.response.rect);
-        }
+            },
+        );
+        draft.panel_rect = shown;
+        cancel |= event == super::WindowEvent::Cancel;
+        apply |= event == super::WindowEvent::Apply;
         if apply {
             self.confirm_move(ctx);
         }
@@ -1141,6 +1146,9 @@ impl Shell {
 
     /// Handles the triad. Returns true while a triad drag runs.
     pub(super) fn move_canvas(&mut self, ui: &egui::Ui, rect: egui::Rect) -> bool {
+        if self.saving {
+            return false;
+        }
         let matrix = self.camera.matrix(rect.aspect_ratio());
         let section_busy = self.section_drag.is_some();
         let picked = self.pick_click(ui, rect);
@@ -1213,6 +1221,7 @@ impl Shell {
                         DQuat::from_axis_angle(AXES[axis], degrees.to_radians()) * drag.start.1;
                 }
             }
+            self.window.dirty |= (draft.translate, draft.turn) != drag.start;
             draft.sync_fields();
             self.dirty = true;
         }
@@ -1269,6 +1278,7 @@ impl Shell {
             PickStage::To => draft.points.to = text,
         }
         draft.points.picking = None;
+        self.window.dirty = true;
         self.dirty = true;
         true
     }
@@ -2216,6 +2226,7 @@ mod tests {
         let mut harness = open(dir.path());
         open_move(&mut harness);
         drag_ring(&mut harness, 2, 30.);
+        assert!(harness.state().window.dirty);
         drag_ring(&mut harness, 1, 15.);
         let preview = harness.state().move_poses().get("bin").unwrap().as_dmat4();
         let result = placement_matrix(&harness.state().move_draft.as_ref().unwrap().result());
@@ -2245,6 +2256,7 @@ mod tests {
         harness.step();
         let angles = harness.state().move_draft.as_ref().unwrap().angles.clone();
         drag_ring(&mut harness, 2, 30.);
+        assert!(harness.state().window.dirty);
         assert_eq!(
             harness.state().move_draft.as_ref().unwrap().angles,
             angles,

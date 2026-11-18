@@ -24,6 +24,11 @@ fn feature_list_suppresses_and_unsuppresses_a_feature() {
     for _ in 0..3 {
         harness.step();
     }
+    harness.get_by_label("Model viewport").click();
+    for _ in 0..3 {
+        harness.step();
+    }
+    assert_eq!(harness.state().selected.as_deref(), Some("block"));
     // The output row also has a Suppress button, but it is disabled. The first match is the base row.
     harness
         .query_all_by_label("Suppress")

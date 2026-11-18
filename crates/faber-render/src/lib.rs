@@ -27,6 +27,7 @@ struct Uniform {
     eye: [f32; 4],
     plane: [f32; 4],
     selected: [u32; 4],
+    hovered: [u32; 4],
     section_style: [f32; 4],
 }
 
@@ -34,6 +35,7 @@ pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub hatch: bool,
+    pub hovered: Option<String>,
     pub cut_colour: Option<[u8; 3]>,
     uniform: wgpu::Buffer,
     identity: wgpu::Buffer,
@@ -159,6 +161,7 @@ impl Gpu {
             Self::surface_pipeline(&device, &pipeline_layout, include_str!("shader.wgsl"));
         Self {
             hatch: true,
+            hovered: None,
             cut_colour: None,
             device: device.clone(),
             queue,
@@ -515,13 +518,15 @@ impl Gpu {
                     usage: wgpu::BufferUsages::VERTEX,
                 })
         });
-        let range = |list: &DrawList| {
-            selected
-                .and_then(|id| list.ranges.get(id).copied())
+        let range = |list: &DrawList, id: Option<&str>| {
+            id.and_then(|id| list.ranges.get(id).copied())
                 .unwrap_or_default()
         };
-        let [a, b] = range(list);
-        let [c, d] = caps.map(range).unwrap_or_default();
+        let ranges = |id: Option<&str>| {
+            let [a, b] = range(list, id);
+            let [c, d] = caps.map(|list| range(list, id)).unwrap_or_default();
+            [a, b, c, d]
+        };
         let tint = self
             .cut_colour
             .map_or([-1.; 3], |rgb| rgb.map(|c| (c as f32 / 255.).powf(2.2)));
@@ -530,7 +535,8 @@ impl Gpu {
             matrix: camera
                 .matrix(target.width as f32 / target.height as f32)
                 .to_cols_array_2d(),
-            selected: [a, b, c, d],
+            selected: ranges(selected),
+            hovered: ranges(self.hovered.as_deref()),
             plane: plane.map_or([0.; 4], |p| {
                 let sign = if p.reverse { -1. } else { 1. };
                 (glam::DVec3::from(p.normal).normalize() * sign)

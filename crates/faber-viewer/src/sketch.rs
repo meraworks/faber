@@ -159,7 +159,7 @@ impl SketchDraft {
             Tool::Polygon | Tool::Spline => unreachable!(),
         })
     }
-    pub fn ui(&mut self, ui: &mut eframe::egui::Ui) -> bool {
+    pub fn ui(&mut self, ui: &mut eframe::egui::Ui, can_apply: bool) -> bool {
         use eframe::egui::{self, Color32, Stroke};
         ui.horizontal(|ui| {
             ui.label("Plane");
@@ -363,7 +363,8 @@ impl SketchDraft {
                 .labelled_by(label.id);
             ui.label("mm");
         });
-        ui.button("Create solid").clicked()
+        ui.add_enabled(can_apply, egui::Button::new("Create solid"))
+            .clicked()
     }
     pub fn new(expected: ProjectData) -> Self {
         Self {
