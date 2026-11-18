@@ -532,6 +532,10 @@ pub(crate) fn output_error(features: &[Feature], output: &str, error: String) ->
 pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
     match geometry {
         Geometry::Instance { .. } => "instance",
+        Geometry::RemoveFaces { .. } => "remove_faces",
+        Geometry::MoveFaces { .. } => "move_faces",
+        Geometry::SplitFace { .. } => "split_face",
+        Geometry::Emboss { .. } => "emboss",
         Geometry::Imported { .. } => "imported",
         Geometry::Rib { .. } => "rib",
         Geometry::Web { .. } => "web",

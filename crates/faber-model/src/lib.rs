@@ -154,6 +154,29 @@ pub struct Link {
 #[serde(bound(deserialize = "N: Deserialize<'de> + Default"))]
 #[schemars(bound = "N: JsonSchema + Default")]
 pub enum Geometry<N = f64> {
+    RemoveFaces {
+        body: String,
+        faces: Vec<FaceSelector<N>>,
+    },
+    MoveFaces {
+        body: String,
+        faces: Vec<FaceSelector<N>>,
+        distance: N,
+    },
+    SplitFace {
+        body: String,
+        face: FaceSelector<N>,
+        tool: SplitTool,
+    },
+    Emboss {
+        body: String,
+        face: FaceSelector<N>,
+        sketch: String,
+        depth: N,
+        mode: EmbossMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<[N; 2]>,
+    },
     Instance {
         of: String,
     },
@@ -513,6 +536,23 @@ pub enum Geometry<N = f64> {
         height: N,
         floor: N,
     },
+}
+
+#[cfg(test)]
+mod face_operation_tests;
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SplitTool {
+    Plane { plane: String },
+    Sketch { sketch: String },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbossMode {
+    Raise,
+    Engrave,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -1815,6 +1855,48 @@ impl<N> Geometry<N> {
                     })
                     .collect::<Result<_, String>>()?,
                 ruled: *ruled,
+            },
+            Geometry::RemoveFaces { body, faces } => Geometry::RemoveFaces {
+                body: body.clone(),
+                faces: faces
+                    .iter()
+                    .map(|face| face.map_numbers(map))
+                    .collect::<Result<_, _>>()?,
+            },
+            Geometry::MoveFaces {
+                body,
+                faces,
+                distance,
+            } => Geometry::MoveFaces {
+                body: body.clone(),
+                faces: faces
+                    .iter()
+                    .map(|face| face.map_numbers(map))
+                    .collect::<Result<_, _>>()?,
+                distance: map(distance)?,
+            },
+            Geometry::SplitFace { body, face, tool } => Geometry::SplitFace {
+                body: body.clone(),
+                face: face.map_numbers(map)?,
+                tool: tool.clone(),
+            },
+            Geometry::Emboss {
+                body,
+                face,
+                sketch,
+                depth,
+                mode,
+                at,
+            } => Geometry::Emboss {
+                body: body.clone(),
+                face: face.map_numbers(map)?,
+                sketch: sketch.clone(),
+                depth: map(depth)?,
+                mode: *mode,
+                at: match at {
+                    Some([x, y]) => Some([map(x)?, map(y)?]),
+                    None => None,
+                },
             },
             Geometry::Instance { of } => Geometry::Instance { of: of.clone() },
             Geometry::Sphere { radius } => Geometry::Sphere {

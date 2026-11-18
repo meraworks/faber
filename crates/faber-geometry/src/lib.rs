@@ -47,6 +47,10 @@ impl Kernel for NativeKernel {
             | Geometry::SnapHook { .. }
             | Geometry::Lip { .. }
             | Geometry::Groove { .. }
+            | Geometry::RemoveFaces { .. }
+            | Geometry::MoveFaces { .. }
+            | Geometry::SplitFace { .. }
+            | Geometry::Emboss { .. }
             | Geometry::Offset { .. }
             | Geometry::Draft { .. }
             | Geometry::Thicken { .. } => Err("Operation needs a feature context".into()),
