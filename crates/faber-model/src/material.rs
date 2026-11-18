@@ -12,6 +12,9 @@ pub enum MaterialClass {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MaterialData {
+    /// Maximum design strain for a short snap deflection, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snap_strain_limit: Option<f64>,
     pub name: String,
     pub class: MaterialClass,
     pub density_g_cm3: f64,

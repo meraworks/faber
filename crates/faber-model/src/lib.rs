@@ -1,7 +1,10 @@
 //! Project recipes. Lengths are in millimetres and angles are in degrees.
 
 mod material;
+mod plastic;
 mod printer;
+use plastic::map_lines;
+pub use plastic::{BossRibs, LipLoop, LipSide, RibSide};
 pub use printer::{Clearance, Printer};
 pub mod motion;
 pub mod study;
@@ -113,6 +116,78 @@ pub struct Purchased {
 #[serde(bound(deserialize = "N: Deserialize<'de> + Default"))]
 #[schemars(bound = "N: JsonSchema + Default")]
 pub enum Geometry<N = f64> {
+    Rib {
+        body: String,
+        plane: String,
+        lines: Vec<[[N; 2]; 2]>,
+        thickness: N,
+        side: RibSide,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        draft_deg: Option<N>,
+    },
+    Web {
+        body: String,
+        plane: String,
+        lines: Vec<[[N; 2]; 2]>,
+        thickness: N,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        draft_deg: Option<N>,
+    },
+    Boss {
+        body: String,
+        plane: String,
+        at: [N; 2],
+        diameter: N,
+        height: N,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hole_diameter: Option<N>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hole_depth: Option<N>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        draft_deg: Option<N>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ribs: Option<BossRibs<N>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fillet: Option<N>,
+    },
+    SnapHook {
+        body: String,
+        plane: String,
+        at: [N; 2],
+        angle_deg: N,
+        length: N,
+        width: N,
+        thickness: N,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tip_thickness: Option<N>,
+        undercut: N,
+        hook_length: N,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lead_deg: Option<N>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        return_deg: Option<N>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root_fillet: Option<N>,
+    },
+    Lip {
+        body: String,
+        face: FaceSelector<N>,
+        #[serde(rename = "loop")]
+        loop_: LipLoop,
+        side: LipSide,
+        width: N,
+        height: N,
+    },
+    Groove {
+        body: String,
+        face: FaceSelector<N>,
+        #[serde(rename = "loop")]
+        loop_: LipLoop,
+        side: LipSide,
+        width: N,
+        depth: N,
+        clearance: N,
+    },
     Imported {
         asset: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1276,6 +1351,118 @@ impl<N> Geometry<N> {
         map: &mut impl FnMut(&N) -> Result<T, String>,
     ) -> Result<Geometry<T>, String> {
         Ok(match self {
+            Geometry::Rib {
+                body,
+                plane,
+                lines,
+                thickness,
+                side,
+                draft_deg,
+            } => Geometry::Rib {
+                body: body.clone(),
+                plane: plane.clone(),
+                lines: map_lines(lines, map)?,
+                thickness: map(thickness)?,
+                side: *side,
+                draft_deg: draft_deg.as_ref().map(&mut *map).transpose()?,
+            },
+            Geometry::Web {
+                body,
+                plane,
+                lines,
+                thickness,
+                draft_deg,
+            } => Geometry::Web {
+                body: body.clone(),
+                plane: plane.clone(),
+                lines: map_lines(lines, map)?,
+                thickness: map(thickness)?,
+                draft_deg: draft_deg.as_ref().map(&mut *map).transpose()?,
+            },
+            Geometry::Boss {
+                body,
+                plane,
+                at,
+                diameter,
+                height,
+                hole_diameter,
+                hole_depth,
+                draft_deg,
+                ribs,
+                fillet,
+            } => Geometry::Boss {
+                body: body.clone(),
+                plane: plane.clone(),
+                at: [map(&at[0])?, map(&at[1])?],
+                diameter: map(diameter)?,
+                height: map(height)?,
+                hole_diameter: hole_diameter.as_ref().map(&mut *map).transpose()?,
+                hole_depth: hole_depth.as_ref().map(&mut *map).transpose()?,
+                draft_deg: draft_deg.as_ref().map(&mut *map).transpose()?,
+                ribs: ribs.as_ref().map(|r| r.map_numbers(map)).transpose()?,
+                fillet: fillet.as_ref().map(&mut *map).transpose()?,
+            },
+            Geometry::SnapHook {
+                body,
+                plane,
+                at,
+                angle_deg,
+                length,
+                width,
+                thickness,
+                tip_thickness,
+                undercut,
+                hook_length,
+                lead_deg,
+                return_deg,
+                root_fillet,
+            } => Geometry::SnapHook {
+                body: body.clone(),
+                plane: plane.clone(),
+                at: [map(&at[0])?, map(&at[1])?],
+                angle_deg: map(angle_deg)?,
+                length: map(length)?,
+                width: map(width)?,
+                thickness: map(thickness)?,
+                tip_thickness: tip_thickness.as_ref().map(&mut *map).transpose()?,
+                undercut: map(undercut)?,
+                hook_length: map(hook_length)?,
+                lead_deg: lead_deg.as_ref().map(&mut *map).transpose()?,
+                return_deg: return_deg.as_ref().map(&mut *map).transpose()?,
+                root_fillet: root_fillet.as_ref().map(&mut *map).transpose()?,
+            },
+            Geometry::Lip {
+                body,
+                face,
+                loop_,
+                side,
+                width,
+                height,
+            } => Geometry::Lip {
+                body: body.clone(),
+                face: face.map_numbers(map)?,
+                loop_: *loop_,
+                side: *side,
+                width: map(width)?,
+                height: map(height)?,
+            },
+            Geometry::Groove {
+                body,
+                face,
+                loop_,
+                side,
+                width,
+                depth,
+                clearance,
+            } => Geometry::Groove {
+                body: body.clone(),
+                face: face.map_numbers(map)?,
+                loop_: *loop_,
+                side: *side,
+                width: map(width)?,
+                depth: map(depth)?,
+                clearance: map(clearance)?,
+            },
             Geometry::RevolveSketch {
                 source,
                 origin: [x, y, z],

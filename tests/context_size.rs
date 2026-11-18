@@ -151,7 +151,7 @@ fn schema_tool_gives_one_op() {
 
     let error = session.refused("schema", json!({"kind":"geometry","op":"boxx"}));
     assert!(
-        error.starts_with("Unknown op boxx. Nearest: box."),
+        error.starts_with("Unknown op boxx. Nearest: box, boss."),
         "{error}"
     );
 }

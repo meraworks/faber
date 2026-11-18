@@ -29,6 +29,7 @@ pub fn get(data: &ProjectData, id: &str) -> Result<MaterialData> {
 
 fn owned(m: &library::Material) -> MaterialData {
     MaterialData {
+        snap_strain_limit: None,
         name: m.name.into(),
         class: match m.class {
             Class::Polymer => MaterialClass::Polymer,

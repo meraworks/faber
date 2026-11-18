@@ -40,6 +40,12 @@ impl Kernel for NativeKernel {
                 Err("Operation needs a feature context".into())
             }
             Geometry::Shell { .. }
+            | Geometry::Rib { .. }
+            | Geometry::Web { .. }
+            | Geometry::Boss { .. }
+            | Geometry::SnapHook { .. }
+            | Geometry::Lip { .. }
+            | Geometry::Groove { .. }
             | Geometry::Offset { .. }
             | Geometry::Draft { .. }
             | Geometry::Thicken { .. } => Err("Operation needs a feature context".into()),

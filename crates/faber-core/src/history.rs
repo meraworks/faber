@@ -532,6 +532,12 @@ pub(crate) fn output_error(features: &[Feature], output: &str, error: String) ->
 pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
     match geometry {
         Geometry::Imported { .. } => "imported",
+        Geometry::Rib { .. } => "rib",
+        Geometry::Web { .. } => "web",
+        Geometry::Boss { .. } => "boss",
+        Geometry::SnapHook { .. } => "snap_hook",
+        Geometry::Lip { .. } => "lip",
+        Geometry::Groove { .. } => "groove",
         Geometry::Mirror { .. } => "mirror",
         Geometry::CircularPattern { .. } => "circular_pattern",
         Geometry::LinearPattern { .. } => "linear_pattern",
@@ -588,6 +594,11 @@ pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
 /// Names of the features that a feature reads. The order matches `dependencies`.
 pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
     let names: Vec<&String> = match geometry {
+        Geometry::Rib { body, plane, .. }
+        | Geometry::Web { body, plane, .. }
+        | Geometry::Boss { body, plane, .. }
+        | Geometry::SnapHook { body, plane, .. } => vec![body, plane],
+        Geometry::Lip { body, .. } | Geometry::Groove { body, .. } => vec![body],
         Geometry::SketchOnPlane { plane, .. } => vec![plane],
         Geometry::PlaneAtAngle { axis, from, .. } => match from {
             AngleFrom::Plane(plane) => vec![axis, plane],
@@ -642,6 +653,12 @@ pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
 /// The input solid of a feature that changes one solid. Creation features and references have none.
 pub(crate) fn primary_input<N>(geometry: &Geometry<N>) -> Option<&str> {
     match geometry {
+        Geometry::Rib { body, .. }
+        | Geometry::Web { body, .. }
+        | Geometry::Boss { body, .. }
+        | Geometry::SnapHook { body, .. }
+        | Geometry::Lip { body, .. }
+        | Geometry::Groove { body, .. } => Some(body),
         Geometry::Fillet { source, .. }
         | Geometry::Chamfer { source, .. }
         | Geometry::Shell { source, .. }
