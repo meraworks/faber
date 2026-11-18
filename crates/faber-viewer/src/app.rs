@@ -32,6 +32,53 @@ fn section_normal(azimuth: f64, tilt: f64) -> [f64; 3] {
     ]
 }
 
+// The candidate nearest the view centre that is inside the inner rect and the depth range.
+fn visible_anchor(
+    candidates: impl Iterator<Item = glam::Vec3>,
+    matrix: glam::Mat4,
+    rect: egui::Rect,
+    inner: egui::Rect,
+) -> Option<glam::Vec3> {
+    candidates
+        .filter_map(|point| {
+            let seen = matrix.project_point3(point);
+            let at =
+                rect.center() + Vec2::new(seen.x * rect.width(), -seen.y * rect.height()) * 0.5;
+            let visible = (0.0..=1.0).contains(&seen.z) && inner.contains(at);
+            visible.then(|| (at.distance_sq(rect.center()), point))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, point)| point)
+}
+
+// Centres of the cut-face triangles of the visible bodies. The caps are in world space.
+// At most about 4000 triangles are visited.
+fn cut_centroids(
+    caps: Option<&DrawList>,
+    bodies: &[Body],
+    hidden: &BTreeSet<String>,
+) -> Vec<glam::Vec3> {
+    let Some(caps) = caps else {
+        return Vec::new();
+    };
+    let meshes: Vec<&faber_ports::Mesh> = bodies
+        .iter()
+        .filter(|body| !hidden.contains(&body.id))
+        .filter_map(|body| caps.cap_mesh(&body.id))
+        .collect();
+    let total: usize = meshes.iter().map(|mesh| mesh.triangles.len()).sum();
+    let stride = total.div_ceil(4000).max(1);
+    meshes
+        .iter()
+        .flat_map(|mesh| mesh.triangles.iter().map(move |tri| (*mesh, tri)))
+        .step_by(stride)
+        .map(|(mesh, tri)| {
+            let point = |i: u32| glam::Vec3::from(mesh.vertices[i as usize].map(|v| v as f32));
+            (point(tri[0]) + point(tri[1]) + point(tri[2])) / 3.
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum SectionDrag {
     Move {
@@ -181,6 +228,8 @@ pub struct Shell {
     section_drag: Option<SectionDrag>,
     section_basis: Option<glam::Vec3>,
     section_pivot: Option<glam::Vec3>,
+    // World point where the section handle sits.
+    section_anchor: Option<glam::Vec3>,
     dirty: bool,
     mesh_dirty: bool,
     pub error: Option<String>,
@@ -296,6 +345,7 @@ impl Shell {
             section_drag: None,
             section_basis: None,
             section_pivot: None,
+            section_anchor: None,
             dirty: true,
             mesh_dirty: true,
             error: None,
@@ -2384,7 +2434,24 @@ impl Shell {
                     rect.center() + Vec2::new(seen.x * rect.width(), -seen.y * rect.height()) * 0.5;
                 let inside = rect.shrink(90f32.min(rect.size().min_elem() * 0.4));
                 let in_depth = (0.0..=1.0).contains(&seen.z);
-                if !in_depth || !inside.contains(at) {
+                let outside = !in_depth || !inside.contains(at);
+                let cut = outside
+                    .then(|| {
+                        let caps = self
+                            .caps
+                            .as_ref()
+                            .filter(|_| self.cap_plane == Some(self.plane));
+                        visible_anchor(
+                            cut_centroids(caps, &self.bodies, &self.hidden).into_iter(),
+                            matrix,
+                            rect,
+                            inside,
+                        )
+                    })
+                    .flatten();
+                if let Some(point) = cut {
+                    anchor = point;
+                } else if outside {
                     let target = if in_depth {
                         inside.clamp(at)
                     } else {
@@ -2404,6 +2471,7 @@ impl Shell {
                     }
                 }
             }
+            self.section_anchor = Some(anchor);
             let screen = |world| {
                 let p = matrix.project_point3(world);
                 rect.center() + Vec2::new(p.x * rect.width(), -p.y * rect.height()) * 0.5
@@ -3679,6 +3747,109 @@ mod tests {
     }
     use egui_kittest::kittest::Queryable;
     use faber_model::{Geometry, Part, Placement, Profile};
+
+    #[test]
+    fn visible_anchor_takes_the_point_nearest_the_centre() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0., 0.), egui::vec2(400., 400.));
+        let inner = rect.shrink(40.);
+        // The identity matrix maps a point to the normalised view: x and y in -1..1.
+        let off = glam::Vec3::new(0.95, 0., 0.5);
+        let far = glam::Vec3::new(0.5, 0., 0.5);
+        let near = glam::Vec3::new(0.1, 0.1, 0.5);
+        let behind = glam::Vec3::new(0., 0., 1.5);
+        let chosen = visible_anchor(
+            [off, far, near].into_iter(),
+            glam::Mat4::IDENTITY,
+            rect,
+            inner,
+        );
+        assert_eq!(chosen, Some(near));
+        let none = visible_anchor([off, behind].into_iter(), glam::Mat4::IDENTITY, rect, inner);
+        assert_eq!(none, None);
+    }
+
+    #[test]
+    fn section_handle_sits_on_the_visible_cut() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project =
+            faber_wiring::open(dir.path(), true, Some("Handle cut test".into())).unwrap();
+        let geometry: Geometry<faber_model::Scalar> = serde_json::from_value(serde_json::json!({
+            "op": "history",
+            "features": [{"id": "block", "geometry": {"op": "box", "size": [400, 400, 400]}}],
+            "output": "block"
+        }))
+        .unwrap();
+        let part = Part {
+            name: "Block".into(),
+            geometry,
+            placement: Placement::default(),
+            colour: [130, 170, 180],
+            group: String::new(),
+            note: String::new(),
+        };
+        project.put_part("block".into(), part).unwrap();
+        let (data, bodies) = faber_wiring::read(dir.path()).unwrap();
+        let root = dir.path().to_path_buf();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1440., 1100.))
+            .wgpu_setup(crate::gpu_setup())
+            .build_eframe(move |cc| Shell::new(cc, root, data, bodies, None));
+        for _ in 0..5 {
+            harness.step();
+        }
+        harness.key_press(egui::Key::S);
+        for _ in 0..3 {
+            harness.step();
+        }
+        assert!(harness.state().section_on);
+        // Cut through the box interior at x = 200. The box spans 0..400 on each axis.
+        harness.state_mut().plane.offset = 200.;
+        // Aim near a cap triangle centroid, away from the model centre (200, 200, 200).
+        {
+            let camera = &mut harness.state_mut().camera;
+            camera.target = glam::Vec3::new(200., 267., 133.);
+            camera.distance = 60.;
+        }
+        for _ in 0..3 {
+            harness.step();
+        }
+        let view = harness.get_by_label("Model viewport").rect();
+        let matrix = harness.state().camera.matrix(view.aspect_ratio());
+        let centre = matrix.project_point3(glam::Vec3::new(200., 200., 200.));
+        assert!(
+            centre.x.abs() > 1. || centre.y.abs() > 1. || !(0.0..=1.0).contains(&centre.z),
+            "The model centre must be off the view: {centre:?}"
+        );
+        let state = harness.state();
+        let anchor = state.section_anchor.expect("The handle has no anchor");
+        let normal = glam::Vec3::from(state.plane.normal.map(|x| x as f32)).normalize();
+        let on_plane = normal.dot(anchor) - state.plane.offset as f32;
+        assert!(
+            on_plane.abs() < 1e-3,
+            "Anchor {anchor:?} is off the cut plane"
+        );
+        assert!(
+            (-1e-3..=400. + 1e-3).contains(&anchor.y) && (-1e-3..=400. + 1e-3).contains(&anchor.z),
+            "Anchor {anchor:?} is off the cut face"
+        );
+        // The cut centre is in view. The handle must sit near it, not at the view edge.
+        let seen = matrix.project_point3(anchor);
+        let at =
+            view.center() + egui::Vec2::new(seen.x * view.width(), -seen.y * view.height()) * 0.5;
+        assert!(
+            at.distance(view.center()) < view.height() * 0.25,
+            "Handle centre {at:?} is not near the view centre"
+        );
+        let handle = harness
+            .ctx
+            .read_response(egui::Id::unique("section_offset_handle"))
+            .unwrap()
+            .rect;
+        assert!(
+            view.contains(handle.min) && view.contains(handle.max),
+            "Handle {handle:?} is outside the view {view:?}"
+        );
+    }
 
     #[test]
     fn section_handle_stays_in_view_when_zoomed_in() {
