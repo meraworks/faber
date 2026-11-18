@@ -39,6 +39,10 @@ pub(super) struct InfoCache {
 }
 
 impl Shell {
+    pub(super) fn section_for_body(&self, id: &str) -> Option<Section> {
+        (self.section_on && (self.section_scope.is_empty() || self.section_scope.contains(id)))
+            .then_some(self.plane)
+    }
     pub(super) fn set_filter(&mut self, filter: SelectFilter) {
         if self.select_filter == filter {
             return;
@@ -82,7 +86,7 @@ impl Shell {
                 if !faber_scene::ray_hits_bounds(body.bounds, origin, direction) {
                     return None;
                 }
-                let cut = self.section_on.then(|| self.plane.in_body(pose));
+                let cut = self.section_for_body(&body.id).map(|p| p.in_body(pose));
                 let (distance, triangle) =
                     faber_scene::pick_triangle(&body.mesh, origin, direction, cut)?;
                 Some((body, triangle, distance))
@@ -105,7 +109,7 @@ impl Shell {
             [rect.min.into(), rect.max.into()],
             pos.into(),
             8.,
-            self.section_on.then_some(self.plane),
+            self.section_for_body(&body.id),
             |hit| {
                 let point = DVec3::from(hit.point);
                 let Some(at) = move_tool::screen_point(rect, matrix, point) else {
@@ -407,11 +411,11 @@ impl Shell {
                 {
                     let mut a = transform.transform_point3(segment[0].into());
                     let mut b = transform.transform_point3(segment[1].into());
-                    if self.section_on {
-                        let n = DVec3::from(self.plane.normal).normalize();
-                        let sign = if self.plane.reverse { -1. } else { 1. };
-                        let da = sign * (n.dot(a) - self.plane.offset);
-                        let db = sign * (n.dot(b) - self.plane.offset);
+                    if let Some(plane) = self.section_for_body(&body.id) {
+                        let n = DVec3::from(plane.normal).normalize();
+                        let sign = if plane.reverse { -1. } else { 1. };
+                        let da = sign * (n.dot(a) - plane.offset);
+                        let db = sign * (n.dot(b) - plane.offset);
                         if da > 0. && db > 0. {
                             continue;
                         }

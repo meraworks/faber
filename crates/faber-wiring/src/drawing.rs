@@ -5,18 +5,12 @@ mod project_view;
 use faber_core::Project;
 pub use faber_drawing::Rendered;
 use faber_drawing::{ModelSource, PartRow, Resolved};
-use faber_model::{
-    Geometry,
-    drawing::{Anchor, Drawing, Sheet},
-};
+use faber_model::drawing::{Anchor, Drawing, Sheet};
 use faber_ports::{
     Body, Result,
     drawing::{Projection2, ViewFrame},
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::{collections::BTreeSet, path::Path};
 
 pub struct DrawingModel<'a> {
     project: &'a Project,
@@ -102,49 +96,27 @@ impl ModelSource for DrawingModel<'_> {
     fn parts_list(&self, parts: &[String]) -> Result<Vec<PartRow>> {
         self.project
             .cached("drawing_parts_list", &format!("{parts:?}"), || {
-                let mut rows = BTreeMap::<String, PartRow>::new();
-                for body in self.bodies(parts)? {
-                    let part = &self.project.data.parts[&body.id];
-                    let (geometry, _) = self.project.local_geometry(&body.id)?;
-                    let key = serde_json::to_string(&(geometry, &part.material))
-                        .map_err(|e| e.to_string())?;
-                    if let Some(row) = rows.get_mut(&key) {
-                        row.quantity += 1;
-                        continue;
-                    }
-                    let material = part
-                        .material
-                        .as_ref()
-                        .map(|id| faber_core::materials::get(&self.project.data, id))
-                        .transpose()?;
-                    let purchased_mass = match geometry {
-                        Geometry::Imported {
-                            purchased: Some(item),
-                            ..
-                        } => item.mass_g,
-                        _ => None,
-                    };
-                    let mass_g = match (purchased_mass, &material) {
-                        (Some(m), _) => Some(m),
-                        (_, Some(m)) if body.shape.is_some() => {
-                            Some(body.volume * m.density_g_cm3 / 1000.)
-                        }
-                        (_, Some(m)) => crate::mesh_edit::report(self.project, &body.id)?
-                            .volume_mm3
-                            .map(|v| v.abs() * m.density_g_cm3 / 1000.),
-                        _ => None,
-                    };
-                    rows.insert(
-                        key,
-                        PartRow {
-                            quantity: 1,
-                            name: body.name.clone(),
+                let rows = faber_core::bom::selected(
+                    &self.project.data,
+                    self.bodies(parts)?.into_iter(),
+                    None,
+                    true,
+                );
+                rows.into_iter()
+                    .map(|row| {
+                        let material = row
+                            .material
+                            .as_deref()
+                            .map(|id| faber_core::materials::get(&self.project.data, id))
+                            .transpose()?;
+                        Ok(PartRow {
+                            quantity: row.quantity as usize,
+                            name: row.name,
                             material: material.map(|m| m.name).unwrap_or_default(),
-                            mass_g,
-                        },
-                    );
-                }
-                Ok(rows.into_values().collect())
+                            mass_g: row.mass_g.map(|m| m / f64::from(row.quantity)),
+                        })
+                    })
+                    .collect()
             })
     }
     fn limits(&self, parts: &[String]) -> Vec<String> {
@@ -153,18 +125,7 @@ impl ModelSource for DrawingModel<'_> {
     }
 }
 
-/// Read the current design without taking the editor's file lock.
-pub fn open_snapshot(path: &Path) -> Result<Project> {
-    for _ in 0..3 {
-        let before = faber_files::fingerprint(path)?;
-        let data = faber_files::read_committed(path);
-        if before == faber_files::fingerprint(path)? {
-            let cache = faber_files::FileFeatureCache::read_only(path);
-            return crate::preview_with_cache(path, data?, Some(std::sync::Arc::new(cache)));
-        }
-    }
-    Err("The design changed while the drawing was loading.".into())
-}
+pub use crate::read_snapshot as open_snapshot;
 
 pub fn render(project: &Project, id: &str) -> Result<Rendered> {
     let drawing = project

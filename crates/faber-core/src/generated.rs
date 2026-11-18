@@ -19,6 +19,11 @@ pub fn regenerate(
     parts: BTreeMap<String, Part<Scalar>>,
 ) -> Result<ProjectData> {
     for (id, old) in &current.parts {
+        if let Some(part) = parts.get(id)
+            && part.geometry != old.geometry
+        {
+            crate::assets::refuse_link_edit(id, old)?;
+        }
         let purchased = matches!(
             old.geometry,
             Geometry::Imported {
@@ -74,6 +79,7 @@ pub fn regenerate(
 fn placement_only(current: Option<&Part<Scalar>>, part: &Part<Scalar>) -> bool {
     current.is_some_and(|old| {
         old.name == part.name
+            && old.component == part.component
             && old.material == part.material
             && old.colour == part.colour
             && old.group == part.group
@@ -85,8 +91,12 @@ fn placement_only(current: Option<&Part<Scalar>>, part: &Part<Scalar>) -> bool {
 impl Project {
     /// Saves the parts that a design source gives. The save is one undo step.
     pub fn save_generated(&mut self, data: ProjectData) -> Result<()> {
-        self.sync()?;
-        self.apply(data)
+        self.save_generated_checked(data, false)
+    }
+
+    pub fn save_generated_checked(&mut self, data: ProjectData, strict: bool) -> Result<()> {
+        self.check_edit_revision(data.revision)?;
+        self.apply_history(data, None, strict)
     }
 
     /// Moves the history like `undo` or `redo`, then gives the parts of the
@@ -149,7 +159,60 @@ impl Project {
 
     /// Sets the file name of the design source. `None` means a project with no source.
     pub fn set_source(&mut self, source: Option<String>) {
+        if self.source != source {
+            self.source_components.clear();
+        }
         self.source = source;
+    }
+
+    /// Set the component frames owned by the last accepted design source.
+    pub fn set_source_components(&mut self, ids: std::collections::BTreeSet<String>) {
+        self.source_components = ids;
+    }
+
+    pub(crate) fn check_component_edit(
+        &self,
+        data: &ProjectData,
+        operation: &Operation,
+    ) -> Result<()> {
+        let Some(source) = &self.source else {
+            return Ok(());
+        };
+        let (id, remove_contents) = match operation {
+            Operation::MoveComponent { id, .. } | Operation::AlignComponent { id, .. } => {
+                (id, false)
+            }
+            Operation::Edit(edit) => match &**edit {
+                Edit::SetComponent { id, .. } => (id, false),
+                Edit::RemoveComponent { id, keep_parts } => (id, *keep_parts),
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        if self.source_components.contains(id) {
+            return Err(format!(
+                "Change component {id} in {source}, then build the project."
+            ));
+        }
+        if remove_contents {
+            if let Some(child) = self.source_components.iter().find(|child| {
+                data.components.get(*child).and_then(|c| c.parent.as_ref()) == Some(id)
+            }) {
+                return Err(format!(
+                    "Change the parent of component {child} in {source} before removing {id}."
+                ));
+            }
+            if let Some((part, _)) = data
+                .parts
+                .iter()
+                .find(|(_, part)| part.component.as_ref() == Some(id))
+            {
+                return Err(format!(
+                    "Change the component of part {part} in {source} before removing {id}."
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Sets the error of the last design source build. `None` clears it.
@@ -224,8 +287,9 @@ impl Project {
                 }
                 Edit::RemoveConfiguration { .. } => false,
                 Edit::UseConfiguration { .. } => true,
-                Edit::SetComponent { .. } | Edit::RemoveComponent { .. } => true,
-                Edit::SetDrawing { .. }
+                Edit::SetComponent { .. }
+                | Edit::RemoveComponent { .. }
+                | Edit::SetDrawing { .. }
                 | Edit::RemoveDrawing { .. }
                 | Edit::SetPrinter { .. }
                 | Edit::SetStudy { .. }
@@ -243,10 +307,14 @@ impl Project {
                 | Edit::MoveFeature { .. }
                 | Edit::SetSuppressed { .. } => true,
             },
-            Operation::SetPartInfo(_) => true,
+            Operation::MoveLinked { .. }
+            | Operation::MakeIndependent { .. }
+            | Operation::SetPartInfo(_) => true,
             // A copy adds a part. A move or an alignment only changes a placement.
             Operation::Move { copy_as, .. } => copy_as.is_some(),
-            Operation::Align { .. } => false,
+            Operation::MoveComponent { .. }
+            | Operation::AlignComponent { .. }
+            | Operation::Align { .. } => false,
         }
     }
 }

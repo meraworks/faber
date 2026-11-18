@@ -11,6 +11,25 @@ use serde::Deserialize;
 pub enum Operation {
     SetPartInfo(PartInfoOperation),
     Edit(Box<Edit>),
+    MoveLinked {
+        id: String,
+        motion: Motion,
+        copy_as: String,
+    },
+    MakeIndependent {
+        id: String,
+    },
+    MoveComponent {
+        id: String,
+        motion: Motion,
+    },
+    AlignComponent {
+        id: String,
+        target: String,
+        axes: Vec<Axis>,
+        mode: AlignMode,
+        gap_mm: f64,
+    },
     /// Moves a part. Its box is read from the state before this operation.
     Move {
         id: String,
@@ -53,6 +72,8 @@ pub struct PartInfo {
     pub colour: Option<[u8; 3]>,
     /// New group name.
     pub group: Option<String>,
+    /// New component id. An empty id detaches the part.
+    pub component: Option<String>,
     /// New note.
     pub note: Option<String>,
 }
@@ -65,7 +86,8 @@ pub enum PartInfoOperation {
 }
 
 fn part_info(data: &mut ProjectData, info: PartInfo) -> Result<()> {
-    if info.material.is_none()
+    if info.component.is_none()
+        && info.material.is_none()
         && info.name.is_none()
         && info.colour.is_none()
         && info.group.is_none()
@@ -79,6 +101,9 @@ fn part_info(data: &mut ProjectData, info: PartInfo) -> Result<()> {
         .is_some_and(|name| name.trim().is_empty())
     {
         return Err("Part needs a name".into());
+    }
+    if let Some(target) = info.component {
+        crate::components::reparent(data, &info.id, (!target.is_empty()).then_some(target))?;
     }
     let part = data
         .parts
@@ -117,6 +142,8 @@ fn history<'a>(
         .parts
         .get_mut(id)
         .ok_or_else(|| format!("Unknown part: {id}"))?;
+    crate::assets::refuse_link_edit(id, part)?;
+    crate::instances::refuse_edit(id, part)?;
     let Geometry::History { features, output } = &mut part.geometry else {
         return Err("Part has no feature history".into());
     };
@@ -145,6 +172,12 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             data.params.insert(name, expression);
         }
         Edit::PutPart { id, part } => {
+            if let Some(old) = data.parts.get(&id)
+                && old.geometry != part.geometry
+            {
+                crate::assets::refuse_link_edit(&id, old)?;
+                crate::instances::refuse_edit(&id, old)?;
+            }
             if let Some(previous) = data.parts.get(&id)
                 && matches!(
                     &previous.geometry,
@@ -160,6 +193,7 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             data.parts.insert(id, part);
         }
         Edit::RemovePart { id } => {
+            crate::instances::check_removal(data, &id)?;
             data.parts
                 .remove(&id)
                 .ok_or_else(|| format!("Unknown part: {id}"))?;
@@ -398,6 +432,15 @@ impl Project {
         let operations = to_operations(edits);
         self.refuse_generated_operations(&operations)?;
         let candidate = self.candidate(operations)?;
+        self.save_with_assets(candidate, sources, false)
+    }
+    pub(crate) fn save_with_assets(
+        &mut self,
+        candidate: ProjectData,
+        sources: std::collections::BTreeMap<String, std::path::PathBuf>,
+        strict: bool,
+    ) -> Result<()> {
+        self.refuse_broken_source()?;
         if candidate == self.data {
             return Ok(());
         }
@@ -410,7 +453,7 @@ impl Project {
                 return Err("A staged asset changed before the build.".into());
             }
         }
-        let prepared = self.prepare_with_assets(candidate, false, sources.clone())?;
+        let prepared = self.prepare_with_assets(candidate, strict, sources.clone())?;
         for (key, path) in sources {
             if store.put(&path)? != key {
                 return Err("A staged asset changed during the build.".into());
@@ -452,23 +495,21 @@ struct Boxes<'a> {
 
 impl Boxes<'_> {
     fn of(&self, data: &ProjectData, id: &str) -> Result<[[f64; 3]; 2]> {
-        let part = data
-            .parts
-            .get(id)
-            .ok_or_else(|| format!("Unknown part: {id}"))?;
         let values = faber_expr::resolve(&data.params)?;
-        let resolved = resolve_part(part, &values)?;
+        let source = crate::instances::owner(data, id)?;
+        let resolved = resolve_part(&data.parts[source], &values)?;
         let kernel = self.project.kernel.as_ref();
+        let world = crate::components::placement(crate::world_placement(data, id)?);
         let placed = match self
             .project
             .locals
             .get(id)
             .filter(|local| local.geometry == resolved.geometry)
         {
-            Some(local) => body_cache::place(local, &resolved.placement, kernel)?,
+            Some(local) => body_cache::place(local, &world, kernel)?,
             None => {
                 let local = candidate_local(data, id, kernel, self.project.assets.as_deref())?;
-                body_cache::place(&local, &resolved.placement, kernel)?
+                body_cache::place(&local, &world, kernel)?
             }
         };
         Ok(placed.bounds)
@@ -479,6 +520,50 @@ fn operation(data: &mut ProjectData, boxes: &Boxes<'_>, operation: Operation) ->
     match operation {
         Operation::Edit(edit_operation) => edit(data, *edit_operation),
         Operation::SetPartInfo(PartInfoOperation::SetPartInfo(info)) => part_info(data, info),
+        Operation::MakeIndependent { id } => crate::instances::detach(data, &id),
+        Operation::MoveLinked {
+            id,
+            motion,
+            copy_as,
+        } => {
+            let mut copy = crate::instance_part(data, &id, &copy_as)?;
+            let placement = move_edit(data, &id, &motion, boxes.of(data, &id)?, None)?;
+            let Edit::PutPart { part, .. } = placement else {
+                unreachable!()
+            };
+            copy.placement = part.placement;
+            edit(
+                data,
+                Edit::PutPart {
+                    id: copy_as,
+                    part: copy,
+                },
+            )
+        }
+        Operation::MoveComponent { id, motion } => {
+            let changed = crate::placement::move_component_edit(data, &id, &motion, |part| {
+                boxes.of(data, part)
+            })?;
+            edit(data, changed)
+        }
+        Operation::AlignComponent {
+            id,
+            target,
+            axes,
+            mode,
+            gap_mm,
+        } => {
+            let changed = crate::placement::align_component_edit(
+                data,
+                &id,
+                &target,
+                &axes,
+                mode,
+                gap_mm,
+                |part| boxes.of(data, part),
+            )?;
+            edit(data, changed)
+        }
         Operation::Move {
             id,
             motion,
@@ -514,13 +599,26 @@ impl Project {
         let mut next = self.data.clone();
         let boxes = Boxes { project: self };
         for (position, item) in operations.into_iter().enumerate() {
-            operation(&mut next, &boxes, item).map_err(|e| {
-                if several {
-                    format!("Batch operation {}: {e}", position + 1)
-                } else {
-                    e
-                }
-            })?;
+            self.check_component_edit(&next, &item)
+                .and_then(|()| operation(&mut next, &boxes, item))
+                .map_err(|e| {
+                    if several {
+                        format!("Batch operation {}: {e}", position + 1)
+                    } else {
+                        e
+                    }
+                })?;
+        }
+        // A removal and insertion in the same edit must respect file links.
+        for (id, old) in &self.data.parts {
+            if matches!(&old.geometry, Geometry::Imported { link: Some(_), .. })
+                && next
+                    .parts
+                    .get(id)
+                    .is_some_and(|p| p.geometry != old.geometry)
+            {
+                crate::assets::refuse_link_edit(id, old)?;
+            }
         }
         Ok(next)
     }

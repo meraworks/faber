@@ -4,7 +4,7 @@
 //! OK sets the placement of the part in one edit.
 
 use super::*;
-use faber_core::{AlignMode, Axis, Motion, align_shift, refuse_purchased_copy, tidy, union_box};
+use faber_core::{AlignMode, Axis, Motion, align_shift, tidy, union_box};
 use faber_model::{Edit, Part, Placement, Scalar};
 use glam::{DMat3, DMat4, DQuat, DVec3, EulerRot, Mat4};
 use std::borrow::Cow;
@@ -157,6 +157,7 @@ pub(super) struct MoveDraft {
     pivot_mode: PivotMode,
     position: [String; 3],
     copy: bool,
+    linked: bool,
     error: Option<&'static str>,
     drag: Option<Drag>,
     // World boxes of all bodies before the move.
@@ -316,13 +317,19 @@ fn copy_id(parts: &BTreeMap<String, Part<Scalar>>, id: &str) -> String {
     }
 }
 
-/// Saves the new placement of each part in one batch. With `copy`, adds a copy of each part.
-/// Each copy keeps its source.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CopyMode {
+    Move,
+    Independent,
+    Linked,
+}
+
+/// Save all world placements in their parent component frames in one batch.
 pub(super) fn commit(
     root: &Path,
     expected: &ProjectData,
     moves: Vec<(String, Placement<Scalar>)>,
-    copy: bool,
+    mode: CopyMode,
     strict: bool,
 ) -> Result<(ProjectData, Vec<Body>), String> {
     let mut project = faber_wiring::open(root, false, None)?;
@@ -331,16 +338,29 @@ pub(super) fn commit(
     }
     let mut operations = Vec::with_capacity(moves.len());
     for (id, placement) in moves {
-        let mut part = expected.parts.get(&id).ok_or("Part is missing")?.clone();
-        if copy {
-            refuse_purchased_copy(&id, &part)?;
-        }
-        part.placement = placement;
-        let target = if copy {
-            part.name = format!("{} copy", part.name);
-            copy_id(&expected.parts, &id)
+        let target = if mode == CopyMode::Move {
+            id.clone()
         } else {
-            id
+            copy_id(&expected.parts, &id)
+        };
+        let mut part = if mode == CopyMode::Linked {
+            faber_core::instance_part(expected, &id, &target)?
+        } else if mode == CopyMode::Independent {
+            let mut part = faber_core::independent_part(expected, &id)?;
+            part.name = format!("{} copy", part.name);
+            part
+        } else {
+            expected.parts.get(&id).ok_or("Part is missing")?.clone()
+        };
+        part.placement = if part.component.is_some() {
+            let world = fixed_placement(&placement).ok_or(PARAMETER_REFUSED)?;
+            let matrix = glam::DAffine3::from_rotation_translation(
+                placement_rotation(world.rotation),
+                world.translation.into(),
+            );
+            numbers(&faber_core::local_placement(expected, &id, matrix)?)
+        } else {
+            placement
         };
         operations.push(Edit::PutPart { id: target, part });
     }
@@ -350,6 +370,20 @@ pub(super) fn commit(
         project.batch(operations)?;
     }
     Ok((project.data, project.bodies))
+}
+
+fn fixed_world(data: &ProjectData, id: &str) -> Option<Placement<f64>> {
+    let part = data.parts.get(id)?;
+    let local = fixed_placement(&part.placement)?;
+    if part.component.is_none() {
+        return Some(local);
+    }
+    let world = faber_core::world_placement(data, id).ok()?;
+    let (_, rotation, translation) = world.to_scale_rotation_translation();
+    Some(Placement {
+        translation: translation.into(),
+        rotation: euler_degrees(rotation),
+    })
 }
 
 /// Relative move of a group of parts. The turn is about the common centre of the group.
@@ -371,12 +405,7 @@ pub(super) fn relative_moves(
     let turn = placement_rotation(rotation);
     ids.iter()
         .map(|id| {
-            let part = data
-                .parts
-                .get(id)
-                .ok_or_else(|| format!("Unknown part: {id}"))?;
-            let base = fixed_placement(&part.placement)
-                .ok_or_else(|| GROUP_PARAMETER_REFUSED.to_string())?;
+            let base = fixed_world(data, id).ok_or_else(|| GROUP_PARAMETER_REFUSED.to_string())?;
             Ok((id.clone(), numbers(&compose(base, pivot, translate, turn))))
         })
         .collect()
@@ -822,21 +851,17 @@ impl Shell {
         if !self.placement_available() {
             return;
         }
-        let Some(part) = self.data.parts.get(id) else {
+        if !self.data.parts.contains_key(id) {
             return;
-        };
-        let Some(base) = fixed_placement(&part.placement) else {
+        }
+        let Some(base) = fixed_world(&self.data, id) else {
             self.error = Some(PARAMETER_REFUSED.into());
             return;
         };
         // The other selected parts move with the primary part.
         let mut others = Vec::new();
         for other in self.others_with(id) {
-            let placed = self
-                .data
-                .parts
-                .get(&other)
-                .and_then(|part| fixed_placement(&part.placement));
+            let placed = fixed_world(&self.data, &other);
             let Some(placed) = placed else {
                 self.error = Some(PARAMETER_REFUSED.into());
                 return;
@@ -882,6 +907,7 @@ impl Shell {
             pivot_mode: PivotMode::Centre,
             position: pivot.to_array().map(mm_text),
             copy: false,
+            linked: false,
             error: None,
             drag: None,
             bounds: self
@@ -922,7 +948,11 @@ impl Shell {
             .into_iter()
             .map(|(id, result)| (id, numbers(&result)))
             .collect();
-        let copy = draft.copy;
+        let copy = match (draft.copy, draft.linked) {
+            (false, _) => CopyMode::Move,
+            (true, false) => CopyMode::Independent,
+            (true, true) => CopyMode::Linked,
+        };
         let root = self.root.clone();
         let expected = draft.expected.clone();
         let strict = self.strict_edits;
@@ -960,7 +990,7 @@ impl Shell {
         let Some(draft) = &mut self.move_draft else {
             return;
         };
-        draft.read_fields();
+        let previous = (draft.pivot_point(), draft.motion());
         let viewport = draft.viewport.unwrap_or_else(|| ctx.content_rect());
         let anchor = viewport.right_top() + Vec2::new(-PANEL_WIDTH - PANEL_MARGIN, PANEL_MARGIN);
         let mut apply = false;
@@ -1108,8 +1138,13 @@ impl Shell {
                         );
                     });
                 ui.add_space(4.);
-                ui.checkbox(&mut draft.copy, "Create copy");
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut draft.copy, "Create copy");
+                    ui.add_enabled(draft.copy, egui::Checkbox::new(&mut draft.linked, "Linked copy"))
+                        .on_hover_text("Use the source geometry when it changes.");
                 });
+                });
+                draft.read_fields();
                 ui.horizontal(|ui| {
                     apply = ui
                         .add_enabled(
@@ -1134,6 +1169,10 @@ impl Shell {
             },
         );
         draft.panel_rect = shown;
+        if previous != (draft.pivot_point(), draft.motion()) {
+            self.dirty = true;
+            ctx.request_repaint();
+        }
         cancel |= event == super::WindowEvent::Cancel;
         apply |= event == super::WindowEvent::Apply;
         if apply {
@@ -1314,13 +1353,8 @@ impl Shell {
             let pose = poses
                 .get(&body.id)
                 .map_or(DMat4::IDENTITY, |m| m.as_dmat4());
-            let inverse = pose.inverse();
-            let Some(depth) = faber_scene::pick_visible(
-                &body.mesh,
-                inverse.transform_point3(eye),
-                inverse.transform_vector3(ray),
-                None,
-            ) else {
+            let plane = self.section_for_body(&body.id);
+            let Some(depth) = self.surface_depth(body, pose, eye, ray) else {
                 continue;
             };
             if surface.is_none_or(|(nearest, _)| depth < nearest) {
@@ -1329,6 +1363,16 @@ impl Shell {
             // A vertex counts when it is in front of the hit surface and near the pointer.
             for local in &body.mesh.vertices {
                 let world = pose.transform_point3(DVec3::from(*local));
+                if plane.is_some_and(|p| {
+                    let distance = DVec3::from(p.normal).normalize().dot(world) - p.offset;
+                    if p.reverse {
+                        distance < -SURFACE_TOLERANCE_MM
+                    } else {
+                        distance > SURFACE_TOLERANCE_MM
+                    }
+                }) {
+                    continue;
+                }
                 let along = (world - eye).dot(ray);
                 if !(0. ..=depth + SURFACE_TOLERANCE_MM).contains(&along) {
                     continue;
@@ -1564,6 +1608,36 @@ mod tests {
         }
         assert_eq!(copy_id(&parts, "bin"), "bin_copy2");
         assert_eq!(copy_id(&parts, "pin"), "pin_copy");
+    }
+
+    #[test]
+    fn independent_move_copy_of_an_instance_uses_the_source_geometry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = faber_wiring::open(dir.path(), true, Some("Move copies".into())).unwrap();
+        let part: Part<f64> = serde_json::from_value(serde_json::json!({
+            "name":"Plate","colour":[100,110,120],"geometry":{"op":"box","size":[2,3,4]}
+        }))
+        .unwrap();
+        project.put_part("plate".into(), part).unwrap();
+        project
+            .move_linked("plate", &Motion::Translate([10., 0., 0.]), "spare")
+            .unwrap();
+        let before = project.data.clone();
+        drop(project);
+        let placement = before.parts["spare"].placement.clone();
+        let (after, _) = commit(
+            dir.path(),
+            &before,
+            vec![("spare".into(), placement.clone())],
+            CopyMode::Independent,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            after.parts["spare_copy"].geometry,
+            before.parts["plate"].geometry
+        );
+        assert_eq!(after.parts["spare_copy"].placement, placement);
     }
 
     fn bin_project(dir: &Path) {
@@ -1993,6 +2067,64 @@ mod tests {
         assert_eq!(snapped(-7.6, 15.), -15.);
         assert_eq!(snapped(29.9, 15.), 30.);
         assert_eq!(snapped(2.6, SNAP_MM), 3.);
+    }
+
+    #[test]
+    fn moving_a_part_updates_its_cut_face_and_cancel_restores_it() {
+        let (_dir, mut h) = super::super::controls_fixture::two_blocks();
+        h.state_mut().section_on = true;
+        h.state_mut().plane = faber_scene::Section {
+            normal: [0., 0., 1.],
+            offset: 5.,
+            reverse: false,
+        };
+        h.step();
+        fn left_edge(h: &egui_kittest::Harness<'_, Shell>) -> f64 {
+            h.state()
+                .caps
+                .as_ref()
+                .unwrap()
+                .cap_mesh("left")
+                .unwrap()
+                .vertices
+                .iter()
+                .map(|p| p[0])
+                .fold(f64::INFINITY, f64::min)
+        }
+        let before = left_edge(&h);
+        h.get_by_role_and_label(egui::Role::Button, "left").click();
+        for _ in 0..3 {
+            h.step();
+        }
+        h.get_by_role_and_label(egui::Role::Button, "Move/Copy")
+            .click();
+        for _ in 0..4 {
+            h.step();
+        }
+        assert!(h.state().move_draft.is_some(), "{:?}", h.state().error);
+        h.get_by_label("X distance").click();
+        h.step();
+        h.get_by_label("X distance").type_text("10");
+        h.step();
+        h.step();
+        let draft = h.state().move_draft.as_ref().unwrap();
+        assert_eq!(draft.part, "left");
+        assert_eq!(
+            draft.translate.x, 10.,
+            "The distance field did not move the part."
+        );
+        let pose = h.state().move_poses()["left"];
+        assert!((pose.w_axis.x - 10.).abs() < 1e-5, "{pose:?}");
+        assert_eq!(h.state().cap_poses.get("left"), Some(&pose));
+        let after = left_edge(&h);
+        assert!(
+            (after - before - 10.).abs() < 1e-5,
+            "Cut face at {before} mm moved to {after} mm."
+        );
+        h.get_by_label("Cancel").click();
+        h.step();
+        h.step();
+        assert!((left_edge(&h) - before).abs() < 1e-5);
     }
 
     #[test]

@@ -1,0 +1,30 @@
+{
+  "component": "left",
+  "material": "steel-s235",
+  "schema": 1,
+  "name": "Support",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "bar",
+        "geometry": {
+          "op": "box",
+          "size": [
+            10.0,
+            44.0,
+            35.0
+          ]
+        }
+      }
+    ],
+    "output": "bar"
+  },
+  "colour": [
+    120,
+    131,
+    139
+  ],
+  "group": "",
+  "note": ""
+}

@@ -279,13 +279,21 @@ pub fn plain(id: &str, placement: &Placement<Scalar>) -> Result<Placement> {
 /// Resolve the placement of each part for an assembly export.
 pub fn resolved(data: &ProjectData) -> Result<std::collections::BTreeMap<String, Placement>> {
     let values = faber_expr::resolve(&data.params)?;
+    let frames = crate::components::frames(data)?;
     data.parts
         .iter()
         .map(|(id, part)| {
             let placement = part
                 .placement
                 .map_numbers(&mut |s| crate::number(s, &values))?;
-            Ok((id.clone(), placement))
+            let world = match part.component.as_deref() {
+                None => placement,
+                Some(c) => crate::components::placement(
+                    crate::components::parent_frame(&frames, Some(c))?
+                        * crate::components::affine(&placement),
+                ),
+            };
+            Ok((id.clone(), world))
         })
         .collect()
 }
@@ -312,8 +320,30 @@ pub fn move_edit(
     copy_as: Option<&str>,
 ) -> Result<Edit> {
     let part = part_of(data, id)?;
-    let placement = motion.apply(&plain(id, &part.placement)?, bounds)?;
+    let placement = moved(data, id, part, motion, bounds)?;
     placed_edit(data, id, part, placement, copy_as)
+}
+
+fn moved(
+    data: &ProjectData,
+    id: &str,
+    part: &Part<Scalar>,
+    motion: &Motion,
+    bounds: [[f64; 3]; 2],
+) -> Result<Placement> {
+    let local = plain(id, &part.placement)?;
+    if part.component.is_none() {
+        return motion.apply(&local, bounds);
+    }
+    let parent = crate::components::parent_frame(
+        &crate::components::frames(data)?,
+        part.component.as_deref(),
+    )?;
+    let world = crate::components::placement(parent * crate::components::affine(&local));
+    let after = motion.apply(&world, bounds)?;
+    Ok(crate::components::placement(
+        parent.inverse() * crate::components::affine(&after),
+    ))
 }
 
 /// The edits that move several parts by one motion. `bounds` reads the world box of a part id.
@@ -343,7 +373,7 @@ pub fn move_edits(
     ids.iter()
         .map(|id| {
             let part = part_of(data, id)?;
-            let placement = motion.apply(&plain(id, &part.placement)?, common)?;
+            let placement = moved(data, id, part, motion, common)?;
             placed_edit(data, id, part, placement, None)
         })
         .collect()
@@ -373,6 +403,29 @@ pub fn align_edit(
     gap_mm: f64,
     mut bounds: impl FnMut(&str) -> Result<[[f64; 3]; 2]>,
 ) -> Result<Edit> {
+    validate_alignment(id, target, axes, mode, gap_mm)?;
+    let part = part_of(data, id)?;
+    let moving = bounds(id)?;
+    let fixed = if target == ORIGIN {
+        [[0.; 3]; 2]
+    } else {
+        bounds(target)?
+    };
+    let mut delta = DVec3::ZERO;
+    for axis in axes {
+        delta[axis.index()] = align_shift(moving, fixed, *axis, mode, gap_mm);
+    }
+    let placement = moved(data, id, part, &Motion::Translate(delta.to_array()), moving)?;
+    placed_edit(data, id, part, placement, None)
+}
+
+fn validate_alignment(
+    id: &str,
+    target: &str,
+    axes: &[Axis],
+    mode: AlignMode,
+    gap_mm: f64,
+) -> Result<()> {
     if axes.is_empty() {
         return Err("Give at least one axis.".into());
     }
@@ -391,19 +444,83 @@ pub fn align_edit(
     if target == id {
         return Err("A part cannot align to itself.".into());
     }
-    let part = part_of(data, id)?;
-    let moving = bounds(id)?;
+    Ok(())
+}
+
+fn component_box(
+    data: &ProjectData,
+    id: &str,
+    read: &mut impl FnMut(&str) -> Result<[[f64; 3]; 2]>,
+) -> Result<[[f64; 3]; 2]> {
+    let members = crate::component_parts(data, id, true);
+    let mut merged = None;
+    for part in members {
+        let b = read(&part)?;
+        merged = Some(merged.map_or(b, |current| union_box(current, b)));
+    }
+    if let Some(bounds) = merged {
+        return Ok(bounds);
+    }
+    let frames = crate::components::frames(data)?;
+    let centre = crate::components::parent_frame(&frames, Some(id))?
+        .translation
+        .to_array();
+    Ok([centre, centre])
+}
+
+fn component_motion(
+    data: &ProjectData,
+    id: &str,
+    motion: &Motion,
+    bounds: [[f64; 3]; 2],
+) -> Result<Edit> {
+    let mut component = data
+        .components
+        .get(id)
+        .ok_or_else(|| format!("Unknown component: {id}."))?
+        .clone();
+    let frames = crate::components::frames(data)?;
+    let old = crate::components::placement(frames[id]);
+    let after = motion.apply(&old, bounds)?;
+    let parent = crate::components::parent_frame(&frames, component.parent.as_deref())?;
+    component.placement =
+        crate::components::placement(parent.inverse() * crate::components::affine(&after));
+    Ok(Edit::SetComponent {
+        id: id.to_owned(),
+        component,
+    })
+}
+pub(crate) fn move_component_edit(
+    data: &ProjectData,
+    id: &str,
+    motion: &Motion,
+    mut read: impl FnMut(&str) -> Result<[[f64; 3]; 2]>,
+) -> Result<Edit> {
+    component_motion(data, id, motion, component_box(data, id, &mut read)?)
+}
+pub(crate) fn align_component_edit(
+    data: &ProjectData,
+    id: &str,
+    target: &str,
+    axes: &[Axis],
+    mode: AlignMode,
+    gap_mm: f64,
+    mut read: impl FnMut(&str) -> Result<[[f64; 3]; 2]>,
+) -> Result<Edit> {
+    validate_alignment(id, target, axes, mode, gap_mm)?;
+    let moving = component_box(data, id, &mut read)?;
     let fixed = if target == ORIGIN {
         [[0.; 3]; 2]
+    } else if data.parts.contains_key(target) {
+        read(target)?
     } else {
-        bounds(target)?
+        component_box(data, target, &mut read)?
     };
-    let mut delta = DVec3::ZERO;
+    let mut delta = [0.; 3];
     for axis in axes {
         delta[axis.index()] = align_shift(moving, fixed, *axis, mode, gap_mm);
     }
-    let placement = translated(&plain(id, &part.placement)?, delta);
-    placed_edit(data, id, part, placement, None)
+    component_motion(data, id, &Motion::Translate(delta), moving)
 }
 
 fn part_of<'a>(data: &'a ProjectData, id: &str) -> Result<&'a Part<Scalar>> {
@@ -420,7 +537,11 @@ fn placed_edit(
     placement: Placement,
     copy_as: Option<&str>,
 ) -> Result<Edit> {
-    let mut part = part.clone();
+    let mut part = if copy_as.is_some() {
+        crate::independent_part(data, id)?
+    } else {
+        part.clone()
+    };
     part.placement = Placement {
         translation: placement.translation.map(Scalar::Number),
         rotation: placement.rotation.map(Scalar::Number),
@@ -428,7 +549,6 @@ fn placed_edit(
     let target = match copy_as {
         None => id,
         Some(new_id) => {
-            refuse_purchased_copy(id, &part)?;
             if !valid_id(new_id) {
                 return Err(format!("Invalid part id: {new_id}"));
             }
@@ -475,6 +595,34 @@ impl Project {
         self.batch(vec![edit])
     }
 
+    pub fn move_component(&mut self, id: &str, motion: &Motion) -> Result<()> {
+        self.batch_operations(
+            vec![crate::Operation::MoveComponent {
+                id: id.into(),
+                motion: motion.clone(),
+            }],
+            false,
+        )
+    }
+    pub fn align_component(
+        &mut self,
+        id: &str,
+        target: &str,
+        axes: &[Axis],
+        mode: AlignMode,
+        gap_mm: f64,
+    ) -> Result<()> {
+        self.batch_operations(
+            vec![crate::Operation::AlignComponent {
+                id: id.into(),
+                target: target.into(),
+                axes: axes.to_vec(),
+                mode,
+                gap_mm,
+            }],
+            false,
+        )
+    }
     /// Moves several parts by one motion. The change is one undo step.
     pub fn move_parts(&mut self, ids: &[String], motion: Motion) -> Result<()> {
         self.sync()?;

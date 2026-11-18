@@ -699,6 +699,8 @@ Read the exact numbers with `section_info`. Each cut part gives:
 
 A plane that misses a part gives zero area. It is not an error.
 
+In the viewer, the plane cuts the listed parts. You can still see and select the other parts. Moving a part updates its cut face. Drag a saved plane and save it to keep the same part list.
+
 Draw a saved section with `render` and set `section` to its id. A render with a section that lists parts draws only those parts. Preview renders take an inline plane only.
 
 Remove a section with `remove_section`. `set_section` and `remove_section` also work in `batch` and `preview_batch`. Each change makes one undo step.
@@ -1144,3 +1146,75 @@ Use `schema` with `kind: "drawing"` for the full drawing definition.
 `expected_revision`. A Jsonnet source can provide a `drawings` map with
 `faber.drawing(title, views, dimensions)`. The build updates the sheets
 owned by the source and preserves sheets added separately.
+
+## Components and instances
+
+Use a component to place parts in an assembly. Its parent can be another
+component. A part's placement is relative to its component. Moving the
+parent moves its children and their parts together.
+
+If `design.jsonnet` defines a component, edit its position, parent or name
+in that file and build the project. The same rule applies to a part's
+component assignment in the source. Components added separately keep
+their saved frames when the source rebuilds or the configuration changes.
+
+The browser shows the component tree. Select the arrow to expand a
+component. Drag a part name onto a component to change its parent and
+keep its world position. Drop it on **Components** to put it at the
+assembly root. Select a component and click **Isolate** to see its
+contents. **End isolate** restores the previous visibility.
+
+A linked copy uses the geometry of its source. Select a part, open
+**Move/Copy**, select **Create copy** and **Linked copy**, then position
+it and click **OK**. Edit the source to update every instance.
+Use `make_independent` with a made instance's part id to edit it
+separately. A purchased instance keeps its source model.
+
+Open **Parts list** to see item numbers, quantities, materials and group
+masses in grams. A dash means the mass or material is unknown. Parts
+with equal resolved geometry and material share one row.
+`faber bom PROJECT --format csv` prints the list for a spreadsheet.
+Use `bom` with a component id in `scope` for one sub-assembly.
+
+## Configurations
+
+A configuration sets named parameters and can suppress features. Select
+its name in the toolbar to rebuild the assembly in one undo step.
+`use_configuration` takes the configuration name. Values outside that
+configuration keep their previous values during a switch.
+
+The [desk riser example](../examples/structured-assembly/design.jsonnet)
+has two sizes and two linked supports. The wide configuration changes
+the deck span from 100 to 160 mm and the height from 35 to 50 mm.
+Its Jsonnet source reads `self.params` for the component positions, so
+both supports still meet the deck after a size change.
+
+```jsonnet
+local f = import 'faber.libsonnet';
+{
+  params: { span: '100' },
+  configurations: { wide: f.configuration({span: '160'}) },
+  components: { base: f.component('Base') },
+  parts: {
+    rail: f.part('Rail', [f.box('bar', ['span', 10, 6])], 'bar', component='base'),
+    spare: f.instance('Spare rail', 'rail'),
+  },
+}
+```
+
+For a separate export, pass `configuration` to `export`. Use
+`all_configurations: true` to write one folder for each size.
+The saved project keeps its active configuration. The CLI accepts `--configuration NAME` and `--all-configurations`.
+Change a configuration from `design.jsonnet` in its source file.
+
+## Linked parts
+
+Export a board from Lamina as a STEP file at a fixed path. Call
+`import_part` with the file path, part id and `link: true`.
+The saved part records the source path and file hash. A path relative to
+the project folder also works when the project moves.
+
+After a board change, export the STEP file to the same location. Call
+`links` to see which files changed. Call `refresh_links` to update their
+saved assets together. Each part keeps its assembly placement. If a
+source file is missing, the project opens with its last saved asset.

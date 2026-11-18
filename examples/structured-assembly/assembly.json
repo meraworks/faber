@@ -1,0 +1,78 @@
+{
+  "components": {
+    "left": {
+      "name": "Left support",
+      "parent": "riser",
+      "placement": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "note": ""
+    },
+    "right": {
+      "name": "Right support",
+      "parent": "riser",
+      "placement": {
+        "translation": [
+          90.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "note": ""
+    },
+    "riser": {
+      "name": "Desk riser",
+      "placement": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "note": ""
+    },
+    "top": {
+      "name": "Top plate",
+      "parent": "riser",
+      "placement": {
+        "translation": [
+          0.0,
+          0.0,
+          35.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "note": ""
+    }
+  },
+  "schema": 1,
+  "motion": {
+    "joints": {},
+    "gears": {},
+    "linkages": {}
+  },
+  "contacts": {}
+}

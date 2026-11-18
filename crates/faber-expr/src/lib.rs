@@ -82,6 +82,28 @@ pub fn evaluate(
     source: &str,
     lookup: impl FnMut(&str) -> Result<f64, String>,
 ) -> Result<f64, String> {
+    parse(source, lookup, false)
+}
+
+/// Check the syntax and list parameter names without evaluating their values.
+pub fn dependencies(source: &str) -> Result<BTreeSet<String>, String> {
+    let mut names = BTreeSet::new();
+    parse(
+        source,
+        |name| {
+            names.insert(name.to_owned());
+            Ok(0.)
+        },
+        true,
+    )?;
+    Ok(names)
+}
+
+fn parse(
+    source: &str,
+    lookup: impl FnMut(&str) -> Result<f64, String>,
+    names_only: bool,
+) -> Result<f64, String> {
     if source.len() > 8192 {
         return Err("Expression is too long".into());
     }
@@ -90,7 +112,8 @@ pub fn evaluate(
         position: 0,
         lookup,
         depth: 0,
-        enabled: true,
+        enabled: !names_only,
+        names_only,
     };
     let result = parser.expression(0)?;
     parser.space();
@@ -142,6 +165,7 @@ struct Parser<'a, F> {
     lookup: F,
     depth: usize,
     enabled: bool,
+    names_only: bool,
 }
 
 impl<F: FnMut(&str) -> Result<f64, String>> Parser<'_, F> {
@@ -299,7 +323,7 @@ impl<F: FnMut(&str) -> Result<f64, String>> Parser<'_, F> {
             if let Some((_, value)) = CONSTANTS.iter().find(|(constant, _)| *constant == name) {
                 return Ok(*value);
             }
-            return if self.enabled {
+            return if self.enabled || self.names_only {
                 finite((self.lookup)(&name).map_err(|error| unknown_name_hint(error, &name))?)
             } else {
                 Ok(0.)

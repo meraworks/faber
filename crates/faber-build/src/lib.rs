@@ -48,8 +48,18 @@ struct BuildRecord {
     schema: u32,
     engine: String,
     inputs: Vec<Input>,
+    #[serde(flatten)]
+    authored: Authored,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct Authored {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     drawings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    components: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    configurations: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -67,12 +77,14 @@ struct Design {
     params: BTreeMap<String, String>,
     parts: BTreeMap<String, Value>,
     drawings: Option<BTreeMap<String, faber_model::drawing::Drawing>>,
+    components: Option<BTreeMap<String, faber_model::Component>>,
+    configurations: Option<BTreeMap<String, faber_model::Configuration>>,
     studies: Option<BTreeMap<String, faber_model::study::Study<Scalar>>>,
 }
 
 /// The project that the source gives. Nothing is written yet.
 pub struct Candidate {
-    drawings: Vec<String>,
+    authored: Authored,
     pub data: ProjectData,
     /// Files that the evaluation read.
     pub inputs: Vec<PathBuf>,
@@ -92,22 +104,29 @@ pub fn has_record(root: &Path) -> bool {
     record(root).is_some()
 }
 
+/// Component frames that came from the last accepted source.
+pub fn source_components(root: &Path) -> BTreeSet<String> {
+    record(root)
+        .map(|r| r.authored.components.into_iter().collect())
+        .unwrap_or_default()
+}
+
 /// True when the folder has a source and the build record is missing, stale
 /// or incomplete.
 pub fn needs_build(root: &Path) -> bool {
-    if !source_path(root).is_file() {
-        return false;
-    }
-    let Some(record) = record(root) else {
-        return true;
-    };
-    if record.engine != ENGINE {
-        return true;
+    source_path(root).is_file() && current_components(root).is_none()
+}
+
+/// Return the owned frames if the manifest and the build inputs are current.
+pub fn current_components(root: &Path) -> Option<BTreeSet<String>> {
+    let record = record(root)?;
+    if record.engine != ENGINE || !root.join("faber.json").is_file() {
+        return None;
     }
     let changed = record.inputs.iter().any(|input| {
         !std::fs::read(root.join(&input.path)).is_ok_and(|bytes| hash(&bytes) == input.hash)
     });
-    changed || !root.join("faber.json").is_file()
+    (!changed).then(|| record.authored.components.into_iter().collect())
 }
 
 /// Build when an input changed. Return `None` if nothing was built.
@@ -120,11 +139,86 @@ pub fn ensure_built(kernel: Arc<dyn Kernel>, root: &Path) -> Result<Option<Repor
 
 /// Evaluates the source against the current project. Writes no file.
 pub fn evaluate(root: &Path, current: &ProjectData) -> Result<Candidate> {
+    evaluate_with(
+        root,
+        current,
+        current.active_configuration.as_deref(),
+        false,
+    )
+}
+
+/// Evaluate a source with the named configuration. Keep all changes in memory.
+pub fn source_data_for(
+    root: &Path,
+    current: &ProjectData,
+    active: Option<&str>,
+) -> Result<ProjectData> {
+    Ok(evaluate_with(root, current, active, true)?.data)
+}
+
+/// Build a selected configuration and record the inputs of that evaluation.
+pub fn use_configuration(
+    root: &Path,
+    project: &mut Project,
+    name: &str,
+    strict: bool,
+) -> Result<()> {
+    project.sync()?;
+    let candidate = evaluate_with(root, &project.data, Some(name), true)?;
+    project.save_generated_checked(candidate.data, strict)?;
+    record_project(root, project, &candidate.inputs, candidate.authored)
+}
+
+/// Keep a saved configuration consistent with numeric recipes from the source.
+pub fn edit_configuration(
+    root: &Path,
+    project: &mut Project,
+    name: String,
+    definition: Option<faber_model::Configuration>,
+    strict: bool,
+) -> Result<()> {
+    project.sync()?;
+    if record(root).is_some_and(|r| r.authored.configurations.contains(&name)) {
+        return Err(format!("Change configuration {name} in {SOURCE_FILE}."));
+    }
+    if project.data.active_configuration.as_ref() == Some(&name)
+        && let Some(config) = &definition
+    {
+        let mut data = project.data.clone();
+        data.configurations.insert(name.clone(), config.clone());
+        let candidate = evaluate_with(root, &data, Some(&name), true)?;
+        project.save_generated_checked(candidate.data, strict)?;
+        return record_project(root, project, &candidate.inputs, candidate.authored);
+    }
+    let edit = match definition {
+        Some(configuration) => faber_model::Edit::SetConfiguration {
+            name,
+            configuration,
+        },
+        None => faber_model::Edit::RemoveConfiguration { name },
+    };
+    project.batch_operations(vec![edit.into()], strict)
+}
+
+fn evaluate_with(
+    root: &Path,
+    current: &ProjectData,
+    active: Option<&str>,
+    require_active: bool,
+) -> Result<Candidate> {
     let src = source_path(root);
     if !src.is_file() {
         return Err(format!("{} has no {SOURCE_FILE}", root.display()));
     }
-    let (value, inputs) = evaluate_source(root, &src)?;
+    let previous = record(root).map(|r| r.authored).unwrap_or_default();
+    let fallback = active.and_then(|id| {
+        current
+            .configurations
+            .get(id)
+            .filter(|_| !previous.configurations.iter().any(|owned| owned == id))
+    });
+    let retained = require_active.then_some(&current.params);
+    let (value, inputs) = evaluate_source(root, &src, active, fallback, retained)?;
     let design: Design =
         serde_json::from_value(value).map_err(|e| format!("{SOURCE_FILE}: {e}"))?;
     let mut parts = BTreeMap::new();
@@ -140,22 +234,50 @@ pub fn evaluate(root: &Path, current: &ProjectData) -> Result<Candidate> {
     }
     let name = design.name.unwrap_or_else(|| current.name.clone());
     let mut data = faber_core::regenerate(current, name, design.params, parts)?;
+    // Each new recipe already contains its source suppression state.
+    data.configuration_suppressions.clear();
     if let Some(studies) = design.studies {
         data.studies = studies;
     }
-    let drawings = design.drawings.unwrap_or_default();
-    if let Some(previous) = record(root) {
-        for id in previous.drawings {
-            data.drawings.remove(&id);
+    let authored = Authored {
+        drawings: replace_authored(&mut data.drawings, previous.drawings, design.drawings),
+        components: replace_authored(&mut data.components, previous.components, design.components),
+        configurations: replace_authored(
+            &mut data.configurations,
+            previous.configurations,
+            design.configurations,
+        ),
+    };
+    if let Some(id) = active {
+        if data.configurations.contains_key(id) {
+            faber_core::apply_configuration(&mut data, id)?;
+        } else if require_active {
+            return Err(format!("Unknown configuration: {id}."));
+        } else {
+            data.active_configuration = None;
         }
+    } else {
+        data.active_configuration = None;
     }
-    let ids = drawings.keys().cloned().collect();
-    data.drawings.extend(drawings);
     Ok(Candidate {
         data,
         inputs,
-        drawings: ids,
+        authored,
     })
+}
+
+fn replace_authored<T>(
+    saved: &mut BTreeMap<String, T>,
+    previous: Vec<String>,
+    next: Option<BTreeMap<String, T>>,
+) -> Vec<String> {
+    for id in previous {
+        saved.remove(&id);
+    }
+    let next = next.unwrap_or_default();
+    let ids = next.keys().cloned().collect();
+    saved.extend(next);
+    ids
 }
 
 /// Builds the project folder with its own store. Use it when no project is open.
@@ -196,7 +318,7 @@ pub fn build_project(root: &Path, project: &mut Project) -> Result<Report> {
     let candidate = evaluate(root, &project.data)?;
     let report = report_of(root, &project.data, &candidate);
     project.save_generated(candidate.data)?;
-    write_record(root, &candidate.inputs, candidate.drawings)?;
+    record_project(root, project, &candidate.inputs, candidate.authored)?;
     Ok(report)
 }
 
@@ -213,7 +335,18 @@ pub fn forget_build(root: &Path) -> Result<()> {
 /// holds the state that the source gives.
 pub fn record_build(root: &Path, current: &ProjectData) -> Result<()> {
     let candidate = evaluate(root, current)?;
-    write_record(root, &candidate.inputs, candidate.drawings)
+    write_record(root, &candidate.inputs, candidate.authored)
+}
+
+fn record_project(
+    root: &Path,
+    project: &mut Project,
+    inputs: &[PathBuf],
+    authored: Authored,
+) -> Result<()> {
+    project.set_source(Some(SOURCE_FILE.to_owned()));
+    project.set_source_components(authored.components.iter().cloned().collect());
+    write_record(root, inputs, authored)
 }
 
 fn report_of(root: &Path, before: &ProjectData, candidate: &Candidate) -> Report {
@@ -286,7 +419,15 @@ fn written_files(before: &ProjectData, after: &ProjectData) -> Vec<String> {
     if before.studies != after.studies {
         files.push("analysis.json".into());
     }
-    if !files.is_empty() {
+    if before.components != after.components {
+        files.push("assembly.json".into());
+    }
+    if !files.is_empty()
+        || before.configurations != after.configurations
+        || before.active_configuration != after.active_configuration
+        || before.params != after.params
+        || before.name != after.name
+    {
         files.push("faber.json".into());
     }
     files
@@ -295,6 +436,7 @@ fn written_files(before: &ProjectData, after: &ProjectData) -> Vec<String> {
 /// True when two parts have the same recipe and metadata. Placement is not compared.
 fn same_recipe(a: &Part<Scalar>, b: &Part<Scalar>) -> bool {
     a.name == b.name
+        && a.component == b.component
         && a.material == b.material
         && a.geometry == b.geometry
         && a.colour == b.colour
@@ -328,11 +470,11 @@ fn empty_project(root: &Path) -> ProjectData {
     }
 }
 
-fn write_record(root: &Path, inputs: &[PathBuf], drawings: Vec<String>) -> Result<()> {
+fn write_record(root: &Path, inputs: &[PathBuf], authored: Authored) -> Result<()> {
     let record = BuildRecord {
         schema: RECORD_SCHEMA,
         engine: ENGINE.into(),
-        drawings,
+        authored,
         inputs: inputs
             .iter()
             .map(|path| Input {
@@ -387,7 +529,13 @@ impl ImportResolver for Resolver {
     }
 }
 
-fn evaluate_source(root: &Path, src: &Path) -> Result<(Value, Vec<PathBuf>)> {
+fn evaluate_source(
+    root: &Path,
+    src: &Path,
+    active: Option<&str>,
+    fallback: Option<&faber_model::Configuration>,
+    retained: Option<&BTreeMap<String, String>>,
+) -> Result<(Value, Vec<PathBuf>)> {
     let loaded = Rc::new(RefCell::new(BTreeSet::new()));
     let resolver = Resolver {
         inner: FileImportResolver::new(vec![root.join("lib")]),
@@ -407,7 +555,29 @@ fn evaluate_source(root: &Path, src: &Path) -> Result<(Value, Vec<PathBuf>)> {
     let explain = |e: jrsonnet_evaluator::Error| describe(root, &fmt, &e);
     let text = {
         let _guard = state.enter();
-        let val = state.import(src).map_err(explain)?;
+        let val = if let Some(active) = active {
+            // Inherit the source object so a recipe that reads self.params sees the configuration.
+            let path = serde_json::to_string(&canonical(src)).map_err(|e| e.to_string())?;
+            let id = serde_json::to_string(active).map_err(|e| e.to_string())?;
+            let fallback = serde_json::to_string(&fallback).map_err(|e| e.to_string())?;
+            let saved = serde_json::to_string(&retained).map_err(|e| e.to_string())?;
+            let code = format!(
+                r#"local d=import {path};
+                local config=std.get(std.get(d,'configurations',{{}}),{id},{fallback});
+                local params=std.get(d,'params',{{}});
+                local saved={saved};
+                local retained=if saved==null then {{}} else {{[k]: saved[k] for k in std.objectFields(saved) if std.objectHas(params,k)}};
+                local overrides=if config==null then {{}} else std.get(config,'params',{{}});
+                local unknown=[k for k in std.objectFields(overrides) if !std.objectHas(params,k)];
+                assert std.length(unknown)==0 : 'Unknown configuration parameters: '+std.join(', ',unknown);
+                d + {{ params: params + retained + overrides }}"#
+            );
+            state
+                .evaluate_snippet("configuration", code)
+                .map_err(explain)?
+        } else {
+            state.import(src).map_err(explain)?
+        };
         val.manifest(JsonFormat::minify()).map_err(explain)?
     };
     let value: Value = serde_json::from_str(&text)

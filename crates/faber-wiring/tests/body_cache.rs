@@ -516,3 +516,58 @@ fn edge_lines_move_with_the_part() {
     }
     assert_eq!(kernel.edge_lines.load(Ordering::Relaxed), calls);
 }
+
+#[test]
+fn component_move_does_not_tessellate() {
+    let dir = project_dir();
+    let kernel = Counting::new();
+    let mut p = open(dir.path(), &kernel);
+    let mut source = p.data.parts["p"].clone();
+    source.component = Some("frame".into());
+    let component = serde_json::from_value(
+        json!({"tool":"set_component","id":"frame","component":{"name":"Frame"}}),
+    )
+    .unwrap();
+    p.batch(vec![
+        component,
+        Edit::PutPart {
+            id: "p".into(),
+            part: source,
+        },
+    ])
+    .unwrap();
+    let before = kernel.tessellate.load(Ordering::Relaxed);
+    p.move_component("frame", &faber_core::Motion::Translate([4., 2., 0.]))
+        .unwrap();
+    assert_eq!(kernel.tessellate.load(Ordering::Relaxed), before);
+}
+
+#[test]
+fn instances_share_one_tessellation() {
+    let dir = project_dir();
+    let mut data: serde_json::Value = serde_json::from_str(PROJECT).unwrap();
+    let original = data["parts"]["p"].take();
+    data["parts"] = json!({"source":original});
+    for id in ["a", "b", "c", "d"] {
+        data["parts"][id] =
+            json!({"name":id,"colour":[10,20,30],"geometry":{"op":"instance","of":"source"}});
+    }
+    fs::write(
+        dir.path().join("faber.json"),
+        serde_json::to_vec(&data).unwrap(),
+    )
+    .unwrap();
+    let kernel = Counting::new();
+    let p = open(dir.path(), &kernel);
+    assert_eq!(p.bodies.len(), 5);
+    assert_eq!(kernel.tessellate.load(Ordering::Relaxed), 1);
+    for id in ["a", "b", "c", "d"] {
+        assert!(
+            p.local_geometry("source")
+                .unwrap()
+                .1
+                .unwrap()
+                .same_instance(p.local_geometry(id).unwrap().1.unwrap())
+        );
+    }
+}

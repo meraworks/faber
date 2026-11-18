@@ -47,6 +47,30 @@ fn cut(keep: Keep, cap: bool, copy: Option<&str>) -> MeshEdit {
 }
 
 #[test]
+fn editing_an_instance_mesh_never_creates_an_independent_asset() {
+    let (_root, mut project) = project(true, false);
+    project
+        .move_linked(
+            "cube",
+            &faber_core::Motion::Translate([5., 0., 0.]),
+            "spare",
+        )
+        .unwrap();
+    let before = project.data.clone();
+    assert!(mesh_edit::report(&project, "spare").is_ok());
+    let operation = MeshEdit::ToSolid {
+        merge_planar: true,
+        copy_as: Some("replacement".into()),
+    };
+    let error = mesh_edit::apply(&mut project, "spare", before.revision, operation).unwrap_err();
+    assert_eq!(
+        error,
+        "Part spare is an instance of cube. Change part cube."
+    );
+    assert_eq!(project.data, before);
+}
+
+#[test]
 fn repair_is_one_revision_and_undo_restores() {
     let (dir, mut p) = project(false, false);
     let before = p.data.revision;

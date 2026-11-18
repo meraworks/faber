@@ -8,6 +8,17 @@ fn value(source: &str) -> Result<f64, String> {
 }
 
 #[test]
+fn dependency_check_reads_both_branches_without_dividing_by_a_placeholder() {
+    let names = faber_expr::dependencies("if(size > 0, width / size, sqrt(height)) + pi").unwrap();
+    assert_eq!(
+        names.into_iter().collect::<Vec<_>>(),
+        ["height", "size", "width"]
+    );
+    assert!(faber_expr::dependencies("if(size, width, 2 +)").is_err());
+    assert!(faber_expr::dependencies("unknown_function(width)").is_err());
+}
+
+#[test]
 fn comparisons_drive_conditional_dimensions_after_arithmetic() {
     for (source, expected) in [
         ("if(width >= 30, 4, 2)", 4.),

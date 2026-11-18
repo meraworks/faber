@@ -13,6 +13,9 @@ mod drawing_tests;
 #[cfg(test)]
 mod edge_pick_tests;
 mod face_pick;
+mod structure;
+#[cfg(test)]
+mod structure_tests;
 use face_pick::{Pick, SelectFilter};
 #[cfg(test)]
 mod face_pick_tests;
@@ -248,6 +251,7 @@ fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
 
 pub struct Shell {
     sheets: drawing::Sheets,
+    structure: structure::Browser,
     mesh_tool: Option<mesh_tools::Panel>,
     printing: print_check::PrintPanel,
     study: study::StudyPanel,
@@ -283,8 +287,9 @@ pub struct Shell {
     hover_body: Option<String>,
     pick_info: face_pick::InfoCache,
     reveal_features: bool,
-    copied_placement: Option<(String, faber_model::Placement<faber_model::Scalar>)>,
+    copied_placement: Option<keys::CopiedPlacement>,
     pub section_selected: Option<String>,
+    section_scope: BTreeSet<String>,
     section_pending: Option<mpsc::Receiver<(String, Result<Section, String>)>>,
     pub hidden: BTreeSet<String>,
     gpu: Gpu,
@@ -294,6 +299,7 @@ pub struct Shell {
     caps: Option<DrawList>,
     cut_indices: std::sync::Arc<Vec<faber_scene::SectionIndex>>,
     cap_plane: Option<Section>,
+    cap_poses: BTreeMap<String, glam::Mat4>,
     section_drag: Option<SectionDrag>,
     section_basis: Option<glam::Vec3>,
     section_pivot: Option<glam::Vec3>,
@@ -394,6 +400,7 @@ impl Shell {
         let modified = faber_wiring::project_fingerprint(&root).ok();
         Self {
             project_loaded: true,
+            structure: structure::Browser::new(&data, &bodies),
             sheets: Default::default(),
             mesh_tool: None,
             printing: Default::default(),
@@ -428,6 +435,7 @@ impl Shell {
             reveal_features: false,
             copied_placement: None,
             section_selected: None,
+            section_scope: BTreeSet::new(),
             section_pending: None,
             hidden: BTreeSet::new(),
             gpu: Gpu::new(rs.device.clone(), rs.queue.clone()),
@@ -436,6 +444,7 @@ impl Shell {
             list: None,
             caps: None,
             cap_plane: None,
+            cap_poses: Default::default(),
             cut_indices: Default::default(),
             section_drag: None,
             section_basis: None,
@@ -747,7 +756,13 @@ impl Shell {
                     self.window.saving = self.window.open.is_some();
                     self.error = None;
                     std::thread::spawn(move || {
-                        let _ = tx.send(move_tool::commit(&root, &expected, moves, false, strict));
+                        let _ = tx.send(move_tool::commit(
+                            &root,
+                            &expected,
+                            moves,
+                            move_tool::CopyMode::Move,
+                            strict,
+                        ));
                         ctx.request_repaint();
                     });
                 }
@@ -1692,8 +1707,15 @@ impl Shell {
         let Some(section) = self.data.sections.get(&id) else {
             self.section_selected = None;
             self.section_on = false;
+            self.section_scope.clear();
             return;
         };
+        let scope: BTreeSet<_> = section.parts.iter().cloned().collect();
+        if scope != self.section_scope {
+            self.section_scope = scope;
+            self.cap_plane = None;
+            self.caps = None;
+        }
         if !section.visible {
             self.section_on = false;
             return;
@@ -1735,6 +1757,7 @@ impl Shell {
             Err(error) => {
                 self.section_selected = None;
                 self.section_on = false;
+                self.section_scope.clear();
                 self.error = Some(error);
             }
         }
@@ -1821,6 +1844,7 @@ impl Shell {
                         self.hidden.clear();
                         self.section_on = false;
                         self.section_selected = None;
+                        self.section_scope.clear();
                         self.section_pending = None;
                         self.check_result = None;
                         self.check_pending = None;
@@ -1844,6 +1868,7 @@ impl Shell {
                         self.clear_entity_picks();
                         self.pick_info = Default::default();
                     }
+                    self.structure.reload(&data, &bodies, changing_project);
                     self.sheets.project_loaded();
                     self.data = data;
                     self.bodies = bodies.into();
@@ -1855,6 +1880,7 @@ impl Shell {
                     }
                     self.sync_section(ctx);
                     self.hidden.retain(|id| self.data.parts.contains_key(id));
+                    self.restore_component_isolation();
                     self.prune_selection();
                 }
                 Err(e) => {
@@ -1903,6 +1929,7 @@ impl Shell {
         if self.section_selected.as_deref() == Some(id.as_str()) {
             self.section_selected = None;
             self.section_on = false;
+            self.section_scope.clear();
         } else {
             self.section_selected = Some(id);
             self.sync_section(ctx);
@@ -2006,7 +2033,8 @@ impl Shell {
         }
         if new {
             let id = crate::analysis::new_id(&self.data);
-            let section = crate::analysis::from_plane(self.plane);
+            let mut section = crate::analysis::from_plane(self.plane);
+            section.parts = self.section_scope.iter().cloned().collect();
             self.save_sections(
                 ui.ctx(),
                 vec![faber_model::Edit::SetSection { id, section }],
@@ -2211,53 +2239,18 @@ impl Shell {
         ui.separator();
         ui.add_space(12.);
         self.drawing_list(ui);
-        ui.label(RichText::new("BODIES").size(11.).color(MUTED));
-        ui.add_space(10.);
-        let chosen = self.selection();
-        for body in std::sync::Arc::clone(&self.bodies).iter() {
-            ui.horizontal(|ui| {
-                let mut visible = !self.hidden.contains(&body.id);
-                if ui
-                    .checkbox(&mut visible, "")
-                    .on_hover_text("Show body")
-                    .changed()
-                {
-                    if visible {
-                        self.hidden.remove(&body.id);
-                    } else {
-                        self.hidden.insert(body.id.clone());
-                    }
-                    self.mesh_dirty = true;
-                }
-                let selected = chosen.contains(&body.id);
-                let row = ui
-                    .add(egui::Button::selectable(selected, &body.name).truncate())
-                    .on_hover_text(&body.name);
-                if row.clicked() || row.secondary_clicked() {
-                    let (ctrl, shift) =
-                        ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
-                    if row.secondary_clicked() {
-                        self.select_menu_target(Some(body.id.clone()));
-                    } else if shift {
-                        self.select_range(&body.id);
-                    } else if row.clicked() && ctrl {
-                        self.toggle_part(&body.id);
-                    } else if row.clicked() && chosen.len() == 1 && selected {
-                        self.select_only(None);
-                    } else {
-                        self.select_only(Some(body.id.clone()));
-                    }
-                    self.select_part_joint();
-                    self.mesh_dirty = true;
-                }
-                row.context_menu(|ui| self.body_menu(ui));
-            });
-        }
+        self.component_tree(ui);
         ui.add_space(24.);
-        if ui.button("Show all").clicked() {
-            self.hidden.clear();
-            self.mesh_dirty = true;
-        }
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Show all").clicked() {
+                self.structure.clear_isolation();
+                self.hidden.clear();
+                self.mesh_dirty = true;
+            }
+            if ui.button("Parts list").clicked() {
+                self.structure.bom_open = true;
+            }
+        });
         let part_id = self.selected.clone();
         ui.horizontal(|ui| {
             if ui
@@ -2740,21 +2733,15 @@ impl Shell {
             let n = glam::Vec3::from(self.plane.normal.map(|x| x as f32)).normalize();
             let offset = self.plane.offset as f32;
             let origin = self.section_pivot.unwrap_or_else(|| {
+                let poses = self.move_poses();
                 let mut low = glam::Vec3::splat(f32::INFINITY);
                 let mut high = -low;
                 let mut model_low = low;
                 let mut model_high = high;
-                for body in self
-                    .bodies
-                    .iter()
-                    .filter(|body| !self.hidden.contains(&body.id))
-                {
-                    let pose = self
-                        .motion
-                        .poses
-                        .get(&body.id)
-                        .copied()
-                        .unwrap_or(glam::Mat4::IDENTITY);
+                for body in self.bodies.iter().filter(|body| {
+                    !self.hidden.contains(&body.id) && self.section_for_body(&body.id).is_some()
+                }) {
+                    let pose = poses.get(&body.id).copied().unwrap_or(glam::Mat4::IDENTITY);
                     let corners: [glam::Vec3; 8] = std::array::from_fn(|mask| {
                         pose.transform_point3(glam::Vec3::from_array(std::array::from_fn(|i| {
                             body.bounds[(mask >> i) & 1][i] as f32
@@ -3145,16 +3132,23 @@ impl Shell {
             self.dirty = true;
         }
         let plane = self.section_on.then_some(self.plane);
-        if plane != self.cap_plane {
+        if plane != self.cap_plane
+            || (plane.is_some() && self.move_poses().as_ref() != &self.cap_poses)
+        {
+            self.cap_poses = if plane.is_some() {
+                self.move_poses().into_owned()
+            } else {
+                BTreeMap::new()
+            };
             self.caps = None;
             if let Some(next) = plane {
-                match Gpu::caps(
+                match Gpu::caps_for(
                     &self.gpu.device,
                     display_bodies,
                     &self.cut_indices,
-                    &BTreeSet::new(),
+                    |id| self.section_scope.is_empty() || self.section_scope.contains(id),
                     next,
-                    &self.motion.poses,
+                    &self.cap_poses,
                 ) {
                     Ok(caps) => self.caps = caps,
                     Err(error) => self.error = Some(error),
@@ -3184,7 +3178,7 @@ impl Shell {
             && let (Some(target), Some(list)) = (&self.target, &self.list)
         {
             let start = Instant::now();
-            self.gpu.draw_visible_view(
+            self.gpu.draw_scoped_view(
                 target,
                 list,
                 self.camera,
@@ -3199,6 +3193,7 @@ impl Shell {
                 self.caps.as_ref(),
                 &self.move_poses(),
                 &self.hidden,
+                &self.section_scope,
             );
             self.frame_ms = start.elapsed().as_secs_f64() * 1000.;
             self.dirty = false;
@@ -3429,11 +3424,7 @@ impl eframe::App for Shell {
                     ui.add_space(28.);
                     ui.separator();
                     ui.add_space(16.);
-                    ui.add_sized(
-                        [150., 29.],
-                        egui::Label::new(RichText::new(&self.data.name).color(MUTED)).truncate(),
-                    )
-                    .on_hover_text(&self.data.name);
+                    self.configuration_selector(ui);
                     if self.strict_edits
                         && ui
                             .selectable_label(true, "Strict")
@@ -3589,6 +3580,7 @@ impl eframe::App for Shell {
         self.import_panel(&ctx);
         self.placement_panel(&ctx);
         self.move_panel(&ctx);
+        self.parts_list_panel(&ctx);
         self.press_panel(&ctx);
         self.command_search(&ctx);
         self.project_panel(&ctx, frame);
@@ -5359,5 +5351,7 @@ mod tests {
 #[cfg(test)]
 mod windows_tests;
 
+#[cfg(test)]
+mod assembly_interaction_tests;
 #[cfg(test)]
 mod marking_menu_tests;

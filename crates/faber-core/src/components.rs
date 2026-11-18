@@ -2,7 +2,7 @@
 use crate::{euler_from_matrix, rotation_matrix};
 use faber_model::{Component, Placement, ProjectData, Scalar};
 use faber_ports::Result;
-use glam::DAffine3;
+use glam::{DAffine3, DMat3};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn affine(p: &Placement) -> DAffine3 {
@@ -84,6 +84,13 @@ pub(crate) fn parent_frame(frames: &Frames, component: Option<&str>) -> Result<D
             .ok_or_else(|| format!("Unknown component: {id}."))
     })
 }
+/// The world frame of a component. Root parts use the identity frame.
+pub fn component_frame(data: &ProjectData, id: Option<&str>) -> Result<DAffine3> {
+    match id {
+        None => Ok(DAffine3::IDENTITY),
+        Some(id) => parent_frame(&frames(data)?, Some(id)),
+    }
+}
 pub fn world_placement(data: &ProjectData, id: &str) -> Result<DAffine3> {
     let part = data
         .parts
@@ -134,13 +141,59 @@ pub(crate) fn set_component(
     data.components.insert(id, component);
     Ok(())
 }
-fn scalar(p: Placement) -> Placement<Scalar> {
-    Placement {
-        translation: p.translation.map(Scalar::Number),
-        rotation: p.rotation.map(Scalar::Number),
+/// Change the frame of a placement without replacing its parameters with current values.
+pub fn reframe_placement(
+    part: &str,
+    transform: DAffine3,
+    previous: &Placement<Scalar>,
+) -> Result<Placement<Scalar>> {
+    if transform.abs_diff_eq(DAffine3::IDENTITY, 1e-12) {
+        return Ok(previous.clone());
     }
+    let rotation = if transform.matrix3.abs_diff_eq(DMat3::IDENTITY, 1e-12) {
+        previous.rotation.clone()
+    } else {
+        let mut angles = [0.; 3];
+        for (index, value) in previous.rotation.iter().enumerate() {
+            let Scalar::Number(angle) = value else {
+                return Err(format!(
+                    "{part}: placement field rotation[{index}] is a parameter expression. Replace it with a number before you change to a rotated frame."
+                ));
+            };
+            angles[index] = *angle;
+        }
+        euler_from_matrix(transform.matrix3 * rotation_matrix(angles)).map(Scalar::Number)
+    };
+    let translation = std::array::from_fn(|row| {
+        let mut offset = transform.translation[row];
+        let mut terms = Vec::new();
+        for (col, value) in previous.translation.iter().enumerate() {
+            let scale = transform.matrix3.col(col)[row];
+            if scale.abs() < 1e-14 {
+                continue;
+            }
+            match value {
+                Scalar::Number(value) => offset += scale * value,
+                Scalar::Expression(expr) if (scale - 1.).abs() < 1e-14 => {
+                    terms.push(format!("({expr})"));
+                }
+                Scalar::Expression(expr) => terms.push(format!("{scale} * ({expr})")),
+            }
+        }
+        if terms.is_empty() {
+            return Scalar::Number(offset);
+        }
+        if offset != 0. {
+            terms.push(offset.to_string());
+        }
+        Scalar::Expression(terms.join(" + "))
+    });
+    Ok(Placement {
+        translation,
+        rotation,
+    })
 }
-pub fn reparent(data: &mut ProjectData, id: &str, target: Option<String>) -> Result<()> {
+pub(crate) fn reparent(data: &mut ProjectData, id: &str, target: Option<String>) -> Result<()> {
     let part = data
         .parts
         .get(id)
@@ -148,11 +201,13 @@ pub fn reparent(data: &mut ProjectData, id: &str, target: Option<String>) -> Res
     if part.component == target {
         return Ok(());
     }
-    let parent = parent_frame(&frames(data)?, target.as_deref())?;
-    let world = world_placement(data, id)?;
+    let frames = frames(data)?;
+    let old_frame = parent_frame(&frames, part.component.as_deref())?;
+    let new_frame = parent_frame(&frames, target.as_deref())?;
+    let placement = reframe_placement(id, new_frame.inverse() * old_frame, &part.placement)?;
     let part = data.parts.get_mut(id).unwrap();
     part.component = target;
-    part.placement = scalar(placement(parent.inverse() * world));
+    part.placement = placement;
     Ok(())
 }
 pub(crate) fn remove_component(data: &mut ProjectData, id: &str, keep_parts: bool) -> Result<()> {
@@ -180,13 +235,9 @@ pub(crate) fn remove_component(data: &mut ProjectData, id: &str, keep_parts: boo
         ));
     }
     let transform = affine(&component.placement);
-    let values = faber_expr::resolve(&data.params)?;
     for part in parts {
         let p = data.parts.get_mut(&part).unwrap();
-        let local = p
-            .placement
-            .map_numbers(&mut |v| crate::number(v, &values))?;
-        p.placement = scalar(placement(transform * affine(&local)));
+        p.placement = reframe_placement(&part, transform, &p.placement)?;
         p.component.clone_from(&component.parent);
     }
     for child in children {

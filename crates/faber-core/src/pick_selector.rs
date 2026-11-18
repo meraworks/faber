@@ -71,17 +71,7 @@ pub struct PickTopology {
 impl PickTopology {
     pub fn read(kernel: &dyn Kernel, body: &Body, data: &ProjectData) -> Result<Self> {
         let shape = body.shape.as_ref().ok_or("Part has no exact shape")?;
-        let part = data
-            .parts
-            .get(&body.id)
-            .ok_or_else(|| format!("Unknown part: {}", body.id))?;
-        let values = faber_expr::resolve(&data.params)?;
-        let p = part
-            .placement
-            .map_numbers(&mut |s| crate::number(s, &values))?;
-        let mut matrix = DMat4::from_mat3(crate::placement::rotation_matrix(p.rotation));
-        matrix.w_axis = DVec3::from(p.translation).extend(1.);
-        let inverse = matrix.inverse();
+        let inverse = DMat4::from(crate::world_placement(data, &body.id)?).inverse();
         let point = |p| inverse.transform_point3(DVec3::from(p)).to_array();
         let vector = |v| {
             inverse
@@ -493,6 +483,7 @@ pub fn edge_loop(lines: &EdgeLines, links: &[EdgeFace], face: u32, near: u32) ->
 
 /// A purchased solid can be measured and used as a sketch reference.
 pub fn editable_part(id: &str, part: &faber_model::Part<Scalar>) -> Result<()> {
+    crate::assets::refuse_link_edit(id, part)?;
     fn purchased(g: &faber_model::Geometry<Scalar>) -> bool {
         use faber_model::Geometry;
         match g {
@@ -501,6 +492,7 @@ pub fn editable_part(id: &str, part: &faber_model::Part<Scalar>) -> Result<()> {
             _ => false,
         }
     }
+    crate::instances::refuse_edit(id, part)?;
     if purchased(&part.geometry) {
         Err(format!("Part {id} is a purchased part. It cannot change."))
     } else {

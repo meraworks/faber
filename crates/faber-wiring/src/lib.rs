@@ -1,7 +1,11 @@
 //! Adapter composition.
 
+pub mod bom;
+pub mod configurations;
+pub use configurations::use_configuration;
 pub mod archive;
 pub mod drawing;
+pub mod links;
 pub mod mesh_edit;
 pub mod study;
 pub mod study_image;
@@ -254,7 +258,11 @@ pub fn refresh(path: &Path, project: &mut Project) -> Result<()> {
             .then(|| source.file_name().to_string()),
     );
     project.set_source_error(None);
-    if project.source().is_none() || !faber_build::needs_build(path) {
+    if project.source().is_none() {
+        return Ok(());
+    }
+    if let Some(components) = faber_build::current_components(path) {
+        project.set_source_components(components);
         return Ok(());
     }
     match unaccepted_replacements(path, project) {
@@ -311,7 +319,7 @@ pub fn history_move(
     }
     faber_build::forget_build(path)?;
     project.move_history_with(action, &|data| regenerated(path, data))?;
-    faber_build::record_build(path, &project.data)
+    record_restored_source(path, project)
 }
 
 /// Restores a checkpoint. A generated project gets the recipes of its source again.
@@ -322,12 +330,17 @@ pub fn restore(path: &Path, project: &mut Project, name: &str) -> Result<()> {
     }
     faber_build::forget_build(path)?;
     project.restore_with(name, &|data| regenerated(path, data))?;
-    faber_build::record_build(path, &project.data)
+    record_restored_source(path, project)
+}
+
+fn record_restored_source(path: &Path, project: &mut Project) -> Result<()> {
+    faber_build::record_build(path, &project.data)?;
+    project.set_source_components(faber_build::source_components(path));
+    Ok(())
 }
 
 fn regenerated(path: &Path, data: ProjectData) -> Result<ProjectData> {
-    faber_build::evaluate(path, &data)
-        .map(|candidate| candidate.data)
+    faber_build::source_data_for(path, &data, data.active_configuration.as_deref())
         .map_err(|error| format!("The design source has an error: {error}"))
 }
 
@@ -382,6 +395,19 @@ fn open_with_store(
     Ok((project, store))
 }
 
+/// Read the current design without taking the editor's file lock.
+pub fn read_snapshot(path: &Path) -> Result<Project> {
+    for _ in 0..3 {
+        let before = faber_files::fingerprint(path)?;
+        let data = faber_files::read_committed(path);
+        if before == faber_files::fingerprint(path)? {
+            let cache = faber_files::FileFeatureCache::read_only(path);
+            return preview_with_cache(path, data?, Some(std::sync::Arc::new(cache)));
+        }
+    }
+    Err("The design changed while the project was loading.".into())
+}
+
 /// Opens an editable design snapshot for a preview without a file lock.
 pub fn preview_project(path: &Path, data: ProjectData) -> Result<Project> {
     preview_with_cache(path, data, None)
@@ -413,6 +439,9 @@ fn preview_with_cache(
             .has_source(path)
             .then(|| source.file_name().to_owned()),
     );
+    if project.source().is_some() {
+        project.set_source_components(faber_build::source_components(path));
+    }
     Ok(project)
 }
 

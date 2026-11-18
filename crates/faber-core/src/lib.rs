@@ -3,9 +3,13 @@
 mod assets;
 mod batch;
 mod body_cache;
+pub mod bom;
 mod configurations;
 pub use configurations::apply_configuration;
 mod components;
+pub use components::{
+    component_frame, component_parts, local_placement, reframe_placement, world_placement,
+};
 mod construction;
 mod dress_variant;
 mod feature_cache;
@@ -14,13 +18,16 @@ mod feature_info;
 mod generated;
 mod history;
 mod hole;
+mod instances;
+pub use instances::{
+    independent_part, instance_part, part_material, refuse_edit as refuse_instance_edit,
+};
 pub mod materials;
 pub mod names;
 pub mod overhang;
 mod pattern;
 pub mod pick_selector;
 mod pipe;
-pub use components::{component_parts, local_placement, reparent, world_placement};
 mod placement;
 pub mod plastic;
 mod plastic_walls;
@@ -33,6 +40,7 @@ mod select;
 pub mod study;
 mod thread;
 
+pub use assets::refuse_link_edit;
 pub use batch::{Operation, PartInfo, PartInfoOperation};
 pub use body_cache::face_triangles;
 use faber_model::{Part, ProjectData, Scalar};
@@ -88,9 +96,10 @@ pub struct Project {
     cache: Option<Arc<dyn faber_ports::FeatureCache>>,
     /// The design source that generates this project, if any.
     source: Option<String>,
+    source_components: std::collections::BTreeSet<String>,
     /// The error of the last design source build, if it failed.
     source_error: Option<String>,
-    locals: BTreeMap<String, body_cache::LocalBody>,
+    locals: BTreeMap<String, Arc<body_cache::LocalBody>>,
     /// Results of read calls for the current revision.
     read_cache: Mutex<read_cache::ReadCache>,
 }
@@ -99,7 +108,7 @@ struct Prepared {
     data: ProjectData,
     bodies: Vec<Body>,
     histories: BTreeMap<String, history::Cache>,
-    locals: BTreeMap<String, body_cache::LocalBody>,
+    locals: BTreeMap<String, Arc<body_cache::LocalBody>>,
 }
 
 impl Project {
@@ -147,6 +156,7 @@ impl Project {
             assets,
             cache,
             source: None,
+            source_components: Default::default(),
             source_error: None,
             locals,
             read_cache: Mutex::default(),
@@ -198,6 +208,27 @@ impl Project {
         strict: bool,
         purchased: Option<faber_model::Purchased>,
     ) -> Result<()> {
+        self.import_asset(id, name, source, strict, purchased, None)
+    }
+    pub fn import_linked(
+        &mut self,
+        id: String,
+        name: String,
+        source: &std::path::Path,
+        stored_path: String,
+        strict: bool,
+    ) -> Result<()> {
+        self.import_asset(id, name, source, strict, None, Some(stored_path))
+    }
+    fn import_asset(
+        &mut self,
+        id: String,
+        name: String,
+        source: &std::path::Path,
+        strict: bool,
+        purchased: Option<faber_model::Purchased>,
+        stored_path: Option<String>,
+    ) -> Result<()> {
         self.refuse_generated()?;
         if let Some(record) = &purchased
             && (record.source.trim().is_empty()
@@ -217,11 +248,22 @@ impl Project {
         {
             return Err("Import needs a new valid part id".into());
         }
-        let asset = self
+        let store = self
             .assets
             .as_ref()
-            .ok_or("Asset storage is not available")?
-            .put(source)?;
+            .ok_or("Asset storage is not available")?;
+        let asset = if stored_path.is_some() {
+            store.key(source)?
+        } else {
+            store.put(source)?
+        };
+        let link = stored_path.map(|path| faber_model::Link {
+            path,
+            hash: asset.clone(),
+        });
+        let sources = link
+            .as_ref()
+            .map(|_| BTreeMap::from([(asset.clone(), source.to_path_buf())]));
         let part = Part {
             component: None,
             material: None,
@@ -233,9 +275,14 @@ impl Project {
             geometry: faber_model::Geometry::<Scalar>::Imported {
                 asset,
                 purchased: purchased.map(Box::new),
-                link: None,
+                link,
             },
         };
+        if let Some(sources) = sources {
+            let mut next = self.data.clone();
+            next.parts.insert(id, part);
+            return self.save_with_assets(next, sources, strict);
+        }
         let operations = vec![faber_model::Edit::PutPart { id, part }];
         if strict {
             self.batch_strict(operations)
@@ -253,6 +300,12 @@ impl Project {
         for (id, part) in parts {
             let part = part.map_numbers(|n| Ok(n.clone().into()))?;
             self.refuse_generated_part(&id, &part)?;
+            if let Some(old) = next.parts.get(&id)
+                && old.geometry != part.geometry
+            {
+                assets::refuse_link_edit(&id, old)?;
+                instances::refuse_edit(&id, old)?;
+            }
             if let Some(previous) = next.parts.get(&id)
                 && matches!(
                     &previous.geometry,
@@ -322,13 +375,8 @@ impl Project {
         {
             return Err("Density must be above zero".into());
         }
-        let material = self
-            .data
-            .parts
-            .get(id)
-            .ok_or_else(|| format!("Unknown part: {id}"))?
-            .material
-            .clone();
+        instances::owner(&self.data, id)?;
+        let material = part_material(&self.data, id).map(str::to_owned);
         let density_g_cm3 = match (density_g_cm3, material.as_deref()) {
             (None, Some(id)) => Some(materials::get(&self.data, id)?.density_g_cm3),
             (density, _) => density,
@@ -495,6 +543,7 @@ impl Project {
         self.refuse_generated()?;
         self.sync()?;
         let mut next = self.data.clone();
+        instances::check_removal(&next, id)?;
         next.parts
             .remove(id)
             .ok_or_else(|| format!("Unknown part: {id}"))?;
@@ -601,6 +650,8 @@ impl Project {
         let paths = assets::resolve_with(&next, self.assets.as_deref(), staged)?;
         let values = faber_expr::resolve(&next.params)?;
         let old_values = faber_expr::resolve(&self.data.params)?;
+        let frames = components::frames(&next)?;
+        let old_frames = components::frames(&self.data)?;
         let mut bodies = Vec::with_capacity(next.parts.len());
         let mut histories = self.histories.clone();
         histories.retain(|id, _| next.parts.contains_key(id));
@@ -615,16 +666,17 @@ impl Project {
         let mut changed = std::collections::BTreeSet::new();
         let mut geometry_changed = std::collections::BTreeSet::new();
         let mut timings = Vec::new();
-        for (id, part) in &next.parts {
-            let resolved = resolve_part(part, &values)?;
+        for (id, part) in build_order(&next) {
+            let resolved = placed_part(part, &values, &frames)?;
             check_part(id, &resolved)?;
             let previous = self
                 .data
                 .parts
                 .get(id)
-                .map(|p| resolve_part(p, &old_values))
+                .map(|p| placed_part(p, &old_values, &old_frames))
                 .transpose()?;
             if let Some(previous) = previous
+                && !matches!(&resolved.geometry, faber_model::Geometry::Instance{of} if geometry_changed.contains(of))
                 && previous.geometry == resolved.geometry
                 && previous.placement == resolved.placement
                 && let Some(body) = self.bodies.iter().find(|b| &b.id == id)
@@ -655,6 +707,7 @@ impl Project {
             timings.push((id.clone(), timing));
             bodies.push(body);
         }
+        bodies.sort_by(|a, b| a.id.cmp(&b.id));
         let sections_started = std::time::Instant::now();
         for (id, section) in &next.sections {
             let numbers = section.map_numbers(&mut |n| number(n, &values))?;
@@ -668,15 +721,8 @@ impl Project {
             )? {
                 continue;
             }
-            section::world_plane(
-                self.kernel.as_ref(),
-                &next.parts,
-                &values,
-                &bodies,
-                &histories,
-                &numbers,
-            )
-            .map_err(|e| format!("Section {id}: {e}"))?;
+            section::world_plane(self.kernel.as_ref(), &next, &bodies, &histories, &numbers)
+                .map_err(|e| format!("Section {id}: {e}"))?;
         }
         body_cache::report_sections(body_cache::elapsed(sections_started));
         for (id, timing) in &timings {
@@ -755,7 +801,6 @@ pub fn valid_id(id: &str) -> bool {
 }
 
 fn validate_data(data: &ProjectData) -> Result<()> {
-    components::frames(data)?;
     configurations::validate(data)?;
     if data.schema != 1 {
         return Err(format!("Unsupported schema: {}", data.schema));
@@ -764,6 +809,7 @@ fn validate_data(data: &ProjectData) -> Result<()> {
         return Err("Project name is empty".into());
     }
     materials::validate(data)?;
+    instances::validate(data)?;
     if !data.studies.is_empty() {
         let values = faber_expr::resolve(&data.params)?;
         for (id, study) in &data.studies {
@@ -841,6 +887,7 @@ pub(crate) fn candidate_local(
 ) -> Result<body_cache::LocalBody> {
     let paths = assets::resolve(data, assets)?;
     let values = faber_expr::resolve(&data.params)?;
+    let id = instances::owner(data, id)?;
     let part = data
         .parts
         .get(id)
@@ -878,11 +925,20 @@ pub fn build_with_cache(
     )
 }
 
+fn build_order(data: &ProjectData) -> impl Iterator<Item = (&String, &Part<Scalar>)> {
+    let is_instance =
+        |p: &Part<Scalar>| matches!(p.geometry, faber_model::Geometry::Instance { .. });
+    data.parts
+        .iter()
+        .filter(move |(_, p)| !is_instance(p))
+        .chain(data.parts.iter().filter(move |(_, p)| is_instance(p)))
+}
+
 fn build_cached(
     data: &ProjectData,
     kernel: &dyn Kernel,
     histories: &mut BTreeMap<String, history::Cache>,
-    locals: &mut BTreeMap<String, body_cache::LocalBody>,
+    locals: &mut BTreeMap<String, Arc<body_cache::LocalBody>>,
     assets: Option<&dyn faber_ports::AssetStore>,
     cache: Option<&dyn faber_ports::FeatureCache>,
 ) -> Result<Vec<Body>> {
@@ -896,10 +952,10 @@ fn build_cached(
         paths: &paths,
         persist: cache,
     };
-    data.parts
-        .iter()
+    let frames = components::frames(data)?;
+    let mut bodies: Vec<Body> = build_order(data)
         .map(|(id, part)| {
-            let resolved = resolve_part(part, &values)?;
+            let resolved = placed_part(part, &values, &frames)?;
             let (body, timing) = builder.part(
                 id,
                 &resolved,
@@ -910,7 +966,22 @@ fn build_cached(
             body_cache::report(id, &timing);
             Ok(body)
         })
-        .collect()
+        .collect::<Result<_>>()?;
+    bodies.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(bodies)
+}
+
+fn placed_part(
+    part: &Part<Scalar>,
+    values: &BTreeMap<String, f64>,
+    frames: &components::Frames,
+) -> Result<Part> {
+    let mut out = resolve_part(part, values)?;
+    if let Some(id) = &part.component {
+        let parent = components::parent_frame(frames, Some(id))?;
+        out.placement = components::placement(parent * components::affine(&out.placement));
+    }
+    Ok(out)
 }
 
 fn resolve_part(part: &Part<Scalar>, values: &BTreeMap<String, f64>) -> Result<Part> {
@@ -966,7 +1037,7 @@ impl Builder<'_> {
         part: &Part,
         cache: &mut history::Cache,
         imported: impl FnOnce() -> Result<Option<faber_ports::Mesh>>,
-        locals: &mut BTreeMap<String, body_cache::LocalBody>,
+        locals: &mut BTreeMap<String, Arc<body_cache::LocalBody>>,
     ) -> Result<(Body, body_cache::Timing)> {
         check_part(id, part)?;
         if part
@@ -979,12 +1050,18 @@ impl Builder<'_> {
             return Err(format!("{id}: placement is outside the supported range"));
         }
         let mut timing = body_cache::Timing::default();
-        if !locals
+        if let faber_model::Geometry::Instance { of } = &part.geometry {
+            let source = locals
+                .get(of)
+                .ok_or_else(|| format!("Unknown instance source: {of}"))?
+                .clone();
+            locals.insert(id.into(), source);
+        } else if !locals
             .get(id)
             .is_some_and(|local| local.geometry == part.geometry)
         {
             let local = self.local(id, part, cache, imported, &mut timing)?;
-            locals.insert(id.into(), local);
+            locals.insert(id.into(), Arc::new(local));
         }
         let local = &locals[id];
         let placed = body_cache::place_timed(local, &part.placement, self.kernel, &mut timing)

@@ -1,6 +1,7 @@
 //! Project storage and mesh file output.
 
 mod assets;
+pub mod bom;
 mod feature_cache;
 mod history;
 pub use history::read_committed;

@@ -2,6 +2,12 @@ use super::*;
 use command_search::search_commands;
 use egui::{InputState, Key};
 
+pub(super) struct CopiedPlacement {
+    part: String,
+    parent: glam::DAffine3,
+    local: faber_model::Placement<faber_model::Scalar>,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum Command {
     Undo,
@@ -131,8 +137,8 @@ impl Shell {
                 .and_then(|id| self.data.parts.get(id))
                 .is_some_and(|p| matches!(p.geometry, faber_model::Geometry::History { .. })),
             PastePlacement => {
-                idle && self.copied_placement.as_ref().is_some_and(|(source, _)| {
-                    self.data.parts.contains_key(source)
+                idle && self.copied_placement.as_ref().is_some_and(|copy| {
+                    self.data.parts.contains_key(&copy.part)
                         && self
                             .selected
                             .as_ref()
@@ -268,15 +274,39 @@ impl Shell {
             EditFeatures => self.reveal_features = true,
             CopyPlacement => {
                 if let Some(id) = selected {
-                    self.copied_placement =
-                        Some((id.clone(), self.data.parts[&id].placement.clone()));
+                    let part = &self.data.parts[&id];
+                    match faber_core::component_frame(&self.data, part.component.as_deref()) {
+                        Ok(parent) => {
+                            self.copied_placement = Some(CopiedPlacement {
+                                part: id,
+                                parent,
+                                local: part.placement.clone(),
+                            })
+                        }
+                        Err(error) => self.error = Some(error),
+                    }
                 }
             }
             PastePlacement => {
-                if let Some((source, placement)) = &self.copied_placement {
-                    let id = selected.as_ref().unwrap_or(source);
+                if let Some(copy) = &self.copied_placement {
+                    let id = selected.as_ref().unwrap_or(&copy.part);
                     if let Some(mut part) = self.data.parts.get(id).cloned() {
-                        part.placement = placement.clone();
+                        let result =
+                            faber_core::component_frame(&self.data, part.component.as_deref())
+                                .and_then(|to| {
+                                    faber_core::reframe_placement(
+                                        id,
+                                        to.inverse() * copy.parent,
+                                        &copy.local,
+                                    )
+                                });
+                        match result {
+                            Ok(placement) => part.placement = placement,
+                            Err(error) => {
+                                self.error = Some(error);
+                                return;
+                            }
+                        }
                         self.save_sections(
                             ctx,
                             vec![faber_model::Edit::PutPart {

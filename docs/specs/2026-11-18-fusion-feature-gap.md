@@ -50,6 +50,13 @@ views and dimensions. The sheet can show hidden edges, section hatching, a
 detail, a parts list and a title block. Mesh parts supply their projected
 outline. The viewer shows the sheet and writes SVG, PDF, DXF or PNG.
 
+## Assembly structure
+
+Chunk 07 adds a component tree, linked part copies and a bill of materials.
+The viewer can isolate a component. Each joint coordinate has its own
+control. Named configurations set parameters and suppress features.
+A linked part keeps its last imported geometry when its source file is missing.
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under
@@ -144,11 +151,11 @@ Status: **have** = Faber has it, **part** = a reduced form, **gap** = absent.
 | Fusion | Faber | Status |
 | --- | --- | --- |
 | Joint (revolute, slider) | revolute, slider joints | have |
-| Joint (rigid, cylindrical, pin-slot, planar, ball) | none | gap |
+| Joint (rigid, cylindrical, pin-slot, planar, ball) | all five joint kinds | have |
 | As-built joint, joint limits, drive joints | as-built study, limits, poses | have |
 | Motion link | gear ratio links | have |
-| Rigid group, ground, contact sets | declared contacts | part |
-| Components and occurrences | parts only | gap |
+| Rigid group, ground, contact sets | rigid joints and declared contacts | part |
+| Components and occurrences | nested components, local placements and part instances | have |
 
 ### Inspect
 
@@ -175,7 +182,7 @@ Status: **have** = Faber has it, **part** = a reduced form, **gap** = absent.
 | --- | --- | --- |
 | Timeline, edit feature, reorder, rollback | ordered features, edit, move | have |
 | Suppress feature | none | gap |
-| Configurations | none | gap |
+| Configurations | named parameter values and feature suppression | have |
 | Named views | render views | part |
 
 ## Work order

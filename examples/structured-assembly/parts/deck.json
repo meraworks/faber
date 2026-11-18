@@ -1,0 +1,30 @@
+{
+  "component": "top",
+  "material": "steel-s235",
+  "schema": 1,
+  "name": "Deck",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "plate",
+        "geometry": {
+          "op": "box",
+          "size": [
+            100.0,
+            44.0,
+            5.0
+          ]
+        }
+      }
+    ],
+    "output": "plate"
+  },
+  "colour": [
+    58,
+    136,
+    145
+  ],
+  "group": "",
+  "note": ""
+}

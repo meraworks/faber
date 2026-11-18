@@ -1,5 +1,5 @@
 use super::*;
-use faber_model::motion::{Joint, JointKind, MotionStudy};
+use faber_model::motion::{Joint, JointKind, MotionStudy, Pose, PoseValue};
 use glam::{DMat4, DVec3, EulerRot, Mat4, Quat, Vec3};
 
 #[derive(Default)]
@@ -7,11 +7,12 @@ pub(super) struct Controls {
     relations: super::motion_relations::Editor,
     sweep: Option<mpsc::Receiver<Result<String, String>>>,
     report: Option<String>,
-    ranges: BTreeMap<String, [f64; 2]>,
+    ranges: BTreeMap<(String, usize), [f64; 2]>,
     pub poses: BTreeMap<String, Mat4>,
-    values: BTreeMap<String, f64>,
+    values: Pose,
     enabled: bool,
     active: String,
+    coordinate: usize,
     drag: Option<String>,
     editor: Option<String>,
     notice: Option<String>,
@@ -28,27 +29,63 @@ fn joint_label(id: &str) -> String {
 }
 
 fn is_driver(study: &MotionStudy, id: &str) -> bool {
-    !study.gears.contains_key(id) && !study.linkages.values().any(|link| link.follower == id)
+    study.joints[id].kind.count() > 0
+        && !study.gears.contains_key(id)
+        && !study.linkages.values().any(|link| link.follower == id)
+}
+fn driver_for_part<'a>(study: &'a MotionStudy, part: &str) -> Option<&'a String> {
+    let (mut id, mut j) = study
+        .joints
+        .iter()
+        .find(|(_, j)| j.parts.iter().any(|p| p == part))?;
+    while j.kind == JointKind::Rigid {
+        (id, j) = study.joints.get_key_value(j.parent.as_ref()?)?;
+    }
+    is_driver(study, id).then_some(id)
+}
+pub(super) fn names(kind: JointKind) -> &'static [&'static str] {
+    match kind {
+        JointKind::Rigid => &[],
+        JointKind::Revolute => &["Angle"],
+        JointKind::Slider => &["Distance"],
+        JointKind::Cylindrical | JointKind::PinSlot => &["Angle", "Distance"],
+        JointKind::Planar => &["X distance", "Y distance", "Angle"],
+        JointKind::Ball => &["Rotation X", "Rotation Y", "Rotation Z"],
+    }
+}
+fn coordinate_limit(j: &Joint, i: usize) -> Option<[f64; 2]> {
+    if j.kind == JointKind::Ball && i == 0 {
+        None
+    } else {
+        j.range(i)
+    }
 }
 
 impl Shell {
-    fn set_joint_value(&mut self, id: &str, value: f64) {
+    fn set_joint_value(&mut self, id: &str, i: usize, value: f64) {
         let joint = &self.data.motion.joints[id];
-        let v = joint.limits.map_or(value, |[lo, hi]| value.clamp(lo, hi));
+        let v = coordinate_limit(joint, i).map_or(value, |[lo, hi]| value.clamp(lo, hi));
         let mut values = self.motion.values.clone();
-        values.insert(id.into(), v);
+        let mut coords = values
+            .get(id)
+            .map(|p| p.as_slice().to_vec())
+            .unwrap_or_default();
+        coords.resize(joint.kind.count(), 0.);
+        coords[i] = v;
+        values.insert(id.into(), PoseValue::from_values(coords));
+        self.motion.coordinate = i;
         self.apply_motion_values(values);
     }
 
-    pub(crate) fn initial_pose(&mut self, values: BTreeMap<String, f64>) {
+    pub(crate) fn initial_pose(&mut self, values: Pose) {
         if !values.is_empty() {
             self.motion.enabled = true;
             self.apply_motion_values(values);
         }
     }
 
-    fn apply_motion_values(&mut self, values: BTreeMap<String, f64>) {
-        match self.data.motion.solve(&values) {
+    fn apply_motion_values(&mut self, values: Pose) {
+        match self.data.motion.solve_pose(&values) {
             Ok(placements) => {
                 self.motion.values = values;
                 self.motion.poses = placements
@@ -88,52 +125,59 @@ impl Shell {
             1. - 2. * (pos.y - rect.top()) / rect.height(),
         ];
         let (eye, ray) = self.camera.ray(rect.aspect_ratio(), point);
-        let plane = self.section_on.then_some(self.plane);
+        let poses = self.move_poses();
         self.bodies
             .iter()
             .filter(|b| !self.hidden.contains(&b.id))
             .filter_map(|b| {
-                let m = self
-                    .motion
-                    .poses
-                    .get(&b.id)
-                    .map_or(DMat4::IDENTITY, |m| m.as_dmat4());
-                let inv = m.inverse();
-                let origin = inv.transform_point3(eye);
-                let direction = inv.transform_vector3(ray);
-                if !faber_scene::ray_hits_bounds(b.bounds, origin, direction) {
-                    return None;
-                }
-                let surface = faber_scene::pick_visible(
-                    &b.mesh,
-                    origin,
-                    direction,
-                    plane.map(|p| p.in_body(m)),
-                );
-                let cap = self
-                    .caps
-                    .as_ref()
-                    .filter(|_| plane.is_some() && plane == self.cap_plane)
-                    .and_then(|c| c.cap_mesh(&b.id))
-                    .and_then(|mesh| faber_scene::pick(mesh, eye, ray));
-                surface
-                    .into_iter()
-                    .chain(cap)
-                    .min_by(f64::total_cmp)
-                    .map(|d| (d, &b.id))
+                let pose = poses.get(&b.id).map_or(DMat4::IDENTITY, |m| m.as_dmat4());
+                self.surface_depth(b, pose, eye, ray)
+                    .map(|depth| (depth, &b.id))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(d, id)| (id.clone(), eye + d * ray))
     }
 
+    pub(super) fn surface_depth(
+        &self,
+        body: &Body,
+        pose: DMat4,
+        eye: DVec3,
+        ray: DVec3,
+    ) -> Option<f64> {
+        let inverse = pose.inverse();
+        let origin = inverse.transform_point3(eye);
+        let direction = inverse.transform_vector3(ray);
+        if !faber_scene::ray_hits_bounds(body.bounds, origin, direction) {
+            return None;
+        }
+        let plane = self.section_for_body(&body.id);
+        let surface = faber_scene::pick_visible(
+            &body.mesh,
+            origin,
+            direction,
+            plane.map(|p| p.in_body(pose)),
+        );
+        let cap = self
+            .caps
+            .as_ref()
+            .filter(|_| {
+                plane.is_some()
+                    && plane == self.cap_plane
+                    && self
+                        .cap_poses
+                        .get(&body.id)
+                        .map_or(DMat4::IDENTITY, |m| m.as_dmat4())
+                        == pose
+            })
+            .and_then(|c| c.cap_mesh(&body.id))
+            .and_then(|mesh| faber_scene::pick(mesh, eye, ray));
+        surface.into_iter().chain(cap).min_by(f64::total_cmp)
+    }
+
     pub(super) fn select_part_joint(&mut self) {
         if let Some(part) = &self.selected
-            && let Some((id, _)) = self
-                .data
-                .motion
-                .joints
-                .iter()
-                .find(|(id, j)| is_driver(&self.data.motion, id) && j.parts.contains(part))
+            && let Some(id) = driver_for_part(&self.data.motion, part)
         {
             self.motion.active.clone_from(id);
         }
@@ -154,14 +198,7 @@ impl Shell {
             self.motion.drag = ui
                 .input(|i| i.pointer.press_origin())
                 .and_then(|pos| self.pick_body(rect, pos))
-                .and_then(|part| {
-                    self.data
-                        .motion
-                        .joints
-                        .iter()
-                        .find(|(id, j)| is_driver(&self.data.motion, id) && j.parts.contains(&part))
-                        .map(|(id, _)| id.clone())
-                });
+                .and_then(|part| driver_for_part(&self.data.motion, &part).cloned());
         }
         if let Some(id) = &self.motion.drag {
             self.motion.active.clone_from(id);
@@ -177,49 +214,65 @@ impl Shell {
             .find_map(|k| self.motion.poses.get(k))
             .copied()
             .unwrap_or(Mat4::IDENTITY);
-        let axis = pose
-            .transform_vector3(DVec3::from(joint.axis).as_vec3())
-            .normalize();
+        let i = self.motion.coordinate.min(joint.kind.count() - 1);
+        let n = DVec3::from(joint.axis).normalize();
+        let axis = match (joint.kind, i) {
+            (JointKind::PinSlot, 1) | (JointKind::Planar, 0) => {
+                DVec3::from(joint.slide_axis().unwrap_or([1., 0., 0.]))
+            }
+            (JointKind::Planar, 1) => n.cross(joint.slide_axis().unwrap_or([1., 0., 0.]).into()),
+            (JointKind::Ball, 0) => DVec3::X,
+            (JointKind::Ball, 1) => DVec3::Y,
+            (JointKind::Ball, 2) => DVec3::Z,
+            _ => n,
+        };
+        let parent = joint
+            .parent
+            .as_ref()
+            .and_then(|parent| self.data.motion.joints.get(parent))
+            .and_then(|j| j.parts.iter().find_map(|p| self.motion.poses.get(p)))
+            .copied()
+            .unwrap_or(Mat4::IDENTITY);
+        let axis = parent.transform_vector3(axis.as_vec3()).normalize();
         let origin = pose.transform_point3(DVec3::from(joint.origin).as_vec3());
         let project = |p| {
             let s = matrix.project_point3(p);
             rect.center() + Vec2::new(s.x * rect.width(), -s.y * rect.height()) * 0.5
         };
         let delta = ui.input(|i| i.pointer.delta());
-        let change = match joint.kind {
-            JointKind::Rigid
-            | JointKind::Cylindrical
-            | JointKind::PinSlot
-            | JointKind::Planar
-            | JointKind::Ball => return false,
-            JointKind::Slider => {
-                let d = project(origin + axis) - project(origin);
-                if d.length_sq() > 0.01 {
-                    delta.dot(d) / d.length_sq()
-                } else {
-                    -delta.y * self.camera.distance / rect.height()
-                }
+        let change = if !joint.kind.angular(i) {
+            let d = project(origin + axis) - project(origin);
+            if d.length_sq() > 0.01 {
+                delta.dot(d) / d.length_sq()
+            } else {
+                -delta.y * self.camera.distance / rect.height()
             }
-            JointKind::Revolute => {
-                let pos = ui
-                    .input(|i| i.pointer.interact_pos())
-                    .unwrap_or(rect.center());
-                let radial = pos - project(origin);
-                let facing = axis.dot((self.camera.eye() - origin).normalize());
-                if radial.length() > 6. && facing.abs() > 0.2 {
-                    let prev = radial - delta;
-                    (prev.y * radial.x - prev.x * radial.y)
-                        .atan2(prev.dot(radial))
-                        .to_degrees()
-                        * facing.signum()
-                } else {
-                    (delta.x - delta.y) * 0.4
-                }
+        } else {
+            let pos = ui
+                .input(|i| i.pointer.interact_pos())
+                .unwrap_or(rect.center());
+            let radial = pos - project(origin);
+            let facing = axis.dot((self.camera.eye() - origin).normalize());
+            if radial.length() > 6. && facing.abs() > 0.2 {
+                let prev = radial - delta;
+                (prev.y * radial.x - prev.x * radial.y)
+                    .atan2(prev.dot(radial))
+                    .to_degrees()
+                    * facing.signum()
+            } else {
+                (delta.x - delta.y) * 0.4
             }
         };
         self.set_joint_value(
             &id,
-            self.motion.values.get(&id).copied().unwrap_or(0.) + f64::from(change),
+            i,
+            self.motion
+                .values
+                .get(&id)
+                .and_then(|v| v.as_slice().get(i))
+                .copied()
+                .unwrap_or(0.)
+                + f64::from(change),
         );
         true
     }
@@ -236,7 +289,7 @@ impl Shell {
                         .joints
                         .iter()
                         .filter(|(id, _)| is_driver(&self.data.motion, id))
-                        .map(|(id, j)| (id.clone(), j.kind, j.limits))
+                        .map(|(id, j)| (id.clone(), j.clone()))
                         .collect();
                     if !drivers.iter().any(|(id, ..)| *id == self.motion.active) {
                         self.motion.active =
@@ -253,40 +306,45 @@ impl Shell {
                                 );
                             }
                         });
-                    if let Some((id, kind, limits)) =
+                    if let Some((id, joint)) =
                         drivers.into_iter().find(|d| d.0 == self.motion.active)
                     {
-                        let mut v = self.motion.values.get(&id).copied().unwrap_or(0.);
-                        let suffix = if kind == JointKind::Slider {
-                            " mm"
-                        } else {
-                            "°"
-                        };
-                        let changed = if let Some([lo, hi]) = limits {
-                            let label = ui.label(if kind == JointKind::Slider {
-                                "Distance"
+                        for (i, &name) in names(joint.kind).iter().enumerate() {
+                            let mut value = self
+                                .motion
+                                .values
+                                .get(&id)
+                                .and_then(|v| v.as_slice().get(i))
+                                .copied()
+                                .unwrap_or(0.);
+                            let unit = if joint.kind.angular(i) { "°" } else { " mm" };
+                            let label = ui.label(name);
+                            let limit = coordinate_limit(&joint, i);
+                            let [lo, hi] = limit.unwrap_or(if joint.kind.angular(i) {
+                                [-180., 180.]
                             } else {
-                                "Angle"
+                                [-100., 100.]
                             });
-                            ui.add(egui::Slider::new(&mut v, lo..=hi).suffix(suffix))
-                                .labelled_by(label.id)
-                                .changed()
-                        } else {
-                            ui.horizontal(|ui| {
-                                ui.label(&id);
-                                ui.add(egui::DragValue::new(&mut v).suffix(suffix))
-                                    .changed()
-                            })
-                            .inner
-                        };
-                        if changed {
-                            self.set_joint_value(&id, v);
+                            let mut slider = egui::Slider::new(&mut value, lo..=hi).suffix(unit);
+                            if limit.is_none() {
+                                slider = slider.clamping(egui::SliderClamping::Never);
+                            }
+                            let response = ui.add(slider).labelled_by(label.id);
+                            if response.changed() {
+                                self.set_joint_value(&id, i, value);
+                            }
+                            if response.clicked() || response.drag_started() {
+                                self.motion.coordinate = i;
+                            }
                         }
+                        let i = self.motion.coordinate.min(joint.kind.count() - 1);
+                        let limits = coordinate_limit(&joint, i);
+                        let suffix = if joint.kind.angular(i) { "°" } else { " mm" };
                         ui.collapsing(format!("Check travel · {id}"), |ui| {
                             let bounds = self
                                 .motion
                                 .ranges
-                                .entry(id.clone())
+                                .entry((id.clone(), i))
                                 .or_insert(limits.unwrap_or([0., 10.]));
                             ui.horizontal(|ui| {
                                 for x in bounds.iter_mut() {
@@ -318,14 +376,16 @@ impl Shell {
                                                         .into(),
                                                 );
                                             }
-                                            let report = faber_wiring::motion_check::sweep(
-                                                &bodies,
-                                                &data.motion,
-                                                &data.contacts,
-                                                &joint,
-                                                range,
-                                                0.,
-                                            )?;
+                                            let report =
+                                                faber_wiring::motion_check::sweep_coordinate(
+                                                    &bodies,
+                                                    &data.motion,
+                                                    &data.contacts,
+                                                    &joint,
+                                                    i,
+                                                    range,
+                                                    0.,
+                                                )?;
                                             Ok(format!(
                                                 "{:?} · interval {:.3} to {:.3} · {} poses{}",
                                                 report.status,
@@ -374,18 +434,15 @@ impl Shell {
                                 origin: centre,
                                 axis: [0., 0., 1.],
                                 limits: None,
+                                second_axis: None,
                                 limits2: None,
                                 limits3: None,
-                                second_axis: None,
                             },
                         ));
                     }
                     if let Some((id, joint)) = &mut self.motion.draft {
                         ui.text_edit_singleline(id);
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut joint.kind, JointKind::Revolute, "Hinge");
-                            ui.selectable_value(&mut joint.kind, JointKind::Slider, "Slider");
-                        });
+                        super::motion_relations::choose_kind(ui, joint);
                         for (label, row) in [
                             ("Origin (mm)", &mut joint.origin),
                             ("Axis", &mut joint.axis),
@@ -397,6 +454,7 @@ impl Shell {
                                 }
                             });
                         }
+                        super::motion_relations::secondary(ui, joint);
                         if ui.button("Save joint").clicked() {
                             let mut study = self.data.motion.clone();
                             if id.trim().is_empty() || study.joints.contains_key(id) {
@@ -469,6 +527,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn cylindrical_joint_sliders_preserve_both_coordinates() {
+        let dir = tempfile::tempdir().unwrap();
+        copy_folder(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/assembly-motion"),
+            dir.path(),
+        );
+        let (mut data, bodies) = faber_wiring::read(dir.path()).unwrap();
+        data.motion=serde_json::from_value(serde_json::json!({"joints":{"piston":{"kind":"cylindrical","parts":["input"],"origin":[0,0,0],"axis":[0,0,1],"limits":[-90,90],"limits2":[-10,10]}}})).unwrap();
+        let path = dir.path().to_owned();
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1440., 920.))
+            .wgpu_setup(crate::gpu_setup())
+            .build_eframe(move |cc| Shell::new(cc, path, data, bodies, None));
+        for _ in 0..5 {
+            h.step();
+        }
+        h.get_by_role_and_label(egui::Role::Slider, "Angle")
+            .set_value_accesskit(90.);
+        h.step();
+        h.get_by_role_and_label(egui::Role::Slider, "Distance")
+            .set_value_accesskit(5.);
+        h.step();
+        assert!(
+            h.state().motion.poses["input"]
+                .transform_point3(Vec3::X * 10.)
+                .distance(Vec3::new(0., 10., 5.))
+                < 1e-5
+        );
+    }
     #[test]
     fn dragging_an_arm_moves_the_linkage_and_keeps_the_camera_fixed() {
         let dir = tempfile::tempdir().unwrap();
@@ -559,7 +648,7 @@ mod tests {
         h.drop_at(end);
         h.step();
         assert_eq!(h.state().camera.yaw, yaw);
-        assert!(h.state().motion.values["input"].abs() > 1.);
+        assert!(h.state().motion.values["input"].as_slice()[0].abs() > 1.);
         for id in ["output", "rod", "wheel"] {
             assert_ne!(h.state().motion.poses[id], Mat4::IDENTITY);
         }

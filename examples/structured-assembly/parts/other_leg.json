@@ -1,0 +1,17 @@
+{
+  "component": "right",
+  "material": "steel-s235",
+  "schema": 1,
+  "name": "Support",
+  "geometry": {
+    "op": "instance",
+    "of": "leg"
+  },
+  "colour": [
+    120,
+    131,
+    139
+  ],
+  "group": "",
+  "note": ""
+}

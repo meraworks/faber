@@ -10,12 +10,25 @@
 
   // A part with a feature history. `features` is a list of features. `output`
   // is the id of the feature that gives the solid.
-  part(name, features, output, colour=[150, 150, 150], material=null)::
+  part(name, features, output, colour=[150, 150, 150], material=null, component=null)::
     {
       name: name,
       colour: colour,
       geometry: { op: 'history', features: features, output: output },
-    } + (if material == null then {} else { material: material }),
+    } + (if material == null then {} else { material: material })
+      + (if component == null then {} else { component: component }),
+
+  component(name, parent=null, translation=[0,0,0], rotation=[0,0,0], note='')::
+    { name: name, placement: {translation: translation, rotation: rotation}, note: note }
+    + (if parent == null then {} else {parent: parent}),
+
+  instance(name, of, component=null, colour=[150,150,150], material=null, note='')::
+    { name: name, geometry: {op:'instance', of: of}, colour: colour, note: note }
+    + (if component == null then {} else {component: component})
+    + (if material == null then {} else {material: material}),
+
+  configuration(params={}, suppressed=[], note='')::
+    { params: params, suppressed: suppressed, note: note },
 
   // A sheet with model references. Positions and offsets are in millimetres.
   drawing(title, views={}, dimensions={}, sheet={size:'a4',orientation:'landscape'},

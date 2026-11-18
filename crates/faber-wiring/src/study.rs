@@ -119,15 +119,13 @@ fn analyse(
 ) -> Result<Answer> {
     check_progress(&mut progress)?;
     let study = project.resolve_study(recipe)?;
-    let part = project
-        .data
-        .parts
-        .get(&study.part)
-        .ok_or_else(|| format!("Unknown part: {}", study.part))?;
+    if !project.data.parts.contains_key(&study.part) {
+        return Err(format!("Unknown part: {}", study.part));
+    }
     let material_id = study
         .material
-        .as_ref()
-        .or(part.material.as_ref())
+        .as_deref()
+        .or_else(|| faber_core::part_material(&project.data, &study.part))
         .ok_or_else(|| {
             format!(
                 "Part {} has no material. Set a material or give one in the study.",

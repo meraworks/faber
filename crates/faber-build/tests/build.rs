@@ -373,3 +373,66 @@ local f=import 'faber.libsonnet';
     assert!(manual.is_file());
     assert!(!dir.path().join("drawings/front.json").exists());
 }
+
+#[test]
+fn generated_project_takes_configurations_from_the_source() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"
+local f=import 'faber.libsonnet';
+{ local width=std.parseInt(self.params.width), name:'Stand',params:{width:'20'},
+  components:{base:f.component('Base'),left:f.component('Left','base')},
+  configurations:{wide:f.configuration({width:'65'})},
+  parts:{bar:f.part('Bar',[f.box('block',[width,5,8])],'block',component='base'),
+         bar2:f.instance('Left copy','bar',component='left')} }
+"#,
+    );
+    source().build(dir.path()).unwrap();
+    let mut data = faber_files::read(dir.path()).unwrap();
+    let saved = serde_json::to_value(&data).unwrap();
+    assert_eq!(saved["components"]["left"]["parent"], "base");
+    assert_eq!(
+        saved["parts"]["bar2"]["geometry"],
+        serde_json::json!({"op":"instance","of":"bar"})
+    );
+    let mut json = saved;
+    json["active_configuration"] = serde_json::json!("wide");
+    data = serde_json::from_value(json).unwrap();
+    let built =
+        serde_json::to_value(faber_build::evaluate(dir.path(), &data).unwrap().data).unwrap();
+    assert_eq!(built["params"]["width"], "65");
+    assert_eq!(
+        built["parts"]["bar"]["geometry"]["features"][0]["geometry"]["size"][0],
+        65.
+    );
+}
+
+#[test]
+fn structured_assembly_example_keeps_the_supports_linked_at_both_sizes() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = include_str!("../../../examples/structured-assembly/design.jsonnet");
+    write(dir.path(), "design.jsonnet", text);
+    source().build(dir.path()).unwrap();
+    let initial = faber_files::read(dir.path()).unwrap();
+    for (name, span, height) in [("compact", 100., 35.), ("wide", 160., 50.)] {
+        let data = faber_build::source_data_for(dir.path(), &initial, Some(name)).unwrap();
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["parts"]["other_leg"]["geometry"]["of"], "leg");
+        assert_eq!(
+            json["components"]["right"]["placement"]["translation"][0],
+            span - 10.
+        );
+        assert_eq!(
+            json["components"]["top"]["placement"]["translation"][2],
+            height
+        );
+        let bodies = faber_core::build(&data, &OcctKernel).unwrap();
+        let right = bodies.iter().find(|b| b.id == "other_leg").unwrap();
+        let deck = bodies.iter().find(|b| b.id == "deck").unwrap();
+        assert!(
+            (right.bounds[1][0] - span).abs() < 1e-5 && (deck.bounds[0][2] - height).abs() < 1e-5
+        );
+    }
+}

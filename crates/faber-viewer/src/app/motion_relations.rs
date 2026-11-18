@@ -1,7 +1,7 @@
 use eframe::egui;
 use faber_model::{
     ProjectData,
-    motion::{FourBar, Gear, JointKind, MotionStudy},
+    motion::{FourBar, Gear, Joint, JointKind, MotionStudy},
 };
 
 #[derive(Default)]
@@ -26,7 +26,7 @@ impl Editor {
         let hinges: Vec<_> = draft
             .joints
             .iter()
-            .filter(|(_, j)| j.kind == JointKind::Revolute)
+            .filter(|(_, j)| j.kind.count() == 1)
             .map(|(id, _)| id.clone())
             .collect();
         for (id, joint) in &mut draft.joints {
@@ -38,24 +38,37 @@ impl Editor {
                         .collect::<Vec<_>>();
                     choose(ui, "Parent", &mut parent, &parents);
                     joint.parent = (!parent.is_empty()).then_some(parent);
+                    choose_kind(ui, joint);
                     coordinates(ui, "Origin (mm)", &mut joint.origin);
                     coordinates(ui, "Axis", &mut joint.axis);
-                    let mut limited = joint.limits.is_some();
-                    if ui.checkbox(&mut limited, "Limit travel").changed() {
-                        joint.limits = limited.then_some([-1.0, 1.0]);
-                    }
-                    if let Some([low, high]) = &mut joint.limits {
-                        let unit = if joint.kind == JointKind::Slider {
-                            " mm"
-                        } else {
-                            "°"
+                    secondary(ui, joint);
+                    for (i, &name) in super::assembly::names(joint.kind).iter().enumerate() {
+                        let limit = match i {
+                            0 => &mut joint.limits,
+                            1 => &mut joint.limits2,
+                            _ => &mut joint.limits3,
                         };
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("Minimum");
-                            ui.add(egui::DragValue::new(low).suffix(unit));
-                            ui.label("Maximum");
-                            ui.add(egui::DragValue::new(high).suffix(unit));
-                        });
+                        let cone = joint.kind == JointKind::Ball && i == 0;
+                        let label = if cone {
+                            "Limit cone angle".into()
+                        } else if joint.kind.count() == 1 {
+                            "Limit travel".into()
+                        } else {
+                            format!("Limit {}", name.to_lowercase())
+                        };
+                        let mut limited = limit.is_some();
+                        if ui.checkbox(&mut limited, label).changed() {
+                            *limit = limited.then_some(if cone { [0., 45.] } else { [-1., 1.] });
+                        }
+                        if let Some([low, high]) = limit {
+                            let unit = if joint.kind.angular(i) { "°" } else { " mm" };
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label("Minimum");
+                                ui.add(egui::DragValue::new(low).suffix(unit));
+                                ui.label("Maximum");
+                                ui.add(egui::DragValue::new(high).suffix(unit));
+                            });
+                        }
                     }
                     part_choices(ui, data, &mut joint.parts);
                 });
@@ -67,7 +80,7 @@ impl Editor {
                 ui.collapsing(format!("Gear driving {id}"), |ui| {
                     choose(ui, "Driver", &mut gear.driver, &hinges);
                     ui.horizontal(|ui| {
-                        ui.label("Driven angle / driver angle");
+                        ui.label("Driven value / driver value");
                         ui.add(egui::DragValue::new(&mut gear.ratio).speed(0.05));
                     });
                     keep = !ui.button("Remove gear relation").clicked();
@@ -113,7 +126,7 @@ impl Editor {
                     .cloned()
                     .collect();
                 if available.is_empty() {
-                    ui.label("All other hinges have a driver");
+                    ui.label("All other joints have a driver");
                     return;
                 }
                 if !available.contains(&self.follower) {
@@ -189,6 +202,46 @@ fn choose(ui: &mut egui::Ui, label: &str, selected: &mut String, options: &[Stri
                 );
             }
         });
+}
+
+pub(super) fn choose_kind(ui: &mut egui::Ui, joint: &mut Joint) {
+    let previous = joint.kind;
+    egui::ComboBox::from_label("Joint type")
+        .selected_text(joint.kind.name())
+        .show_ui(ui, |ui| {
+            for (kind, name) in [
+                (JointKind::Rigid, "Rigid"),
+                (JointKind::Revolute, "Hinge"),
+                (JointKind::Slider, "Slider"),
+                (JointKind::Cylindrical, "Cylindrical"),
+                (JointKind::PinSlot, "Pin and slot"),
+                (JointKind::Planar, "Planar"),
+                (JointKind::Ball, "Ball"),
+            ] {
+                ui.selectable_value(&mut joint.kind, kind, name);
+            }
+        });
+    if joint.kind != previous {
+        joint.limits = None;
+        joint.limits2 = None;
+        joint.limits3 = None;
+        joint.second_axis = None;
+    }
+}
+pub(super) fn secondary(ui: &mut egui::Ui, joint: &mut Joint) {
+    if matches!(joint.kind, JointKind::PinSlot | JointKind::Planar) {
+        let mut custom = joint.second_axis.is_some();
+        if ui.checkbox(&mut custom, "Set second axis").changed() {
+            joint.second_axis = if custom {
+                joint.slide_axis().ok()
+            } else {
+                None
+            };
+        }
+        if let Some(axis) = &mut joint.second_axis {
+            coordinates(ui, "Second axis", axis);
+        }
+    }
 }
 
 fn coordinates(ui: &mut egui::Ui, label: &str, value: &mut [f64; 3]) {

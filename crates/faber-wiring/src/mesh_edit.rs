@@ -55,6 +55,8 @@ pub fn apply(
         .get(part)
         .ok_or_else(|| format!("Unknown part: {part}"))?
         .clone();
+    faber_core::refuse_instance_edit(part, &recipe)?;
+    faber_core::refuse_link_edit(part, &recipe)?;
     if matches!(
         &recipe.geometry,
         Geometry::Imported {

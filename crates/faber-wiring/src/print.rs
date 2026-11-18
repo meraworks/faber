@@ -145,19 +145,38 @@ pub fn apply_orientation(project: &mut Project, id: &str, candidate: &Candidate)
     shift.z -= low;
     let rotation = euler_from_matrix(turn * rotation_matrix(current.rotation));
     let translation = (turn * DVec3::from(current.translation) + shift).to_array();
+    let local = |rotation, translation: [f64; 3]| {
+        if part.component.is_some() {
+            faber_core::local_placement(
+                &project.data,
+                id,
+                glam::DAffine3::from_mat3_translation(
+                    rotation_matrix(rotation),
+                    translation.into(),
+                ),
+            )
+        } else {
+            Ok(Placement {
+                rotation,
+                translation,
+            })
+        }
+    };
+    let before = local(current.rotation, current.translation)?;
+    let after = local(rotation, translation)?;
     part.placement = Placement {
         rotation: std::array::from_fn(|i| {
             offset_coordinate(
                 &part.placement.rotation[i],
-                current.rotation[i],
-                rotation[i],
+                before.rotation[i],
+                after.rotation[i],
             )
         }),
         translation: std::array::from_fn(|i| {
             offset_coordinate(
                 &part.placement.translation[i],
-                current.translation[i],
-                translation[i],
+                before.translation[i],
+                after.translation[i],
             )
         }),
     };

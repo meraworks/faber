@@ -1,7 +1,7 @@
 //! Section analyses. A saved plane cuts the solids in views and in numbers. It never changes a solid.
 
 use crate::history;
-use faber_model::{Part, Placement, Scalar, SectionAnalysis, SectionPlane, SplitKeep};
+use faber_model::{Part, Placement, ProjectData, Scalar, SectionAnalysis, SectionPlane, SplitKeep};
 use faber_ports::{Body, Kernel, Mesh, Result, Shape};
 use glam::{DMat3, DVec3};
 use schemars::JsonSchema;
@@ -105,12 +105,12 @@ pub(crate) fn detach_part(data: &mut faber_model::ProjectData, id: &str) -> Resu
 /// Returns the origin and the unit normal in world coordinates.
 pub(crate) fn world_plane(
     kernel: &dyn Kernel,
-    parts: &BTreeMap<String, Part<Scalar>>,
-    values: &BTreeMap<String, f64>,
+    data: &ProjectData,
     bodies: &[Body],
     histories: &BTreeMap<String, history::Cache>,
     section: &SectionAnalysis<f64>,
 ) -> Result<(DVec3, DVec3)> {
+    let parts = &data.parts;
     match &section.plane {
         SectionPlane::Plane { origin, normal } => {
             let normal = unit(DVec3::from(*normal))?;
@@ -124,7 +124,7 @@ pub(crate) fn world_plane(
             let local = reference_placement(parts, histories, part, feature)?;
             let (_, z) = frame_of(&local);
             let origin = DVec3::from(local.translation) + z * *offset;
-            let placed = part_placement(parts, values, part)?;
+            let placed = crate::components::placement(crate::world_placement(data, part)?);
             to_world(&placed, origin, z)
         }
         SectionPlane::Face {
@@ -147,7 +147,7 @@ pub(crate) fn world_plane(
                 let shape = feature_shape(parts, histories, part, feature)?;
                 let local = crate::select::plane(kernel, shape, face, *offset)?;
                 let (_, z) = frame_of(&local);
-                let placed = part_placement(parts, values, part)?;
+                let placed = crate::components::placement(crate::world_placement(data, part)?);
                 to_world(&placed, DVec3::from(local.translation), z)
             }
         },
@@ -265,16 +265,6 @@ fn rotation(placement: &Placement) -> DMat3 {
 fn frame_of(placement: &Placement) -> (DMat3, DVec3) {
     let rotation = rotation(placement);
     (rotation, (rotation * DVec3::Z).normalize())
-}
-
-fn part_placement(
-    parts: &BTreeMap<String, Part<Scalar>>,
-    values: &BTreeMap<String, f64>,
-    id: &str,
-) -> Result<Placement> {
-    let part = parts.get(id).ok_or_else(|| format!("Unknown part: {id}"))?;
-    part.placement
-        .map_numbers(&mut |n| crate::number(n, values))
 }
 
 /// Moves a part-frame origin and normal into world coordinates.
@@ -478,8 +468,7 @@ impl crate::Project {
         let numbers = section.map_numbers(&mut |n| crate::number(n, &values))?;
         let (origin, normal) = world_plane(
             self.kernel.as_ref(),
-            &self.data.parts,
-            &values,
+            &self.data,
             &self.bodies,
             &self.histories,
             &numbers,

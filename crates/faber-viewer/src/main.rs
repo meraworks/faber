@@ -56,11 +56,13 @@ fn run() -> Result<(), String> {
             }
             "--joint" => {
                 let id = args.get(i + 1).ok_or("Supply the joint id")?.clone();
-                let value = args
-                    .get(i + 2)
-                    .ok_or("Supply the joint value")?
-                    .parse::<f64>()
-                    .map_err(|e| e.to_string())?;
+                let raw = args.get(i + 2).ok_or("Supply the joint value")?;
+                let value = if let Ok(number) = raw.parse::<f64>() {
+                    faber_model::motion::PoseValue::Number(number)
+                } else {
+                    serde_json::from_str(raw)
+                        .map_err(|_| "Supply a joint number or a list of numbers")?
+                };
                 if drives.insert(id, value).is_some() {
                     return Err("Supply each joint once".into());
                 }
@@ -82,7 +84,7 @@ fn run() -> Result<(), String> {
         .transpose()?;
     if !drives.is_empty() {
         let (_, data, _) = initial.as_ref().ok_or("A pose needs a project")?;
-        data.motion.solve(&drives)?;
+        data.motion.solve_pose(&drives)?;
     }
     let make_app = move |cc: &eframe::CreationContext<'_>| {
         let mut shell = match initial {

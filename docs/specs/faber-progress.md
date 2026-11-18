@@ -1535,3 +1535,32 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   SVG, PDF, DXF and PNG. The installed viewer opened 19 example projects and
   rendered four section positions on a copy of the 232-body assembly. The
   viewport pixels were identical on return to the same offset.
+
+## Fusion parity 07: Assembly structure
+
+- A component has a local frame and can contain parts and other components.
+  Moving a component reuses the part meshes. An instance uses its source
+  geometry. The parts list groups occurrences by geometry and material.
+- Cylindrical, pin-slot, planar, ball and rigid joints extend the motion
+  study. Each joint has its own controls and limits. The previous
+  single-value joint files keep their format.
+- The desk riser example has a 100 mm deck and a 160 mm deck. Switching
+  configurations changes the span, height and support positions together.
+  Undo restores inherited dimensions and the corresponding solid.
+- A linked part reports when its source changes or goes missing. Refresh
+  keeps the placement and records one undo step. An independent copy keeps
+  its original geometry when the linked source changes.
+- In a 232-body assembly the camera and model buffers stayed fixed through
+  twelve section drag steps. The viewport pixels stayed identical with the
+  pointer at rest. Hiding and showing a cut part in the flat list and in the
+  component tree restored the original viewport pixels in both tests.
+- A Windows export test locked the last of six destination meshes. The six
+  original files survived the failed export. A retry replaced all six.
+- Moving a part by 10 mm moves its cut face by the same distance. Cancel
+  restores both. A saved section keeps bodies outside its scope visible
+  and available for selection.
+- All 1003 workspace tests passed. Workspace Clippy passed with warnings denied.
+- The release build and silent install passed. The installed viewer rendered
+  all 20 example projects. In the 232-body model, the pixels at a 285 mm cut
+  matched after a move to 305 mm and back. The installed CLI exported both
+  desk riser sizes and the parts list. The export kept the project files intact.

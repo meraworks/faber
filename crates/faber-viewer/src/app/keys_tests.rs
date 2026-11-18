@@ -160,13 +160,55 @@ fn search_runs_home_and_strict() {
 #[test]
 fn paste_requires_a_live_source_and_target() {
     let (_dir, mut h) = two_blocks();
+    let ctx = h.ctx.clone();
     let shell = h.state_mut();
     let entry = command_search::search_commands("Paste placement")[0];
+    shell.select_only(Some("left".into()));
+    shell.run_command(&ctx, keys::Command::CopyPlacement);
     shell.select_only(Some("right".into()));
-    shell.copied_placement = Some(("left".into(), shell.data.parts["left"].placement.clone()));
     assert!(shell.command_enabled(entry.command));
     shell.data.parts.remove("left");
     assert!(!shell.command_enabled(entry.command));
     shell.select_only(None);
     assert!(!shell.command_enabled(entry.command));
+}
+
+#[test]
+fn paste_places_the_part_in_the_copied_world_frame() {
+    let (_dir, mut h) = two_blocks();
+    let ctx = h.ctx.clone();
+    let mut part = h.state().data.parts["right"].clone();
+    part.component = Some("holder".into());
+    let component = serde_json::from_value(serde_json::json!({
+        "name": "Holder", "placement":{"rotation":[0,0,90],"translation":[40,30,10]}
+    }))
+    .unwrap();
+    h.state_mut().save_sections(
+        &ctx,
+        vec![
+            faber_model::Edit::SetComponent {
+                id: "holder".into(),
+                component,
+            },
+            faber_model::Edit::PutPart {
+                id: "right".into(),
+                part,
+            },
+        ],
+    );
+    settle(&mut h);
+    h.state_mut().select_only(Some("left".into()));
+    h.state_mut()
+        .run_command(&ctx, keys::Command::CopyPlacement);
+    h.state_mut().select_only(Some("right".into()));
+    h.state_mut()
+        .run_command(&ctx, keys::Command::PastePlacement);
+    settle(&mut h);
+    let data = &h.state().data;
+    let source = faber_core::world_placement(data, "left").unwrap();
+    let target = faber_core::world_placement(data, "right").unwrap();
+    assert!(
+        target.abs_diff_eq(source, 1e-8),
+        "Pasted {target:?}, expected {source:?}"
+    );
 }

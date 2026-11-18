@@ -63,8 +63,10 @@ pub struct Gpu {
     pub hovered: Option<String>,
     pub cut_colour: Option<[u8; 3]>,
     uniform: wgpu::Buffer,
+    uncut_uniform: wgpu::Buffer,
     identity: wgpu::Buffer,
     bind: wgpu::BindGroup,
+    uncut_bind: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
     #[cfg(debug_assertions)]
     layout: wgpu::PipelineLayout,
@@ -90,23 +92,38 @@ pub struct DrawList {
     ranges: std::collections::BTreeMap<String, [u32; 2]>,
 }
 
+struct SectionBindings<'a> {
+    parts: &'a BTreeSet<String>,
+    cut: &'a wgpu::BindGroup,
+    uncut: &'a wgpu::BindGroup,
+}
+
 impl DrawList {
     fn draw_visible(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         hidden: &BTreeSet<String>,
         posed: bool,
+        section: Option<SectionBindings<'_>>,
     ) {
         pass.set_vertex_buffer(0, self.buffer.slice(..));
         pass.set_vertex_buffer(2, self.marks.buffer.slice(..));
-        if !posed && hidden.is_empty() {
+        if !posed && hidden.is_empty() && section.is_none() {
             pass.draw(0..self.count, 0..1);
             return;
         }
         let mut end = 0;
+        let mut cut = true;
         for (index, (id, &[start, stop])) in self.ranges.iter().enumerate() {
             end = end.max(stop);
             if !hidden.contains(id) && start < stop {
+                if let Some(scope) = &section {
+                    let member = scope.parts.contains(id);
+                    if cut != member {
+                        pass.set_bind_group(0, if member { scope.cut } else { scope.uncut }, &[]);
+                        cut = member;
+                    }
+                }
                 let instance = if posed { index as u32 } else { 0 };
                 pass.draw(start..stop, instance..instance + 1);
             }
@@ -152,12 +169,12 @@ impl Gpu {
     }
 
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_desc = wgpu::BufferDescriptor {
             label: Some("Camera"),
             size: std::mem::size_of::<Uniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
+        };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -171,14 +188,20 @@ impl Gpu {
                 count: None,
             }],
         });
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform.as_entire_binding(),
-            }],
-        });
+        let make_uniform = || {
+            let uniform = device.create_buffer(&uniform_desc);
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                }],
+            });
+            (uniform, bind)
+        };
+        let (uniform, bind) = make_uniform();
+        let (uncut_uniform, uncut_bind) = make_uniform();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[Some(&layout)],
@@ -198,7 +221,9 @@ impl Gpu {
                 usage: wgpu::BufferUsages::VERTEX,
             }),
             uniform,
+            uncut_uniform,
             bind,
+            uncut_bind,
             pipeline,
             #[cfg(debug_assertions)]
             layout: pipeline_layout,
@@ -509,13 +534,31 @@ impl Gpu {
         plane: Section,
         poses: &std::collections::BTreeMap<String, glam::Mat4>,
     ) -> Result<Option<DrawList>> {
+        Self::caps_for(
+            device,
+            bodies,
+            indices,
+            |id| !hidden.contains(id),
+            plane,
+            poses,
+        )
+    }
+
+    pub fn caps_for(
+        device: &wgpu::Device,
+        bodies: &[Body],
+        indices: &[faber_scene::SectionIndex],
+        includes: impl Fn(&str) -> bool,
+        plane: Section,
+        poses: &std::collections::BTreeMap<String, glam::Mat4>,
+    ) -> Result<Option<DrawList>> {
         let mut vertices = Vec::new();
         let mut ranges = std::collections::BTreeMap::new();
         let mut cap_meshes = std::collections::BTreeMap::new();
         for (body, index) in bodies
             .iter()
             .zip(indices)
-            .filter(|(body, _)| !hidden.contains(&body.id))
+            .filter(|(body, _)| includes(&body.id))
         {
             let pose = poses
                 .get(&body.id)
@@ -594,6 +637,33 @@ impl Gpu {
         poses: &std::collections::BTreeMap<String, glam::Mat4>,
         hidden: &BTreeSet<String>,
     ) {
+        self.draw_scoped_view(
+            target,
+            list,
+            camera,
+            selected,
+            plane,
+            caps,
+            poses,
+            hidden,
+            &BTreeSet::new(),
+        );
+    }
+
+    /// The section plane applies to the listed parts. An empty set cuts the full view.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_scoped_view(
+        &self,
+        target: &Target,
+        list: &DrawList,
+        camera: Camera,
+        selected: Option<&str>,
+        plane: Option<Section>,
+        caps: Option<&DrawList>,
+        poses: &std::collections::BTreeMap<String, glam::Mat4>,
+        hidden: &BTreeSet<String>,
+        scope: &BTreeSet<String>,
+    ) {
         let instances = (!poses.is_empty()).then(|| {
             let transforms: Vec<_> = list
                 .ranges
@@ -652,6 +722,19 @@ impl Gpu {
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        let scoped = (plane.is_some() && !scope.is_empty()).then(|| {
+            let unclipped = Uniform {
+                plane: [0.; 4],
+                ..u
+            };
+            self.queue
+                .write_buffer(&self.uncut_uniform, 0, bytemuck::bytes_of(&unclipped));
+            SectionBindings {
+                parts: scope,
+                cut: &self.bind,
+                uncut: &self.uncut_bind,
+            }
+        });
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -685,10 +768,11 @@ impl Gpu {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind, &[]);
             pass.set_vertex_buffer(1, instances.as_ref().unwrap_or(&self.identity).slice(..));
-            list.draw_visible(&mut pass, hidden, instances.is_some());
+            list.draw_visible(&mut pass, hidden, instances.is_some(), scoped);
             if let Some(cap) = caps {
+                pass.set_bind_group(0, &self.bind, &[]);
                 pass.set_vertex_buffer(1, self.identity.slice(..));
-                cap.draw_visible(&mut pass, hidden, false);
+                cap.draw_visible(&mut pass, hidden, false, None);
             }
         }
         self.queue.submit([encoder.finish()]);

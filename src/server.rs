@@ -175,6 +175,8 @@ pub struct PutPart {
 #[serde(deny_unknown_fields)]
 pub struct ImportPart {
     purchased: Option<faber_model::Purchased>,
+    #[serde(default)]
+    link: bool,
     id: String,
     name: String,
     path: String,
@@ -189,6 +191,13 @@ pub struct ImportPart {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct RefreshLinks {
+    parts: Option<Vec<String>>,
+    expected_revision: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MetricFastener {
     /// Metric size, for example M3. Read the supported sizes in the guide.
     size: String,
@@ -197,6 +206,7 @@ pub struct MetricFastener {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetPartInfo {
+    component: Option<String>,
     /// Material id. An empty string clears it.
     material: Option<String>,
     /// Part id.
@@ -226,6 +236,9 @@ pub struct ImportArchive {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MovePart {
+    component: Option<String>,
+    #[serde(default)]
+    linked: bool,
     /// Part id. Give id or ids.
     id: Option<String>,
     /// Part ids. The parts move together by one motion. Give id or ids.
@@ -249,9 +262,60 @@ pub struct MovePart {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct AlignParts {
-    /// Part that moves.
+pub struct SetComponent {
     id: String,
+    component: faber_model::Component,
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    strict: bool,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveComponent {
+    id: String,
+    #[serde(default)]
+    keep_parts: bool,
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    strict: bool,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Independent {
+    id: String,
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    strict: bool,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetConfiguration {
+    name: String,
+    configuration: faber_model::Configuration,
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    strict: bool,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigurationName {
+    name: String,
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    strict: bool,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PartsList {
+    scope: Option<String>,
+    flat: Option<bool>,
+    format: Option<String>,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AlignParts {
+    component: Option<String>,
+    id: Option<String>,
     /// Target part id, or "origin".
     target: String,
     /// Axes to align. Other axes do not move.
@@ -271,6 +335,9 @@ pub struct AlignParts {
 #[serde(deny_unknown_fields)]
 pub struct SweepMotion {
     joint: String,
+    /// Zero-based joint coordinate. Other coordinates stay at zero.
+    #[serde(default)]
+    coordinate: usize,
     range: [f64; 2],
     #[serde(default)]
     proximity_mm: f64,
@@ -280,7 +347,7 @@ pub struct SweepMotion {
 #[serde(deny_unknown_fields)]
 pub struct MotionPose {
     #[serde(default)]
-    values: BTreeMap<String, f64>,
+    values: faber_model::motion::Pose,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -583,7 +650,9 @@ pub struct PreviewBatch {
 }
 
 /// Batch tool names, in the order shown to clients.
-const BATCH_TOOLS: [&str; 15] = [
+const BATCH_TOOLS: [&str; 17] = [
+    "set_component",
+    "remove_component",
     "set_motion",
     "set_section",
     "remove_section",
@@ -605,7 +674,10 @@ const BATCH_TOOLS: [&str; 15] = [
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MoveItem {
-    id: String,
+    id: Option<String>,
+    component: Option<String>,
+    #[serde(default)]
+    linked: bool,
     translate: Option<[f64; 3]>,
     rotate: Option<faber_core::Rotation>,
     point_to_point: Option<faber_core::PointToPoint>,
@@ -617,7 +689,8 @@ struct MoveItem {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AlignItem {
-    id: String,
+    id: Option<String>,
+    component: Option<String>,
     target: String,
     axes: Vec<faber_core::Axis>,
     mode: faber_core::AlignMode,
@@ -640,11 +713,12 @@ fn part_info(fields: serde_json::Map<String, Value>) -> Result<PartInfo, String>
             "material" => info.material = serde_json::from_value(value).map_err(read)?,
             "name" => info.name = serde_json::from_value(value).map_err(read)?,
             "colour" => info.colour = serde_json::from_value(value).map_err(read)?,
+            "component" => info.component = serde_json::from_value(value).map_err(read)?,
             "group" => info.group = serde_json::from_value(value).map_err(read)?,
             "note" => info.note = serde_json::from_value(value).map_err(read)?,
             _ => {
                 return Err(format!(
-                    "unknown field `{key}`, expected one of `id`, `name`, `colour`, `group`, `note`, `material`"
+                    "unknown field `{key}`, expected one of `id`, `name`, `colour`, `group`, `note`, `material`, `component`"
                 ));
             }
         }
@@ -655,6 +729,58 @@ fn part_info(fields: serde_json::Map<String, Value>) -> Result<PartInfo, String>
     Ok(info)
 }
 
+fn move_one(
+    id: Option<String>,
+    component: Option<String>,
+    copy_as: Option<String>,
+    linked: bool,
+    motion: faber_core::Motion,
+) -> Result<faber_core::Operation, String> {
+    use faber_core::Operation;
+    match (id, component, copy_as, linked) {
+        (Some(id), None, Some(copy_as), true) => Ok(Operation::MoveLinked {
+            id,
+            motion,
+            copy_as,
+        }),
+        (Some(id), None, copy_as, false) => Ok(Operation::Move {
+            id,
+            motion,
+            copy_as,
+        }),
+        (None, Some(id), None, false) => Ok(Operation::MoveComponent { id, motion }),
+        _ => {
+            Err("Give one part id or component. A linked copy needs a part id and copy_as.".into())
+        }
+    }
+}
+fn align_one(
+    id: Option<String>,
+    component: Option<String>,
+    target: String,
+    axes: Vec<faber_core::Axis>,
+    mode: faber_core::AlignMode,
+    gap_mm: f64,
+) -> Result<faber_core::Operation, String> {
+    use faber_core::Operation;
+    match (id, component) {
+        (Some(id), None) => Ok(Operation::Align {
+            id,
+            target,
+            axes,
+            mode,
+            gap_mm,
+        }),
+        (None, Some(id)) => Ok(Operation::AlignComponent {
+            id,
+            target,
+            axes,
+            mode,
+            gap_mm,
+        }),
+        _ => Err("Give one part id or component.".into()),
+    }
+}
 /// Reads each batch item by its tool field. Errors name the item.
 fn batch_operations(items: Vec<Value>) -> Result<Vec<faber_core::Operation>, String> {
     let accepted = BATCH_TOOLS.join(", ");
@@ -706,23 +832,13 @@ fn batch_operations(items: Vec<Value>) -> Result<Vec<faber_core::Operation>, Str
                     item.position,
                 )
                 .map_err(|e| format!("Batch operation {number} (tool `{tool}`): {e}"))?;
-                return Ok(faber_core::Operation::Move {
-                    id: item.id,
-                    motion,
-                    copy_as: item.copy_as,
-                });
+                return move_one(item.id,item.component,item.copy_as,item.linked,motion);
             }
             if tool == "align_parts" {
                 fields.remove("tool");
                 let item = crate::input::read::<AlignItem>(&Value::Object(fields), &path)
                     .map_err(|e| format!("Batch operation {number} (tool `{tool}`): {e}"))?;
-                return Ok(faber_core::Operation::Align {
-                    id: item.id,
-                    target: item.target,
-                    axes: item.axes,
-                    mode: item.mode,
-                    gap_mm: item.gap_mm,
-                });
+                return align_one(item.id,item.component,item.target,item.axes,item.mode,item.gap_mm);
             }
             if tool == "suppress_feature" {
                 // Read as the set_suppressed edit. Suppression is the default, as in the tool.
@@ -956,6 +1072,9 @@ pub struct RemovePart {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Export {
+    configuration: Option<String>,
+    #[serde(default)]
+    all_configurations: bool,
     directory: String,
     #[serde(default)]
     force: bool,
@@ -1044,7 +1163,64 @@ fn image_height() -> u32 {
 }
 
 pub fn report(data: &ProjectData, bodies: &[Body]) -> Value {
-    json!({"schema":1,"name":data.name,"revision":data.revision,"part_count":bodies.len(),"parts":bodies.iter().map(|b| json!({"id":b.id,"name":b.name,"group":b.group,"volume_mm3":b.volume,"bounds_mm":b.bounds,"triangles":b.mesh.triangles.len()})).collect::<Vec<_>>()})
+    let mut report = json!({"schema":1,"name":data.name,"revision":data.revision,"part_count":bodies.len(),"parts":bodies.iter().map(|b| json!({"id":b.id,"name":b.name,"group":b.group,"volume_mm3":b.volume,"bounds_mm":b.bounds,"triangles":b.mesh.triangles.len()})).collect::<Vec<_>>()});
+    if !data.components.is_empty() {
+        let mut counts = BTreeMap::new();
+        for part in data.parts.values() {
+            if let Some(id) = part.component.as_deref() {
+                *counts.entry(id).or_insert(0usize) += 1;
+            }
+        }
+        let mut children = BTreeMap::<Option<&str>, Vec<&str>>::new();
+        for (id, c) in &data.components {
+            children.entry(c.parent.as_deref()).or_default().push(id);
+        }
+        let mut ordered = children.remove(&None).unwrap_or_default();
+        let mut index = 0;
+        while index < ordered.len() {
+            if let Some(nested) = children.remove(&Some(ordered[index])) {
+                ordered.extend(nested);
+            }
+            index += 1;
+        }
+        for id in ordered.into_iter().rev() {
+            if let Some(parent) = data.components[id].parent.as_deref() {
+                let nested = counts.get(id).copied().unwrap_or_default();
+                *counts.entry(parent).or_default() += nested;
+            }
+        }
+        let rows = data
+            .components
+            .iter()
+            .map(|(id, component)| {
+                let count = counts.get(id.as_str()).copied().unwrap_or_default();
+                (
+                    id,
+                    json!({
+                        "name": component.name,
+                        "parent": component.parent,
+                        "part_count": count
+                    }),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        report["components"] = json!(rows);
+    }
+    if !data.configurations.is_empty() {
+        report["configurations"] = json!(data.configurations.keys().collect::<Vec<_>>());
+        report["active_configuration"] = json!(data.active_configuration);
+    }
+    report
+}
+
+pub fn project_status(root: &Path, p: &Project) -> Result<Value, String> {
+    let mut value = report(&p.data, &p.bodies);
+    let links = faber_wiring::links::list(root, p)?;
+    if !links.is_empty() {
+        value["links"] = json!(links);
+    }
+    value["source"] = json!(p.source());
+    Ok(value)
 }
 
 /// The reply of a placement tool. Each changed part also gives its placement.
@@ -1130,6 +1306,106 @@ impl Faber {
 
 #[tool_router]
 impl Faber {
+    #[tool(description = "Add a component or change its frame.")]
+    fn set_component(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<SetComponent>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, a.expected_revision)?;
+            p.batch_operations(
+                vec![faber_core::Operation::from(Edit::SetComponent {
+                    id: a.id,
+                    component: a.component,
+                })],
+                a.strict,
+            )?;
+            Ok(json!({"revision":p.data.revision}))
+        })
+    }
+    #[tool(description = "Remove a component. Set keep_parts to retain its contents.")]
+    fn remove_component(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<RemoveComponent>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, a.expected_revision)?;
+            p.batch_operations(
+                vec![faber_core::Operation::from(Edit::RemoveComponent {
+                    id: a.id,
+                    keep_parts: a.keep_parts,
+                })],
+                a.strict,
+            )?;
+            Ok(json!({"revision":p.data.revision}))
+        })
+    }
+    #[tool(description = "Save named parameter values and suppressed features.")]
+    fn set_configuration(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<SetConfiguration>>,
+    ) -> CallToolResult {
+        self.with_folder(|root, p| {
+            check_revision(p, a.expected_revision)?;
+            faber_wiring::configurations::edit(root, p, a.name, Some(a.configuration), a.strict)?;
+            Ok(json!({"revision":p.data.revision}))
+        })
+    }
+    #[tool(description = "Remove a named configuration.")]
+    fn remove_configuration(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<ConfigurationName>>,
+    ) -> CallToolResult {
+        self.with_folder(|root, p| {
+            check_revision(p, a.expected_revision)?;
+            faber_wiring::configurations::edit(root, p, a.name, None, a.strict)?;
+            Ok(json!({"revision":p.data.revision}))
+        })
+    }
+    #[tool(description = "Give a linked copy its own geometry.")]
+    fn make_independent(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<Independent>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, a.expected_revision)?;
+            p.batch_operations(
+                vec![faber_core::Operation::MakeIndependent { id: a.id }],
+                a.strict,
+            )?;
+            Ok(json!({"revision":p.data.revision}))
+        })
+    }
+    #[tool(description = "Apply a saved configuration in one revision.")]
+    fn use_configuration(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<ConfigurationName>>,
+    ) -> CallToolResult {
+        self.with_folder(|root, p| {
+            check_revision(p, a.expected_revision)?;
+            faber_wiring::use_configuration(root, p, &a.name, a.strict)?;
+            Ok(json!({
+                "revision": p.data.revision,
+                "active_configuration": p.data.active_configuration
+            }))
+        })
+    }
+    #[tool(description = "Read the parts list. Select a component or the whole assembly.")]
+    fn bom(&self, Parameters(Checked(a)): Parameters<Checked<PartsList>>) -> CallToolResult {
+        self.with(|p| {
+            let rows = faber_wiring::bom::report(p, a.scope.as_deref(), a.flat.unwrap_or(true))?;
+            match a.format.as_deref().unwrap_or("json") {
+                "json" => Ok(json!({"revision":p.data.revision,"rows":rows})),
+                "csv" => {
+                    Ok(json!({"revision":p.data.revision,"text":faber_wiring::bom::csv(&rows)}))
+                }
+                "md" => Ok(
+                    json!({"revision":p.data.revision,"text":faber_wiring::bom::markdown(&rows)}),
+                ),
+                _ => Err("Choose json, csv or md.".into()),
+            }
+        })
+    }
     #[tool(description = "List the saved drawing sheets.")]
     fn drawings(&self) -> CallToolResult {
         self.with(|p|Ok(json!({"revision":p.data.revision,
@@ -1549,11 +1825,7 @@ impl Faber {
 
     #[tool(description = "Read part bounds, volume and triangle counts.")]
     fn status(&self) -> CallToolResult {
-        self.with(|p| {
-            let mut value = report(&p.data, &p.bodies);
-            value["source"] = json!(p.source());
-            Ok(value)
-        })
+        self.with_folder(|root, p| project_status(root, p))
     }
 
     #[tool(
@@ -1654,21 +1926,46 @@ impl Faber {
     }
 
     #[tool(
-        description = "Import STEP, STL, 3MF, OBJ, PLY or OFF as a new part. Use an absolute source path. Keep mesh faces and preserve the source bytes in the project. Files without units use millimetres. Mesh parts do not have exact face or solid operations. Materials and textures are not imported. This is not a purchased-part record."
+        description = "Import STEP, STL, 3MF, OBJ, PLY or OFF. Keep the source bytes. Meshes keep their faces, without materials or textures. Files without units use mm. Set link to follow a project-relative or absolute file."
     )]
     fn import_part(
         &self,
         Parameters(Checked(args)): Parameters<Checked<ImportPart>>,
     ) -> CallToolResult {
-        self.with(|p| {
+        self.with_folder(|root, p| {
             check_revision(p, args.expected_revision)?;
             let path = Path::new(&args.path);
-            if !path.is_absolute() {
+            if !path.is_absolute() && !args.link {
                 return Err("Import needs an absolute source path".into());
             }
             let before = Before::of(p);
-            p.import_with_record(args.id, args.name, path, args.strict, args.purchased)?;
+            if args.link {
+                if args.purchased.is_some() {
+                    return Err("A purchased part cannot have a file link.".into());
+                }
+                faber_wiring::links::import(root, p, args.id, args.name, path, args.strict)?;
+            } else {
+                p.import_with_record(args.id, args.name, path, args.strict, args.purchased)?;
+            }
             Ok(changed_reply(&before, p, args.verbose))
+        })
+    }
+
+    #[tool(description = "List linked parts and their current, changed or missing source files.")]
+    fn links(&self) -> CallToolResult {
+        self.with_folder(|root, p| Ok(json!({"links":faber_wiring::links::list(root,p)?})))
+    }
+    #[tool(
+        description = "Import changed linked files in one revision. Missing files keep their last asset."
+    )]
+    fn refresh_links(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<RefreshLinks>>,
+    ) -> CallToolResult {
+        self.with_folder(|root, p| {
+            let revision = args.expected_revision.unwrap_or(p.data.revision);
+            let changed = faber_wiring::links::refresh(root, p, args.parts.as_deref(), revision)?;
+            Ok(json!({"revision":p.data.revision,"parts":changed}))
         })
     }
 
@@ -1722,11 +2019,12 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<SweepMotion>>,
     ) -> CallToolResult {
         self.with(|p| {
-            Ok(json!(faber_wiring::motion_check::sweep(
+            Ok(json!(faber_wiring::motion_check::sweep_coordinate(
                 &p.bodies,
                 &p.data.motion,
                 &p.data.contacts,
                 &args.joint,
+                args.coordinate,
                 args.range,
                 args.proximity_mm
             )?))
@@ -1758,7 +2056,7 @@ impl Faber {
         &self,
         Parameters(Checked(args)): Parameters<Checked<MotionPose>>,
     ) -> CallToolResult {
-        self.with(|p| Ok(json!({"transforms":p.data.motion.solve(&args.values)?})))
+        self.with(|p| Ok(json!({"transforms":p.data.motion.solve_pose(&args.values)?})))
     }
 
     #[tool(description = "Redo a saved change after undo. A new edit clears the redo branch.")]
@@ -2086,6 +2384,7 @@ impl Faber {
             check_revision(p, args.expected_revision)?;
             let before = Before::of(p);
             p.set_part_info(PartInfo {
+                component: args.component,
                 material: args.material,
                 id: args.id,
                 name: args.name,
@@ -2137,12 +2436,28 @@ impl Faber {
                 args.position,
             )?;
             let before = Before::of(p);
-            match (&args.id, &args.ids) {
-                (Some(id), None) => p.move_part(id, motion, args.copy_as.as_deref())?,
-                (None, Some(ids)) if args.copy_as.is_none() => p.move_parts(ids, motion)?,
-                (None, Some(_)) => return Err("copy_as takes one id, not ids.".into()),
-                (Some(_), Some(_)) => return Err("Give id or ids, not both.".into()),
-                (None, None) => return Err("Give id or ids.".into()),
+            if let Some(ids) = args.ids {
+                if args.component.is_some() || args.id.is_some() {
+                    return Err("Give id or ids, not both.".into());
+                }
+                if args.copy_as.is_some() || args.linked {
+                    return Err("copy_as takes one id, not ids.".into());
+                }
+                p.move_parts(&ids, motion)?;
+            } else {
+                if args.id.is_none() && args.component.is_none() {
+                    return Err("Give id or ids.".into());
+                }
+                p.batch_operations(
+                    vec![move_one(
+                        args.id,
+                        args.component,
+                        args.copy_as,
+                        args.linked,
+                        motion,
+                    )?],
+                    false,
+                )?;
             }
             Ok(placed_reply(&before, p, args.verbose))
         })
@@ -2158,7 +2473,17 @@ impl Faber {
         self.with(|p| {
             check_revision(p, args.expected_revision)?;
             let before = Before::of(p);
-            p.align_part(&args.id, &args.target, &args.axes, args.mode, args.gap_mm)?;
+            p.batch_operations(
+                vec![align_one(
+                    args.id,
+                    args.component,
+                    args.target,
+                    args.axes,
+                    args.mode,
+                    args.gap_mm,
+                )?],
+                false,
+            )?;
             Ok(placed_reply(&before, p, args.verbose))
         })
     }
@@ -2301,18 +2626,18 @@ impl Faber {
         description = "Write stl meshes, step solids or one 3mf assembly. Units are mm. Mesh tolerance is 0.001 to 1.0 mm. A refused export lists each finding."
     )]
     fn export(&self, Parameters(Checked(args)): Parameters<Checked<Export>>) -> CallToolResult {
-        self.with(|p| {
+        self.with_folder(|root,p| {
             let tolerance = args
                 .tolerance_mm
                 .unwrap_or(faber_wiring::EXPORT_TOLERANCE_MM);
-            let files = faber_wiring::export_project_with(
+            let files=if args.configuration.is_some() || args.all_configurations {faber_wiring::configurations::export(root,&p.data,Path::new(&args.directory),args.configuration.as_deref(),args.all_configurations,&faber_wiring::configurations::ExportOptions{format:&args.format,force:args.force,tolerance})?} else {faber_wiring::export_project_with(
                 &p.data,
                 &p.bodies,
                 Path::new(&args.directory),
                 &args.format,
                 args.force,
                 tolerance,
-            )?;
+            )?};
             let mut reply = json!({"schema":1,"files":files.iter().map(|file| file.to_json()).collect::<Vec<_>>()});
             if matches!(args.format.as_str(),"stl"|"3mf") {
                 reply["tolerance_mm"] = json!(tolerance);

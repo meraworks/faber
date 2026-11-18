@@ -1,7 +1,7 @@
 //! Check interference over one independent joint range.
 
 use crate::{OcctKernel, interference};
-use faber_model::motion::{JointKind, MotionStudy};
+use faber_model::motion::{MotionStudy, PoseValue};
 use faber_model::{Contact, Placement};
 use faber_ports::{Body, Kernel, Result};
 use glam::{DQuat, DVec3, EulerRot};
@@ -120,7 +120,13 @@ fn group<'a>(body: &Body, study: &'a MotionStudy, driver: &str) -> Option<(bool,
 }
 
 // Bound the distance a point travels per unit of driver travel.
-fn speed(body: &Body, study: &MotionStudy, driver: &str, range: [f64; 2]) -> f64 {
+fn speed(
+    body: &Body,
+    study: &MotionStudy,
+    driver: &str,
+    coordinate: usize,
+    range: [f64; 2],
+) -> f64 {
     if study
         .linkages
         .values()
@@ -151,17 +157,14 @@ fn speed(body: &Body, study: &MotionStudy, driver: &str, range: [f64; 2]) -> f64
             return f64::INFINITY;
         }
         if source == driver {
-            match joint.kind {
-                JointKind::Rigid
-                | JointKind::Cylindrical
-                | JointKind::PinSlot
-                | JointKind::Planar
-                | JointKind::Ball => return f64::INFINITY,
-                JointKind::Revolute => speed += radius * ratio.to_radians(),
-                JointKind::Slider => {
-                    speed += ratio;
-                    radius += range[0].abs().max(range[1].abs()) * ratio;
-                }
+            if joint
+                .kind
+                .angular(if id == driver { coordinate } else { 0 })
+            {
+                speed += radius * ratio.to_radians();
+            } else {
+                speed += ratio;
+                radius += range[0].abs().max(range[1].abs()) * ratio;
             }
         }
         owner = joint
@@ -187,13 +190,40 @@ pub fn sweep(
     range: [f64; 2],
     proximity_mm: f64,
 ) -> Result<SweepReport> {
+    sweep_coordinate(bodies, study, contacts, joint, 0, range, proximity_mm)
+}
+pub fn sweep_coordinate(
+    bodies: &[Body],
+    study: &MotionStudy,
+    contacts: &BTreeMap<String, Contact>,
+    joint: &str,
+    coordinate: usize,
+    range: [f64; 2],
+    proximity_mm: f64,
+) -> Result<SweepReport> {
     if !range.iter().all(|x| x.is_finite()) || !(range[1] - range[0]).is_finite() {
         return Err("Use a finite motion range".into());
     }
     if !proximity_mm.is_finite() || proximity_mm < 0. {
         return Err("Use a finite, non-negative clearance".into());
     }
-    let solve = |value| study.solve(&BTreeMap::from([(joint.to_owned(), value)]));
+    let count = study
+        .joints
+        .get(joint)
+        .ok_or_else(|| format!("Unknown joint {joint}"))?
+        .kind
+        .count();
+    if coordinate >= count {
+        return Err(format!("Joint {joint} has {count} motion coordinates."));
+    }
+    let solve = |value| {
+        let mut coords = vec![0.; count];
+        coords[coordinate] = value;
+        study.solve_pose(&BTreeMap::from([(
+            joint.to_owned(),
+            PoseValue::from_values(coords),
+        )]))
+    };
     let initial = solve(range[0])?;
     if let Some(id) = initial
         .keys()
@@ -214,7 +244,7 @@ pub fn sweep(
         .zip(groups)
         .map(|(body, group)| {
             if group.is_some() {
-                speed(body, study, joint, range)
+                speed(body, study, joint, coordinate, range)
             } else {
                 0.
             }

@@ -3,8 +3,49 @@ use faber_ports::{AssetStore, Result};
 use std::{collections::BTreeMap, path::PathBuf};
 
 pub(crate) type Paths = BTreeMap<String, PathBuf>;
+pub fn refuse_link_edit(id: &str, part: &faber_model::Part<Scalar>) -> Result<()> {
+    if let Geometry::Imported {
+        link: Some(link), ..
+    } = &part.geometry
+    {
+        return Err(format!(
+            "Part {id} follows the file {}. Change the file, then call refresh_links.",
+            link.path
+        ));
+    }
+    Ok(())
+}
 
 impl crate::Project {
+    /// Replace only the cached asset and hash of the listed file links.
+    pub fn refresh_link_assets(
+        &mut self,
+        revision: u64,
+        updates: BTreeMap<String, (String, PathBuf)>,
+    ) -> Result<()> {
+        self.check_edit_revision(revision)?;
+        self.refuse_generated()?;
+        let mut next = self.data.clone();
+        let mut staged = Paths::new();
+        for (id, (hash, path)) in updates {
+            let part = next
+                .parts
+                .get_mut(&id)
+                .ok_or_else(|| format!("Unknown linked part: {id}"))?;
+            let Geometry::Imported {
+                asset,
+                link: Some(link),
+                purchased: None,
+            } = &mut part.geometry
+            else {
+                return Err(format!("Part {id} has no file link."));
+            };
+            asset.clone_from(&hash);
+            link.hash.clone_from(&hash);
+            staged.insert(hash, path);
+        }
+        self.save_with_assets(next, staged, false)
+    }
     /// Read the imported triangle surface before the part placement.
     pub fn imported_mesh(&self, id: &str) -> Result<&faber_ports::Mesh> {
         let local = self
@@ -52,7 +93,25 @@ pub(crate) fn resolve_with(
         geometry: &Geometry<Scalar>,
         store: Option<&dyn AssetStore>,
         paths: &mut Paths,
+        root: bool,
     ) -> Result<()> {
+        if let Geometry::Imported {
+            asset,
+            link: Some(link),
+            purchased,
+        } = geometry
+        {
+            if !root {
+                return Err("A file link must be the root geometry of a part.".into());
+            }
+            if purchased.is_some()
+                || link.path.trim().is_empty()
+                || link.path.contains('\0')
+                || link.hash != *asset
+            {
+                return Err("A file link needs a source path and its asset hash. A purchased part cannot have a file link.".into());
+            }
+        }
         match geometry {
             Geometry::Imported { asset, .. } if !paths.contains_key(asset) => {
                 paths.insert(
@@ -64,7 +123,7 @@ pub(crate) fn resolve_with(
             }
             Geometry::History { features, .. } => {
                 for feature in features {
-                    visit(&feature.geometry, store, paths)?;
+                    visit(&feature.geometry, store, paths, false)?;
                 }
             }
             _ => (),
@@ -72,7 +131,7 @@ pub(crate) fn resolve_with(
         Ok(())
     }
     for part in data.parts.values() {
-        visit(&part.geometry, store, &mut paths)?;
+        visit(&part.geometry, store, &mut paths, true)?;
     }
     Ok(paths)
 }

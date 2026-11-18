@@ -6,6 +6,7 @@ use std::any::Any;
 use std::path::Path;
 use std::sync::Arc;
 
+pub mod bom;
 pub mod drawing;
 pub mod source;
 pub mod vector;

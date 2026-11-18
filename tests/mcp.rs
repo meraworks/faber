@@ -918,6 +918,88 @@ fn snap_check_matches_the_material_and_feature_info() {
     session.finish();
 }
 
+#[test]
+fn motion_pose_accepts_multiple_coordinates_without_changing_the_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"piston","part":box_part("Piston",[1.;3],[0.;3])}),
+    );
+    s.ok("set_motion",json!({"joints":{"slide":{"kind":"cylindrical","parts":["piston"],"origin":[0,0,0],"axis":[0,0,1]}}}));
+    let revision = s.ok("status", json!({}))["revision"].clone();
+    let result = s.ok("motion_pose", json!({"values":{"slide":[90,5]}}));
+    assert_near(
+        &result["transforms"]["piston"]["translation"],
+        &[0., 0., 5.],
+    );
+    assert_near(&result["transforms"]["piston"]["rotation"], &[0., 0., 90.]);
+    let error = s.refused("motion_pose", json!({"values":{"slide":5}}));
+    assert!(error.contains("2 values"), "{error}");
+    let sweep = s.ok(
+        "sweep_motion",
+        json!({"joint":"slide","coordinate":1,"range":[0,5]}),
+    );
+    assert_eq!(sweep["status"], "clear");
+    assert!(
+        s.refused(
+            "sweep_motion",
+            json!({"joint":"slide","coordinate":2,"range":[0,5]})
+        )
+        .contains("2 motion coordinates")
+    );
+    assert_eq!(s.ok("status", json!({}))["revision"], revision);
+    s.finish();
+}
+
+#[test]
+fn linked_import_refreshes_only_at_the_expected_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::start(dir.path());
+    let source = dir.path().join("board.off");
+    let write_board = |width| {
+        std::fs::write(&source, format!("OFF\n4 4 0\n0 0 0\n{width} 0 0\n0 10 0\n0 0 10\n3 0 2 1\n3 0 1 3\n3 0 3 2\n3 1 2 3\n")).unwrap();
+    };
+    write_board(10);
+    session.ok(
+        "import_part",
+        json!({"id":"board","name":"Board","path":"board.off","link":true}),
+    );
+    let row = session.ok("links", json!({}))["links"][0].clone();
+    assert_eq!(row["state"], "current");
+    assert_eq!(row["path"], "board.off");
+    let revision = session.ok("status", json!({}))["revision"]
+        .as_u64()
+        .unwrap();
+    write_board(20);
+    assert_eq!(
+        session.ok("status", json!({}))["links"][0]["state"],
+        "changed"
+    );
+    session.refused(
+        "refresh_links",
+        json!({"parts":["board"],"expected_revision":revision-1}),
+    );
+    let reply = session.ok(
+        "refresh_links",
+        json!({"parts":["board"],"expected_revision":revision}),
+    );
+    assert_eq!(reply["revision"], revision + 1);
+    assert_eq!(reply["parts"], json!(["board"]));
+    session.ok("undo", json!({}));
+    assert_eq!(
+        session.ok("links", json!({}))["links"][0]["hash"],
+        row["hash"]
+    );
+    std::fs::remove_file(source).unwrap();
+    assert_eq!(
+        session.ok("links", json!({}))["links"][0]["state"],
+        "missing"
+    );
+    assert_eq!(session.ok("refresh_links", json!({}))["parts"], json!([]));
+    session.finish();
+}
+
 /// A box from the origin, with the given size and placement translation.
 fn box_part(name: &str, size: [f64; 3], translation: [f64; 3]) -> Value {
     json!({"name":name,"geometry":{"op":"extrude","profile":{"outer":[[0,0],[size[0],0],[size[0],size[1]],[0,size[1]]]},"height":size[2]},"placement":{"translation":translation},"colour":[80,100,120]})
@@ -2018,5 +2100,195 @@ fn export_drawing_reports_problems() {
         String::from_utf8_lossy(&cli.stderr)
     );
     assert!(std::fs::read(target).unwrap().starts_with(b"%PDF-1.4"));
+    s.finish();
+}
+
+#[test]
+fn component_moves_and_linked_copies_use_one_group_in_the_parts_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "set_component",
+        json!({"id":"frame","component":{"name":"Frame"}}),
+    );
+    s.ok("put_part",json!({"id":"a","part":{"name":"Pin","component":"frame","colour":[10,20,30],"geometry":{"op":"box","size":[2,2,2]}}}));
+    s.ok(
+        "move_part",
+        json!({"id":"a","translate":[4,0,0],"linked":true,"copy_as":"b"}),
+    );
+    s.ok(
+        "move_part",
+        json!({"component":"frame","translate":[0,10,0]}),
+    );
+    let bom = s.ok("bom", json!({"scope":"frame"}));
+    assert_eq!(bom["rows"][0]["quantity"], 2);
+    let status = s.ok("status", json!({}));
+    assert_eq!(status["components"]["frame"]["part_count"], 2);
+    s.ok("make_independent", json!({"id":"b"}));
+    s.ok("batch",json!({"operations":[{"tool":"set_part_info","id":"b","component":""},{"tool":"remove_component","id":"frame","keep_parts":true}]}));
+    s.finish();
+}
+
+#[test]
+fn configuration_tools_refuse_stale_changes_and_export_without_a_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::start(dir.path());
+    session.ok("set_param", json!({"name":"width","expression":"8"}));
+    session.ok("put_part",json!({"id":"cube","part":{"name":"Cube","colour":[10,20,30],"geometry":{"op":"box","size":["width",2,3]}}}));
+    let before = session.ok("status", json!({}))["revision"]
+        .as_u64()
+        .unwrap();
+    let saved = session.ok(
+        "set_configuration",
+        json!({"name":"short","configuration":{"params":{"width":"5"}},"expected_revision":before}),
+    );
+    assert_eq!(saved["revision"], before + 1);
+    assert!(
+        session
+            .refused(
+                "use_configuration",
+                json!({"name":"short","expected_revision":before})
+            )
+            .contains("revision")
+    );
+    let dest = tempfile::tempdir().unwrap();
+    session.ok(
+        "export",
+        json!({"directory":dest.path(),"configuration":"short"}),
+    );
+    assert!(dest.path().join("cube.stl").is_file());
+    let status = session.ok("status", json!({}));
+    assert_eq!(
+        status["parts"][0]["volume_mm3"].as_f64().unwrap().round(),
+        48.
+    );
+    assert_eq!(saved["revision"], status["revision"]);
+    session.ok(
+        "use_configuration",
+        json!({"name":"short","expected_revision":before+1}),
+    );
+    let status = session.ok("status", json!({}));
+    assert_eq!(
+        status["parts"][0]["volume_mm3"].as_f64().unwrap().round(),
+        30.
+    );
+    assert_eq!(status["active_configuration"], "short");
+    session.ok(
+        "remove_configuration",
+        json!({"name":"short","expected_revision":before+2}),
+    );
+    assert!(session.ok("status", json!({}))["active_configuration"].is_null());
+    session.finish();
+}
+
+#[test]
+fn editing_an_active_generated_configuration_updates_numeric_geometry_in_one_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("design.jsonnet"),
+        r#"{
+        local size=std.parseInt(self.params.width), params:{width:'8'},
+        parts:{box:{name:'Box',colour:[20,40,60],geometry:{op:'box',size:[size,4,5]}}}
+    }"#,
+    )
+    .unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "set_configuration",
+        json!({"name":"made","configuration":{"params":{"width":"12"}}}),
+    );
+    s.ok("use_configuration", json!({"name":"made"}));
+    let old = s.ok("status", json!({}));
+    let rev = old["revision"].as_u64().unwrap();
+    assert_eq!(
+        old["parts"][0]["volume_mm3"].as_f64().unwrap().round(),
+        240.
+    );
+    s.ok(
+        "set_configuration",
+        json!({"name":"made","configuration":{"params":{"width":"18"}},"expected_revision":rev}),
+    );
+    let new = s.ok("status", json!({}));
+    assert_eq!(new["revision"], rev + 1);
+    assert_eq!(
+        new["parts"][0]["volume_mm3"].as_f64().unwrap().round(),
+        360.
+    );
+    s.finish();
+}
+
+#[test]
+fn generated_component_frames_keep_their_source_placements() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("design.jsonnet");
+    let design = r#"{
+        params: {w:'20'},
+        configurations: {wide:{params:{w:'40'}}},
+        components: {frame:{name:'Frame',placement:{translation:[3,0,0],rotation:[0,0,0]}}},
+        parts:{box:{name:'Box',colour:[2,3,4],component:'frame',geometry:{op:'box',size:['w',5,8]}},
+               stop:{name:'Stop',colour:[5,5,5],geometry:{op:'box',size:[2,2,2]}}}
+    }"#;
+    std::fs::write(&source, design).unwrap();
+    let mut s = Session::start(root.path());
+    let initial = s.ok("status", json!({}));
+    let revision = initial["revision"].as_u64().unwrap();
+    let manual = json!({"tool":"set_component","id":"manual","component":{"name":"Manual"}});
+    for (tool, input) in [
+        (
+            "move_part",
+            json!({"component":"frame","translate":[30,0,0]}),
+        ),
+        (
+            "align_parts",
+            json!({"component":"frame","target":"stop","axes":["x"],"mode":"min"}),
+        ),
+        ("remove_component", json!({"id":"frame","keep_parts":true})),
+        (
+            "set_component",
+            json!({"id":"frame","component":{"name":"Override"}}),
+        ),
+        (
+            "preview_batch",
+            json!({"expected_revision":revision,"operations":[manual,{"tool":"move_part","component":"frame","translate":[30,0,0]}]}),
+        ),
+        (
+            "batch",
+            json!({"expected_revision":revision,"operations":[manual,{"tool":"remove_component","id":"frame","keep_parts":true}]}),
+        ),
+    ] {
+        let error = s.refused(tool, input);
+        assert!(
+            error.contains("component frame") && error.contains("design.jsonnet"),
+            "{error}"
+        );
+    }
+    assert_eq!(s.ok("status", json!({})), initial);
+    s.ok(
+        "batch",
+        json!({"expected_revision":revision,"operations":[manual]}),
+    );
+    s.ok("use_configuration", json!({"name":"wide"}));
+    let wide = s.ok("status", json!({}));
+    assert_eq!(wide["components"]["manual"]["name"], "Manual");
+    assert!((wide["parts"][0]["bounds_mm"][0][0].as_f64().unwrap() - 3.).abs() < 1e-6);
+    let updated = design
+        .replace("[3,0,0]", "[33,0,0]")
+        .replace("name:'Frame',", "name:'Frame',parent:'manual',");
+    std::fs::write(source, updated).unwrap();
+    s.ok("build", json!({}));
+    let rebuilt = s.ok("status", json!({}));
+    assert!((rebuilt["parts"][0]["bounds_mm"][0][0].as_f64().unwrap() - 33.).abs() < 1e-6);
+    let error = s.refused("remove_component", json!({"id":"manual","keep_parts":true}));
+    assert!(
+        error.contains("component frame") && error.contains("design.jsonnet"),
+        "{error}"
+    );
+    s.ok(
+        "move_part",
+        json!({"component":"manual","translate":[5,0,0]}),
+    );
+    s.ok("build", json!({}));
+    let moved = s.ok("status", json!({}));
+    assert!((moved["parts"][0]["bounds_mm"][0][0].as_f64().unwrap() - 38.).abs() < 1e-6);
     s.finish();
 }

@@ -23,15 +23,15 @@ fn check(data: &ProjectData, name: &str, config: &Configuration) -> Result<()> {
     {
         return Err(format!("Invalid configuration name: {name}."));
     }
-    for param in config.params.keys() {
+    for (param, expression) in &config.params {
         if !data.params.contains_key(param) {
             return Err(format!("Unknown parameter: {param}."));
         }
-    }
-    if !config.params.is_empty() {
-        let mut expressions = data.params.clone();
-        expressions.extend(config.params.clone());
-        faber_expr::resolve(&expressions)?;
+        for dependency in faber_expr::dependencies(expression)? {
+            if !data.params.contains_key(&dependency) {
+                return Err(format!("Unknown parameter: {dependency}."));
+            }
+        }
     }
     let mut found = BTreeSet::new();
     for item in &config.suppressed {
@@ -61,6 +61,9 @@ pub(crate) fn validate(data: &ProjectData) -> Result<()> {
 }
 pub(crate) fn set(data: &mut ProjectData, name: String, config: Configuration) -> Result<()> {
     check(data, &name, &config)?;
+    let mut params = data.params.clone();
+    params.extend(config.params.clone());
+    faber_expr::resolve(&params)?;
     data.configurations.insert(name.clone(), config);
     if data.active_configuration.as_deref() == Some(&name) {
         apply_configuration(data, &name)?;

@@ -1,0 +1,27 @@
+{
+  "configurations": {
+    "compact": {
+      "params": {
+        "height": "35",
+        "span": "100"
+      },
+      "suppressed": [],
+      "note": "Standard height"
+    },
+    "wide": {
+      "params": {
+        "height": "50",
+        "span": "160"
+      },
+      "suppressed": [],
+      "note": "Wide and tall"
+    }
+  },
+  "schema": 2,
+  "revision": 1,
+  "name": "Desk riser",
+  "params": {
+    "height": "35",
+    "span": "100"
+  }
+}
