@@ -66,7 +66,7 @@ fn face_plane_tracks_source_dimensions_and_outward_normals() {
             );
         }
     }
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for face in [
         json!({"expect":6,"tolerance":0.000001}),
         json!({"normal":[0,0,1],"expect":2,"tolerance":0.000001}),
@@ -82,7 +82,7 @@ fn face_plane_tracks_source_dimensions_and_outward_normals() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }
@@ -101,7 +101,7 @@ fn face_plane_tracks_source_dimensions_and_outward_normals() {
             .contains("planar")
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     drop(project);

@@ -22,7 +22,7 @@ fn box_mass_properties_are_world_values_and_density_adds_mass() {
     }
     assert!(report.mass_g.is_none());
     assert!(report.inertia_kg_mm2.is_none());
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let report = project.mass_properties("p", Some(1.)).unwrap();
     assert!((report.mass_g.unwrap() - 6.).abs() < 1e-9);
     let inertia = report.inertia_kg_mm2.unwrap();
@@ -33,7 +33,7 @@ fn box_mass_properties_are_world_values_and_density_adds_mass() {
         assert!(inertia[row][column].abs() < 1e-9);
     }
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
 }

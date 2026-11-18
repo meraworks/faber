@@ -93,7 +93,7 @@ fn refused_text(server: &mut Server, operations: Value) -> String {
 fn unknown_tool_names_the_operation_and_the_accepted_tools() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = open_project(dir.path());
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     let text = refused_text(
         &mut server,
         json!([
@@ -106,7 +106,7 @@ fn unknown_tool_names_the_operation_and_the_accepted_tools() {
     assert!(text.contains("set_part_info"), "{text}");
     assert!(!text.contains("untagged"), "{text}");
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
 }
@@ -115,7 +115,7 @@ fn unknown_tool_names_the_operation_and_the_accepted_tools() {
 fn misspelled_part_field_names_the_operation_and_the_field() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = open_project(dir.path());
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     let text = refused_text(
         &mut server,
         json!([
@@ -131,7 +131,7 @@ fn misspelled_part_field_names_the_operation_and_the_field() {
     assert!(text.contains("colr"), "{text}");
     assert!(!text.contains("untagged"), "{text}");
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
 }
@@ -140,7 +140,7 @@ fn misspelled_part_field_names_the_operation_and_the_field() {
 fn wrong_colour_type_in_set_part_info_names_the_operation_and_the_field() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = open_project(dir.path());
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     let text = refused_text(
         &mut server,
         json!([
@@ -152,7 +152,7 @@ fn wrong_colour_type_in_set_part_info_names_the_operation_and_the_field() {
     assert!(text.contains("colour"), "{text}");
     assert!(!text.contains("untagged"), "{text}");
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
 }

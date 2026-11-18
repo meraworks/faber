@@ -39,7 +39,7 @@ fn override_that_matches_no_face_is_refused_and_the_file_is_unchanged() {
     project
         .put_part("tray".into(), box_shell(json!(2), floor_override(4.)))
         .unwrap();
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let nothing = json!([{"faces":{"in_box":[[500,500,500],[600,600,600]],"expect":1,"tolerance":0.000001},"thickness":4}]);
     let error = project
         .put_part("tray".into(), box_shell(json!(2), nothing))
@@ -47,7 +47,7 @@ fn override_that_matches_no_face_is_refused_and_the_file_is_unchanged() {
     assert!(error.contains("found 0, expected 1"), "{error}");
     assert_eq!(
         before,
-        std::fs::read(directory.path().join("faber.json")).unwrap()
+        faber_wiring::project_fingerprint(directory.path()).unwrap()
     );
 }
 

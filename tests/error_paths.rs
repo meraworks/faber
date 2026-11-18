@@ -108,7 +108,7 @@ fn refused_text(server: &mut Server, operations: Value) -> String {
 fn batch_list_for_shell_faces_names_the_operation_and_the_path() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = open_project(dir.path());
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     let text = refused_text(
         &mut server,
         json!([
@@ -123,7 +123,7 @@ fn batch_list_for_shell_faces_names_the_operation_and_the_path() {
         "{text}"
     );
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
 }
@@ -177,4 +177,47 @@ fn kernel_failure_names_the_part_feature_and_operation() {
     assert!(text.contains("corner_round"), "{text}");
     assert!(text.contains("(fillet)"), "{text}");
     assert!(text.contains("tested value"), "{text}");
+}
+
+#[test]
+fn direct_call_error_has_no_batch_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = open_project(dir.path());
+    server.call("put_part", json!({"id":"block","part":block_part()}));
+    let message = server.refusal(
+        "set_contact",
+        json!({"a":"block","b":"ghost","allowed":true,"note":"Seated"}),
+    );
+    assert!(message.contains("Unknown part: ghost"), "{message}");
+    assert!(!message.contains("Batch operation 1"), "{message}");
+}
+
+#[test]
+fn selector_list_error_names_the_cause() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = open_project(dir.path());
+    server.call("put_part", json!({"id":"base","part":block_part()}));
+    let message = server.refusal(
+        "add_feature",
+        json!({"part":"base","feature":{"id":"round","geometry":{"op":"fillet",
+            "source":"block","edges":[{"parallel":[0,0,1],"expect":4,"tolerance":0.000001}],
+            "radius":1}}}),
+    );
+    assert!(
+        message.contains("edges takes one selector object, not a list"),
+        "{message}"
+    );
+}
+
+#[test]
+fn direct_single_edit_error_has_no_batch_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = open_project(dir.path());
+    server.call("put_part", json!({"id":"block","part":block_part()}));
+    let message = server.refusal(
+        "suppress_feature",
+        json!({"part":"block","id":"ghost","suppressed":true}),
+    );
+    assert!(message.contains("Unknown feature"), "{message}");
+    assert!(!message.contains("Batch operation"), "{message}");
 }

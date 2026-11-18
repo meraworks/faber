@@ -45,7 +45,7 @@ fn thicken_preserves_selected_source_and_names_new_faces_in_both_directions() {
                 5
             );
         }
-        let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+        let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
         let mut invalid = recipe;
         invalid["geometry"]["features"][2]["geometry"]["face"]["created_by"] = json!("base");
         assert!(
@@ -57,7 +57,7 @@ fn thicken_preserves_selected_source_and_names_new_faces_in_both_directions() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
         drop(project);

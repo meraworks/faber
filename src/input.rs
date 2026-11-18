@@ -29,7 +29,18 @@ pub fn read<T: DeserializeOwned>(value: &Value, prefix: &str) -> Result<T, Strin
     } else {
         by_trial::<T>(value, &error)
     };
+    let error = selector_list(value, &steps, &error).unwrap_or(error);
     Err(with_path(&path_text(prefix, &steps), &error))
+}
+
+/// An edge selector is one object. A type error on a list at `edges` names that cause.
+/// The serde text stays as a suffix. No `edges` field in faber-model is a list.
+fn selector_list(root: &Value, steps: &[Step], error: &str) -> Option<String> {
+    let [.., Step::Key(key)] = steps else {
+        return None;
+    };
+    (key == "edges" && error.starts_with("invalid type") && node_at(root, steps)?.is_array())
+        .then(|| format!("edges takes one selector object, not a list. {error}"))
 }
 
 /// Wraps a tool argument type. Its errors name the path, as `read` does.
@@ -273,6 +284,18 @@ mod tests {
     struct Edit {
         tool: String,
         feature: Feature,
+    }
+
+    #[test]
+    fn edge_list_of_the_wrong_length_keeps_its_own_message() {
+        #[derive(Deserialize, Debug)]
+        struct Edges {
+            #[allow(dead_code)]
+            edges: [u8; 2],
+        }
+        let error = read::<Edges>(&serde_json::json!({"edges":[1,2,3]}), "").unwrap_err();
+        assert!(error.contains("invalid length"), "{error}");
+        assert!(!error.contains("selector"), "{error}");
     }
 
     #[test]

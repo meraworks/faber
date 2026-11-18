@@ -56,7 +56,7 @@ fn slot_sketch_has_round_ends_and_keeps_parameters() {
         .set_params([("length".into(), "10".into())].into())
         .unwrap();
     assert!((project.bodies[0].volume - 100. * std::f64::consts::PI).abs() < 1e-6);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for length in ["9", "0", "-1"] {
         assert!(
             project
@@ -64,7 +64,7 @@ fn slot_sketch_has_round_ends_and_keeps_parameters() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

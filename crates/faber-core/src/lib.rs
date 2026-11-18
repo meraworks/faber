@@ -24,6 +24,7 @@ use faber_ports::{Body, Kernel, ProjectStore, Result};
 use glam::{DMat3, DVec3};
 pub use placement::{
     AlignMode, Axis, Motion, Pivot, PivotName, PointToPoint, Rotation, RotationAxis, align_shift,
+    refuse_purchased_copy, tidy,
 };
 pub use section::{CutPart, ResolvedSection, SectionReport};
 use std::collections::BTreeMap;
@@ -400,6 +401,15 @@ impl Project {
         action: Option<faber_ports::HistoryMove>,
         strict: bool,
     ) -> Result<()> {
+        // A change that only sets the revision is a no-op. It saves nothing and adds no undo step.
+        // Undo and redo always move the history cursor, so they never take this exit.
+        let unchanged = ProjectData {
+            revision: self.data.revision,
+            ..next.clone()
+        };
+        if action.is_none() && unchanged == self.data {
+            return Ok(());
+        }
         let Prepared {
             data: next,
             bodies,
@@ -506,17 +516,7 @@ pub fn contact_key(a: &str, b: &str) -> String {
 }
 
 pub fn valid_id(id: &str) -> bool {
-    let upper = id.to_ascii_uppercase();
-    let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || ((upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.len() == 4
-            && matches!(upper.as_bytes()[3], b'1'..=b'9'));
-    !reserved
-        && !id.is_empty()
-        && id.len() <= 100
-        && id
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+    faber_ports::valid_id(id)
 }
 
 fn validate_data(data: &ProjectData) -> Result<()> {

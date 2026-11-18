@@ -27,11 +27,11 @@ fn purchased_screw_can_move_but_its_geometry_is_fixed() {
     part.placement.translation[0] = Scalar::Number(12.);
     project.put_part("screw".into(), part.clone()).unwrap();
     part.geometry = serde_json::from_value(json!({"op":"box","size":[3,3,10]})).unwrap();
-    let before = std::fs::read(root.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(root.path()).unwrap();
     assert!(project.put_part("screw".into(), part).is_err());
     assert_eq!(
         before,
-        std::fs::read(root.path().join("faber.json")).unwrap()
+        faber_wiring::project_fingerprint(root.path()).unwrap()
     );
 }
 
@@ -130,7 +130,7 @@ fn imported_solid_reopens_without_its_source_and_detects_asset_changes() {
     assert!((project.bodies[0].volume - 12000.).abs() < 1e-5);
     let (_, bodies) = faber_wiring::read(&root).unwrap();
     assert!((bodies[0].volume - 12000.).abs() < 1e-5);
-    let saved = std::fs::read(root.join("faber.json")).unwrap();
+    let saved = faber_wiring::project_fingerprint(&root).unwrap();
     let asset = std::fs::read_dir(root.join("assets"))
         .unwrap()
         .next()
@@ -144,7 +144,7 @@ fn imported_solid_reopens_without_its_source_and_detects_asset_changes() {
             .set_params([("unused".into(), "1".into())].into())
             .is_err()
     );
-    assert_eq!(std::fs::read(root.join("faber.json")).unwrap(), saved);
+    assert_eq!(faber_wiring::project_fingerprint(&root).unwrap(), saved);
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn malformed_import_keeps_the_saved_project_and_existing_parts() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("project");
     let mut project = faber_wiring::open(&root, true, Some("Invalid import".into())).unwrap();
-    let saved = std::fs::read(root.join("faber.json")).unwrap();
+    let saved = faber_wiring::project_fingerprint(&root).unwrap();
     let source = directory.path().join("bad.step");
     std::fs::write(&source, b"not a model").unwrap();
     assert!(
@@ -161,7 +161,7 @@ fn malformed_import_keeps_the_saved_project_and_existing_parts() {
             .is_err()
     );
     assert!(project.bodies.is_empty());
-    assert_eq!(std::fs::read(root.join("faber.json")).unwrap(), saved);
+    assert_eq!(faber_wiring::project_fingerprint(&root).unwrap(), saved);
 }
 #[test]
 fn exported_sphere_facets_follow_the_exact_surface() {

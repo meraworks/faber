@@ -1,5 +1,6 @@
 mod input;
 mod scan;
+mod schema_tool;
 mod server;
 
 use rmcp::ServiceExt;
@@ -22,13 +23,24 @@ async fn main() {
             println!("{}",server::report(&data,&bodies));
         }),
         Some("import") if args.len() == 3 => faber_wiring::archive::import(Path::new(&args[1]), Path::new(&args[2])),
+        Some("migrate") if args.len() == 2 => migrate(Path::new(&args[1])),
         Some("export") if args.len() >= 3 => export(&args),
-        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | status PROJECT | export PROJECT DIRECTORY [--format stl|step] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
+        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | status PROJECT | export PROJECT DIRECTORY [--format stl|step] [--force] | render PROJECT IMAGE | schema | guide | faber scan PACKAGE".into()),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
         std::process::exit(2);
     }
+}
+
+/// Writes a project in the split layout and prints each file that changed.
+fn migrate(root: &Path) -> Result<(), String> {
+    let _lock = faber_files::FileStore::open(root)?;
+    let data = faber_files::read(root)?;
+    for path in faber_files::layout::write(root, &data)? {
+        println!("{}", path.display());
+    }
+    Ok(())
 }
 
 fn export(args: &[String]) -> Result<(), String> {

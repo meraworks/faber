@@ -44,7 +44,7 @@ fn shell_keeps_outer_face_origins_and_names_inner_faces() {
             Some(["shell".to_owned()].as_slice())
         );
     }
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let mut invalid = recipe;
     invalid["geometry"]["features"][2]["geometry"]["face"]["created_by"] = json!("base");
     assert!(
@@ -56,7 +56,7 @@ fn shell_keeps_outer_face_origins_and_names_inner_faces() {
             .is_err()
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     drop(project);

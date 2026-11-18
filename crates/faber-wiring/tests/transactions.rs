@@ -121,7 +121,7 @@ fn parameter_changes_rebuild_parts_and_failed_changes_leave_saved_data_intact() 
         )]))
         .unwrap();
     assert!((project.bodies[0].volume - 8000.).abs() < 1e-6);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     assert!(
         project
             .set_params(std::collections::BTreeMap::from([(
@@ -132,7 +132,7 @@ fn parameter_changes_rebuild_parts_and_failed_changes_leave_saved_data_intact() 
     );
     assert_eq!(
         before,
-        std::fs::read(directory.path().join("faber.json")).unwrap()
+        faber_wiring::project_fingerprint(directory.path()).unwrap()
     );
     assert!((project.bodies[0].volume - 8000.).abs() < 1e-6);
 }

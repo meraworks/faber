@@ -173,7 +173,7 @@ pub struct Shell {
     mesh_dirty: bool,
     pub error: Option<String>,
     last_poll: Instant,
-    modified: Option<SystemTime>,
+    modified: Option<(SystemTime, u64)>,
     pending: Option<mpsc::Receiver<Loaded>>,
     frame_ms: f64,
     parameter_draft: Option<(ProjectData, BTreeMap<String, String>)>,
@@ -251,9 +251,7 @@ impl Shell {
             .as_ref()
             .expect("The viewer needs the GPU renderer");
         let camera = Camera::fit(&bodies);
-        let modified = std::fs::metadata(root.join("faber.json"))
-            .and_then(|m| m.modified())
-            .ok();
+        let modified = faber_wiring::project_fingerprint(&root).ok();
         Self {
             project_loaded: true,
             recent_file: None,
@@ -1395,9 +1393,7 @@ impl Shell {
                     if let Some(root) = self.pending_project.take() {
                         self.project_loaded = true;
                         self.root = root;
-                        self.modified = std::fs::metadata(self.root.join("faber.json"))
-                            .and_then(|m| m.modified())
-                            .ok();
+                        self.modified = faber_wiring::project_fingerprint(&self.root).ok();
                         self.camera = Camera::fit(&bodies);
                         self.dirty = true;
                         self.selected = None;
@@ -1459,9 +1455,7 @@ impl Shell {
                 Ok(changed) => self.dirty |= changed,
                 Err(message) => self.error = Some(message),
             }
-            let modified = std::fs::metadata(self.root.join("faber.json"))
-                .and_then(|m| m.modified())
-                .ok();
+            let modified = faber_wiring::project_fingerprint(&self.root).ok();
             if modified != self.modified {
                 self.modified = modified;
                 let root = self.root.clone();
@@ -3909,7 +3903,7 @@ mod tests {
         assert!((harness.state().bodies[0].bounds[1][2] - 160.).abs() < 1e-5);
         let (_, reopened) = faber_wiring::read(dir.path()).unwrap();
         assert!((reopened[0].volume - harness.state().bodies[0].volume).abs() < 1e-6);
-        let saved = std::fs::read(dir.path().join("faber.json")).unwrap();
+        let saved = faber_wiring::project_fingerprint(dir.path()).unwrap();
         harness.get_by_label("walls").click();
         for _ in 0..3 {
             harness.step();
@@ -3928,7 +3922,10 @@ mod tests {
         }
         assert!(harness.state().error.is_some());
         assert!(harness.state().feature_draft.is_some());
-        assert_eq!(std::fs::read(dir.path().join("faber.json")).unwrap(), saved);
+        assert_eq!(
+            faber_wiring::project_fingerprint(dir.path()).unwrap(),
+            saved
+        );
         assert!((harness.state().bodies[0].bounds[1][2] - 160.).abs() < 1e-5);
         harness.get_by_label("Cancel feature").click();
         harness.step();
@@ -4103,7 +4100,7 @@ mod tests {
         let moved = placed.iter().find(|body| body.id == "body_2").unwrap();
         assert!((moved.volume - original_volume).abs() < 1e-5);
         assert!((moved.bounds[0][0] - (500. - original_bounds[1][1])).abs() < 1e-5);
-        let original_file = std::fs::read(dir.path().join("faber.json")).unwrap();
+        let original_file = faber_wiring::project_fingerprint(dir.path()).unwrap();
         let next_directory = tempfile::tempdir().unwrap();
         let new_path = next_directory.path().join("new_project");
         for (button, path, count) in [
@@ -4146,7 +4143,7 @@ mod tests {
             assert!(harness.state().selected.is_none());
         }
         assert_eq!(
-            std::fs::read(dir.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(dir.path()).unwrap(),
             original_file
         );
         assert!(
@@ -4200,9 +4197,7 @@ mod tests {
         loop {
             harness.step();
             let state = harness.state();
-            let file = std::fs::metadata(state.root.join("faber.json"))
-                .and_then(|m| m.modified())
-                .ok();
+            let file = faber_wiring::project_fingerprint(&state.root).ok();
             if state.pending.is_none() && state.modified == file {
                 break;
             }
@@ -4223,8 +4218,7 @@ mod tests {
     }
 
     fn saved_json(root: &std::path::Path) -> serde_json::Value {
-        let text = std::fs::read_to_string(root.join("faber.json")).unwrap();
-        serde_json::from_str(&text).unwrap()
+        serde_json::to_value(faber_wiring::read(root).unwrap().0).unwrap()
     }
 
     #[test]
@@ -4258,12 +4252,15 @@ mod tests {
         };
         project.put_part("bin".into(), part).unwrap();
         drop(project);
-        let path = dir.path().join("faber.json");
-        let mut json = saved_json(dir.path());
-        json["sections"] = serde_json::json!({
-            "side": {"plane": {"kind": "plane", "origin": [0, 0, 0], "normal": [0, 1, 0]}}
+        let analysis = serde_json::json!({
+            "schema": 1,
+            "sections": {"side": {"plane": {"kind": "plane", "origin": [0, 0, 0], "normal": [0, 1, 0]}}}
         });
-        std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+        std::fs::write(
+            dir.path().join("analysis.json"),
+            serde_json::to_string_pretty(&analysis).unwrap(),
+        )
+        .unwrap();
         let (data, bodies) = faber_wiring::read(dir.path()).unwrap();
         assert!(data.sections.contains_key("side"));
         let root = dir.path().to_path_buf();
@@ -4396,12 +4393,15 @@ mod tests {
         };
         project.put_part("bin".into(), part).unwrap();
         drop(project);
-        let path = dir.path().join("faber.json");
-        let mut json = saved_json(dir.path());
-        json["sections"] = serde_json::json!({
-            "lid_plane": {"plane": {"kind": "reference", "part": "bin", "feature": "ref", "offset": 5}}
+        let analysis = serde_json::json!({
+            "schema": 1,
+            "sections": {"lid_plane": {"plane": {"kind": "reference", "part": "bin", "feature": "ref", "offset": 5}}}
         });
-        std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+        std::fs::write(
+            dir.path().join("analysis.json"),
+            serde_json::to_string_pretty(&analysis).unwrap(),
+        )
+        .unwrap();
         let (data, bodies) = faber_wiring::read(dir.path()).unwrap();
         let root = dir.path().to_path_buf();
         let mut harness = egui_kittest::Harness::builder()

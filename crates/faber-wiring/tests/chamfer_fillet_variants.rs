@@ -113,7 +113,7 @@ fn invalid_values_are_refused_and_the_file_is_unchanged() {
     project
         .put_part("cube".into(), cube(chamfer(json!({"distance2":4}))))
         .unwrap();
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let cases = [
         (
             chamfer(json!({"distance2":-1})),
@@ -143,7 +143,7 @@ fn invalid_values_are_refused_and_the_file_is_unchanged() {
         assert!(error.contains(message), "{error}");
         assert_eq!(
             before,
-            std::fs::read(directory.path().join("faber.json")).unwrap()
+            faber_wiring::project_fingerprint(directory.path()).unwrap()
         );
     }
 }
@@ -180,7 +180,7 @@ fn reopened_project_keeps_the_variant() {
     }
     let reopened = faber_wiring::open(directory.path(), false, None).unwrap();
     assert!((reopened.bodies[0].volume - (CUBE - 80.)).abs() < 1e-4);
-    let text = std::fs::read_to_string(directory.path().join("faber.json")).unwrap();
+    let text = std::fs::read_to_string(directory.path().join("parts/cube.json")).unwrap();
     assert!(text.contains("distance2"));
 }
 
@@ -193,7 +193,7 @@ fn constant_chamfer_file_has_no_new_keys() {
         .put_part("cube".into(), cube(chamfer(json!({}))))
         .unwrap();
     assert!((project.bodies[0].volume - (CUBE - 40.)).abs() < 1e-4);
-    let text = std::fs::read_to_string(directory.path().join("faber.json")).unwrap();
+    let text = std::fs::read_to_string(directory.path().join("parts/cube.json")).unwrap();
     assert!(!text.contains("distance2"));
     assert!(!text.contains("angle_deg"));
     assert!(!text.contains("radius_end"));

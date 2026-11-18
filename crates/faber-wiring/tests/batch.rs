@@ -44,14 +44,14 @@ fn mixed_changes_build_once_save_once_and_undo_together() {
 fn failed_batch_keeps_file_memory_and_history_unchanged() {
     let dir = tempfile::tempdir().unwrap();
     let mut project = faber_wiring::open(dir.path(), true, Some("Batch".into())).unwrap();
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     for operations in [
         json!([{"tool":"set_param","name":"height","expression":"30"},{"tool":"remove_part","id":"missing"}]),
         json!([{"tool":"put_part","id":"box","part":{"name":"Box","colour":[100,140,170],"geometry":{"op":"box","size":[10,20,-1]}}}]),
     ] {
         assert!(project.batch(edits(operations)).is_err());
         assert_eq!(
-            std::fs::read(dir.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(dir.path()).unwrap(),
             before
         );
         assert!(project.data.parts.is_empty());

@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "name": "Ogive nose",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "profile",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "path",
+              "start": [
+                0.0,
+                0.0
+              ],
+              "segments": [
+                {
+                  "kind": "line",
+                  "end": [
+                    20.0,
+                    0.0
+                  ]
+                },
+                {
+                  "kind": "arc",
+                  "via": [
+                    "sqrt(9100)-80",
+                    30.0
+                  ],
+                  "end": [
+                    0.0,
+                    60.0
+                  ]
+                },
+                {
+                  "kind": "line",
+                  "end": [
+                    0.0,
+                    0.0
+                  ]
+                }
+              ]
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              90.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "outer",
+        "geometry": {
+          "op": "revolve_sketch",
+          "source": "profile",
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "angle": 360.0
+        }
+      },
+      {
+        "id": "wall",
+        "geometry": {
+          "op": "shell",
+          "source": "outer",
+          "faces": {
+            "created_by": null,
+            "normal": null,
+            "near_centre": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "in_box": null,
+            "area": null,
+            "tolerance": 1e-6,
+            "expect": 1
+          },
+          "thickness": 2.0
+        }
+      }
+    ],
+    "output": "wall"
+  },
+  "colour": [
+    170,
+    190,
+    205
+  ],
+  "group": "",
+  "note": ""
+}

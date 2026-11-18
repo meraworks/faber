@@ -48,7 +48,7 @@ fn loft_and_sweep_faces_belong_to_the_solid_with_holes() {
                     .all(|face| face.created_by.as_deref() == Some(&["body".into()]))
             );
         }
-        let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+        let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
         let mut invalid = recipe;
         invalid["geometry"]["features"][3]["geometry"]["face"]["created_by"] = json!("profile");
         assert!(
@@ -60,7 +60,7 @@ fn loft_and_sweep_faces_belong_to_the_solid_with_holes() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
         drop(project);

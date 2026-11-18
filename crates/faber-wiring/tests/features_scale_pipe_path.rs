@@ -27,8 +27,8 @@ fn bounds(actual: [[f64; 3]; 2], min: [f64; 3], max: [f64; 3]) {
     }
 }
 
-fn saved(directory: &std::path::Path) -> Vec<u8> {
-    std::fs::read(directory.join("faber.json")).unwrap()
+fn saved(directory: &std::path::Path) -> (std::time::SystemTime, u64) {
+    faber_wiring::project_fingerprint(directory).unwrap()
 }
 
 #[test]

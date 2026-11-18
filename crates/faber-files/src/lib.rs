@@ -3,9 +3,11 @@
 mod assets;
 mod feature_cache;
 mod history;
+pub mod layout;
 mod mesh_input;
 pub use assets::FileAssets;
 pub use feature_cache::FileFeatureCache;
+pub use layout::{fingerprint, read};
 
 use faber_model::ProjectData;
 use faber_ports::{Exchange, Mesh, ProjectStore, Result};
@@ -36,12 +38,6 @@ impl FileStore {
             _lock: lock,
         })
     }
-}
-
-pub fn read(root: &Path) -> Result<ProjectData> {
-    let bytes =
-        std::fs::read(root.join("faber.json")).map_err(|e| format!("Cannot read project: {e}"))?;
-    serde_json::from_slice(&bytes).map_err(|e| format!("Cannot read project data: {e}"))
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {

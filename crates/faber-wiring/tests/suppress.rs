@@ -43,8 +43,7 @@ fn suppressed_ids(project: &Project) -> Vec<String> {
 }
 
 fn parts_of(root: &std::path::Path) -> serde_json::Value {
-    let file = std::fs::read(root.join("faber.json")).unwrap();
-    serde_json::from_slice::<serde_json::Value>(&file).unwrap()["parts"].clone()
+    serde_json::to_value(faber_files::read(root).unwrap().parts).unwrap()
 }
 
 #[track_caller]
@@ -252,13 +251,8 @@ fn suppressed_flag_is_saved_only_where_it_is_set() {
     project
         .set_suppressed("block", "side", true, false)
         .unwrap();
-    let saved = std::fs::read(directory.path().join("faber.json")).unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&saved)
-            .matches("\"suppressed\"")
-            .count(),
-        1
-    );
+    let saved = std::fs::read_to_string(directory.path().join("parts/block.json")).unwrap();
+    assert_eq!(saved.matches("\"suppressed\"").count(), 1);
     drop(project);
     let mut reopened = faber_wiring::open(directory.path(), false, None).unwrap();
     assert_eq!(suppressed_ids(&reopened), vec!["side".to_owned()]);
@@ -290,4 +284,21 @@ fn dangling_feature_suppress_keeps_the_output_volume() {
         .set_suppressed("block", "side", false, false)
         .unwrap();
     assert_volume(&project, BOX);
+}
+
+#[test]
+fn no_op_suppress_keeps_the_revision() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut project = open(directory.path(), "drill");
+    project
+        .set_suppressed("block", "drill", true, false)
+        .unwrap();
+    let revision = project.data.revision;
+    project
+        .set_suppressed("block", "drill", true, false)
+        .unwrap();
+    assert_eq!(project.data.revision, revision);
+    // The no-op left no undo step, so one undo returns to the unsuppressed hole.
+    project.undo().unwrap();
+    assert_volume(&project, DRILL);
 }

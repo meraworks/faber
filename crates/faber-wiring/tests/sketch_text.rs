@@ -144,7 +144,7 @@ fn invalid_text_is_refused_and_the_file_is_unchanged() {
         project,
         label(text("I", [0., 0.], "left", 0.), [0., 0., 1.])
     );
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let mut zero_height = text("I", [0., 0.], "left", 0.);
     zero_height["height"] = json!(0);
     let mut negative_height = text("I", [0., 0.], "left", 0.);
@@ -168,7 +168,7 @@ fn invalid_text_is_refused_and_the_file_is_unchanged() {
         };
         assert!(refused, "accepted {case}");
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

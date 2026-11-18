@@ -158,9 +158,6 @@ impl FileStore {
         {
             return Err("Project changed before save".into());
         }
-        atomic_write(
-            &self.root.join("faber.json"),
-            &serde_json::to_vec_pretty(data).map_err(|e| e.to_string())?,
-        )
+        super::layout::write(&self.root, data).map(|_| ())
     }
 }

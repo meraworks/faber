@@ -4,7 +4,7 @@
 //! OK sets the placement of the part in one edit.
 
 use super::*;
-use faber_core::{AlignMode, Axis, Motion, align_shift};
+use faber_core::{AlignMode, Axis, Motion, align_shift, refuse_purchased_copy, tidy};
 use faber_model::{Edit, Part, Placement, Scalar};
 use glam::{DMat3, DMat4, DQuat, DVec3, EulerRot, Mat4};
 use std::borrow::Cow;
@@ -48,7 +48,7 @@ pub(super) enum MoveMode {
 enum PivotMode {
     Centre,
     Origin,
-    Set,
+    World,
 }
 
 /// The point that the next viewport click sets.
@@ -119,8 +119,8 @@ struct Drag {
     dir: Vec2,
     // Pixels per mm for an arm. Pixels per degree for a ring.
     px_per: f32,
-    // Translate and turn values before the drag.
-    start: (DVec3, [f64; 3]),
+    // Translate and turn before the drag.
+    start: (DVec3, DQuat),
 }
 
 pub(super) struct MoveDraft {
@@ -134,8 +134,8 @@ pub(super) struct MoveDraft {
     mode: MoveMode,
     // Shift in mm.
     translate: DVec3,
-    // Turn in degrees about X, Y and Z. Same convention as the placement.
-    turn: [f64; 3],
+    // Turn of the free mode. The angle fields show its Euler angles.
+    turn: DQuat,
     // Distance fields, in mm.
     fields: [String; 3],
     applied_fields: [String; 3],
@@ -146,7 +146,6 @@ pub(super) struct MoveDraft {
     angle: String,
     applied_angle: (usize, String),
     pivot_mode: PivotMode,
-    pivot_set: [String; 3],
     position: [String; 3],
     copy: bool,
     error: Option<&'static str>,
@@ -182,6 +181,7 @@ pub(super) fn euler_degrees(rotation: DQuat) -> [f64; 3] {
 }
 
 /// Moves a placement. The turn and the shift act about the pivot.
+/// Each saved value is tidy, so a right angle saves as exactly 90.
 pub(super) fn compose(
     base: Placement<f64>,
     pivot: DVec3,
@@ -191,8 +191,8 @@ pub(super) fn compose(
     let origin = DVec3::from(base.translation);
     let moved = turn * (origin - pivot) + pivot + translate;
     Placement {
-        translation: moved.to_array(),
-        rotation: euler_degrees(turn * placement_rotation(base.rotation)),
+        translation: moved.to_array().map(tidy),
+        rotation: euler_degrees(turn * placement_rotation(base.rotation)).map(tidy),
     }
 }
 
@@ -304,6 +304,9 @@ fn commit(
         return Err("Project changed. Open the move tool again.".into());
     }
     let mut part = expected.parts.get(id).ok_or("Part is missing")?.clone();
+    if copy {
+        refuse_purchased_copy(id, &part)?;
+    }
     part.placement = placement;
     let target = if copy {
         part.name = format!("{} copy", part.name);
@@ -324,7 +327,7 @@ impl MoveDraft {
     fn sync_fields(&mut self) {
         self.fields = self.translate.to_array().map(mm_text);
         self.applied_fields = self.fields.clone();
-        self.angles = self.turn.map(mm_text);
+        self.angles = euler_degrees(self.turn).map(mm_text);
         self.applied_angles = self.angles.clone();
         self.error = None;
     }
@@ -340,8 +343,7 @@ impl MoveDraft {
             MoveMode::Rotate if (self.axis, self.angle.clone()) != self.applied_angle => {
                 match self.angle.trim().parse::<f64>() {
                     Ok(degrees) if degrees.is_finite() => {
-                        let turn = DQuat::from_axis_angle(AXES[self.axis], degrees.to_radians());
-                        self.turn = euler_degrees(turn);
+                        self.turn = DQuat::from_axis_angle(AXES[self.axis], degrees.to_radians());
                         self.applied_angle = (self.axis, self.angle.clone());
                         self.error = None;
                     }
@@ -352,12 +354,6 @@ impl MoveDraft {
             MoveMode::Position => self.read_position(),
             MoveMode::Align => self.read_align(),
             MoveMode::Rotate => {}
-        }
-        if self.error.is_none()
-            && self.pivot_mode == PivotMode::Set
-            && parse_vector(&self.pivot_set).is_none()
-        {
-            self.error = Some("Enter numbers in mm.");
         }
     }
 
@@ -383,7 +379,7 @@ impl MoveDraft {
         }
         match parse_vector(&self.angles) {
             Some(value) => {
-                self.turn = value.to_array();
+                self.turn = placement_rotation(value.to_array());
                 self.applied_angles = self.angles.clone();
                 None
             }
@@ -421,23 +417,36 @@ impl MoveDraft {
         match self.pivot_mode {
             PivotMode::Centre => self.centre,
             PivotMode::Origin => DVec3::from(self.base.translation),
-            PivotMode::Set => parse_vector(&self.pivot_set).unwrap_or(self.centre),
+            PivotMode::World => DVec3::ZERO,
         }
     }
 
-    /// Turn as a quaternion. Same convention as the placement.
-    fn turn_quat(&self) -> DQuat {
-        placement_rotation(self.turn)
+    /// Shift and turn of the current mode. The other values are not shown and not saved.
+    fn motion(&self) -> (DVec3, DQuat) {
+        match self.mode {
+            MoveMode::Free => (self.translate, self.turn),
+            MoveMode::Rotate => (DVec3::ZERO, self.turn),
+            _ => (self.translate, DQuat::IDENTITY),
+        }
     }
 
-    /// Changes the mode. Turns reset in every mode except Free and Rotate.
+    /// Arrows move the part in Free and Move modes. Rings turn it in Free mode.
+    fn allows(&self, grip: Grip) -> bool {
+        match grip {
+            Grip::Arm(_) => matches!(self.mode, MoveMode::Free | MoveMode::Translate),
+            Grip::Ring(_) => self.mode == MoveMode::Free,
+        }
+    }
+
+    /// Changes the mode. Each mode keeps only the values that it shows.
     fn select_mode(&mut self, mode: MoveMode) {
         self.mode = mode;
         self.points.picking = None;
-        if !matches!(mode, MoveMode::Free | MoveMode::Rotate) {
-            self.turn = [0.; 3];
+        if mode != MoveMode::Free {
+            self.turn = DQuat::IDENTITY;
         }
         if mode == MoveMode::Rotate {
+            self.translate = DVec3::ZERO;
             // Forces a new read of the angle.
             self.applied_angle = (usize::MAX, String::new());
         }
@@ -612,12 +621,8 @@ impl MoveDraft {
     }
 
     fn result(&self) -> Placement<f64> {
-        compose(
-            self.base.clone(),
-            self.pivot_point(),
-            self.translate,
-            self.turn_quat(),
-        )
+        let (translate, turn) = self.motion();
+        compose(self.base.clone(), self.pivot_point(), translate, turn)
     }
 }
 
@@ -782,7 +787,7 @@ impl Shell {
             size,
             mode,
             translate: DVec3::ZERO,
-            turn: [0.; 3],
+            turn: DQuat::IDENTITY,
             fields: zero_text(),
             applied_fields: zero_text(),
             angles: zero_text(),
@@ -791,7 +796,6 @@ impl Shell {
             angle: "0".into(),
             applied_angle: (2, "0".into()),
             pivot_mode: PivotMode::Centre,
-            pivot_set: pivot.to_array().map(mm_text),
             position: pivot.to_array().map(mm_text),
             copy: false,
             error: None,
@@ -821,9 +825,11 @@ impl Shell {
         if self.pending.is_some() {
             return;
         }
-        let Some(draft) = &self.move_draft else {
+        let Some(draft) = &mut self.move_draft else {
             return;
         };
+        // Typed values count even when the panel has not read them yet.
+        draft.read_fields();
         if draft.error.is_some() {
             return;
         }
@@ -857,8 +863,7 @@ impl Shell {
             self.cancel_move();
             return;
         }
-        let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter));
-        if enter && self.move_draft.as_ref().is_some_and(|d| d.error.is_none()) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
             self.confirm_move(ctx);
         }
     }
@@ -998,7 +1003,7 @@ impl Shell {
                 let pivot_label = match draft.pivot_mode {
                     PivotMode::Centre => "Bounding box centre",
                     PivotMode::Origin => "Part origin",
-                    PivotMode::Set => "Set",
+                    PivotMode::World => "World origin",
                 };
                 egui::ComboBox::from_id_salt("pivot_mode")
                     .selected_text(pivot_label)
@@ -1010,16 +1015,8 @@ impl Shell {
                             "Bounding box centre",
                         );
                         ui.selectable_value(&mut draft.pivot_mode, PivotMode::Origin, "Part origin");
-                        ui.selectable_value(&mut draft.pivot_mode, PivotMode::Set, "Set");
+                        ui.selectable_value(&mut draft.pivot_mode, PivotMode::World, "World origin");
                     });
-                if draft.pivot_mode == PivotMode::Set {
-                    field_grid(
-                        ui,
-                        "pivot_point",
-                        ["Pivot X", "Pivot Y", "Pivot Z"],
-                        &mut draft.pivot_set,
-                    );
-                }
                 ui.add_space(4.);
                 ui.checkbox(&mut draft.copy, "Create copy");
                 ui.horizontal(|ui| {
@@ -1071,7 +1068,7 @@ impl Shell {
         let triad = triad_at(
             rect,
             matrix,
-            draft.pivot_point() + draft.translate,
+            draft.pivot_point() + draft.motion().0,
             draft.size,
         );
         let (down, pressed, shift) = ui.input(|i| {
@@ -1088,14 +1085,11 @@ impl Shell {
         if pressed
             && !section_busy
             && draft.points.picking.is_none()
-            && !matches!(
-                draft.mode,
-                MoveMode::PointToPoint | MoveMode::Position | MoveMode::Align
-            )
             && let Some(triad) = &triad
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
             && rect.contains(origin)
             && let Some((grip, dir, px_per)) = grip_at(triad, origin)
+            && draft.allows(grip)
         {
             draft.drag = Some(Drag {
                 grip,
@@ -1116,7 +1110,7 @@ impl Shell {
                 })
                 .unwrap_or(Vec2::ZERO);
             let amount = f64::from(displacement.dot(drag.dir) / drag.px_per);
-            // Each snap works on the total value, so every result is a whole step.
+            // An arm snaps the total shift. A ring snaps the drag delta.
             match drag.grip {
                 Grip::Arm(axis) => {
                     let mut next = drag.start.0;
@@ -1127,12 +1121,13 @@ impl Shell {
                     draft.translate = next;
                 }
                 Grip::Ring(axis) => {
-                    let mut turn = drag.start.1;
-                    turn[axis] += amount;
-                    if !shift {
-                        turn[axis] = snapped(turn[axis], SNAP_DEGREES);
-                    }
-                    draft.turn = turn;
+                    let degrees = if shift {
+                        amount
+                    } else {
+                        snapped(amount, SNAP_DEGREES)
+                    };
+                    draft.turn =
+                        DQuat::from_axis_angle(AXES[axis], degrees.to_radians()) * drag.start.1;
                 }
             }
             draft.sync_fields();
@@ -1288,7 +1283,7 @@ impl Shell {
         let Some(triad) = triad_at(
             rect,
             matrix,
-            draft.pivot_point() + draft.translate,
+            draft.pivot_point() + draft.motion().0,
             draft.size,
         ) else {
             return;
@@ -1341,7 +1336,7 @@ impl Shell {
         {
             let text = match drag.grip {
                 Grip::Arm(axis) => format!("{} mm", mm_text(draft.translate[axis])),
-                Grip::Ring(axis) => format!("{}°", mm_text(draft.turn[axis])),
+                Grip::Ring(axis) => format!("{}°", mm_text(euler_degrees(draft.turn)[axis])),
             };
             let at = egui::Rect::from_min_size(pos + Vec2::new(16., 8.), Vec2::new(72., 22.));
             painter.rect_filled(at, 4., Color32::from_black_alpha(190));
@@ -1361,8 +1356,9 @@ impl Shell {
             return Cow::Borrowed(&self.motion.poses);
         };
         let pivot = draft.pivot_point().as_vec3();
-        let delta = Mat4::from_translation(pivot + draft.translate.as_vec3())
-            * Mat4::from_quat(draft.turn_quat().as_quat())
+        let (translate, turn) = draft.motion();
+        let delta = Mat4::from_translation(pivot + translate.as_vec3())
+            * Mat4::from_quat(turn.as_quat())
             * Mat4::from_translation(-pivot);
         let mut poses = self.motion.poses.clone();
         let current = poses.get(&draft.part).copied().unwrap_or(Mat4::IDENTITY);
@@ -1950,7 +1946,7 @@ mod tests {
         harness.step();
         harness.drop_at(target);
         harness.step();
-        let turn = harness.state().move_draft.as_ref().unwrap().turn;
+        let turn = euler_degrees(harness.state().move_draft.as_ref().unwrap().turn);
         assert!(turn[2].abs() > 1e-9, "{turn:?}");
         assert!(turn[0].abs() < 1e-9 && turn[1].abs() < 1e-9, "{turn:?}");
         assert!(
@@ -2017,6 +2013,31 @@ mod tests {
     }
 
     #[test]
+    fn world_origin_pivot_turns_about_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        bin_project(dir.path());
+        let mut harness = open(dir.path());
+        open_move(&mut harness);
+        {
+            let draft = harness.state_mut().move_draft.as_mut().unwrap();
+            draft.base.translation = [30., 0., 0.];
+            draft.angles[2] = "90".into();
+            draft.pivot_mode = PivotMode::World;
+        }
+        harness.step();
+        let saved = harness.state().move_draft.as_ref().unwrap().result();
+        // Rz(90) moves (30, 0, 0) to (0, 30, 0) about the world origin.
+        assert!(saved.translation[0].abs() < 1e-9, "{:?}", saved.translation);
+        assert!(
+            (saved.translation[1] - 30.).abs() < 1e-9,
+            "{:?}",
+            saved.translation
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+    }
+
+    #[test]
     fn command_panel_sits_at_the_right_of_the_viewport() {
         let dir = tempfile::tempdir().unwrap();
         bin_project(dir.path());
@@ -2035,5 +2056,216 @@ mod tests {
         assert!(panel.width() < viewport.width());
         harness.key_press(egui::Key::Escape);
         harness.step();
+    }
+
+    /// A screen point on a grip of the triad, and the grip direction there.
+    fn grip_point(
+        harness: &mut egui_kittest::Harness<'_, Shell>,
+        grip: Grip,
+    ) -> (egui::Pos2, Vec2) {
+        let rect = harness.get_by_label("Model viewport").rect();
+        let (pivot, size) = {
+            let draft = harness.state().move_draft.as_ref().unwrap();
+            (draft.pivot_point() + draft.translate, draft.size)
+        };
+        let matrix = harness.state().camera.matrix(rect.aspect_ratio());
+        let triad = triad_at(rect, matrix, pivot, size).unwrap();
+        let point = match grip {
+            Grip::Ring(axis) => triad.rings[axis][SEGMENTS / 8],
+            Grip::Arm(axis) => triad.centre + (triad.tips[axis] - triad.centre) * 0.75,
+        };
+        let (found, dir, _) = grip_at(&triad, point).unwrap();
+        assert_eq!(found, grip);
+        (point, dir)
+    }
+
+    /// Drags a grip along its direction on screen, then drops it.
+    fn drag_grip(harness: &mut egui_kittest::Harness<'_, Shell>, grip: Grip, pixels: f32) {
+        let (press, dir) = grip_point(harness, grip);
+        let target = press + dir * pixels;
+        harness.hover_at(press);
+        harness.step();
+        harness.drag_at(press);
+        harness.step();
+        harness.hover_at(target);
+        harness.step();
+        harness.drop_at(target);
+        harness.step();
+    }
+
+    /// Drags a ring by a number of degrees. The ring uses two pixels per degree.
+    fn drag_ring(harness: &mut egui_kittest::Harness<'_, Shell>, axis: usize, degrees: f32) {
+        drag_grip(harness, Grip::Ring(axis), degrees * RING_PX_PER_DEGREE);
+    }
+
+    #[test]
+    fn mode_change_drops_hidden_translate() {
+        let dir = tempfile::tempdir().unwrap();
+        bin_project(dir.path());
+        let mut harness = open(dir.path());
+        open_move(&mut harness);
+        harness.get_by_label("Move").click();
+        harness.step();
+        harness.state_mut().move_draft.as_mut().unwrap().fields[0] = "10".into();
+        harness.step();
+        harness.get_by_label("Rotate").click();
+        harness.step();
+        {
+            let draft = harness.state_mut().move_draft.as_mut().unwrap();
+            draft.axis = 2;
+            draft.angle = "90".into();
+        }
+        harness.step();
+        harness.get_by_label("OK").click();
+        wait_for_commit(&mut harness);
+        let saved = saved_placement(dir.path(), "bin");
+        // The turn is about the bin centre (0, 0, 60). The 10 mm shift is not saved.
+        assert_eq!(saved.translation, [0., 0., 0.]);
+        assert_eq!(saved.rotation, [0., 0., 90.]);
+    }
+
+    #[test]
+    fn two_ring_drags_save_the_previewed_orientation() {
+        let dir = tempfile::tempdir().unwrap();
+        bin_project(dir.path());
+        let mut harness = open(dir.path());
+        open_move(&mut harness);
+        drag_ring(&mut harness, 2, 30.);
+        drag_ring(&mut harness, 1, 15.);
+        let preview = harness.state().move_poses().get("bin").unwrap().as_dmat4();
+        let result = placement_matrix(&harness.state().move_draft.as_ref().unwrap().result());
+        assert!(preview.abs_diff_eq(result, 1e-5), "{preview:?} {result:?}");
+        harness.get_by_label("OK").click();
+        wait_for_commit(&mut harness);
+        let saved = saved_placement(dir.path(), "bin");
+        // Ry(15) * Rz(30), with no Euler sum.
+        let expected = DQuat::from_axis_angle(DVec3::Y, 15f64.to_radians())
+            * DQuat::from_axis_angle(DVec3::Z, 30f64.to_radians());
+        assert!(
+            DMat3::from_quat(placement_rotation(saved.rotation))
+                .abs_diff_eq(DMat3::from_quat(expected), 1e-9),
+            "{:?}",
+            saved.rotation
+        );
+        assert!(placement_matrix(&saved).abs_diff_eq(preview, 1e-4));
+    }
+
+    #[test]
+    fn drags_respect_the_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        bin_project(dir.path());
+        let mut harness = open(dir.path());
+        open_move(&mut harness);
+        harness.get_by_label("Move").click();
+        harness.step();
+        let angles = harness.state().move_draft.as_ref().unwrap().angles.clone();
+        drag_ring(&mut harness, 2, 30.);
+        assert_eq!(
+            harness.state().move_draft.as_ref().unwrap().angles,
+            angles,
+            "a ring drag in Move mode changes nothing"
+        );
+        drag_grip(&mut harness, Grip::Arm(0), 40.);
+        assert_ne!(
+            harness.state().move_draft.as_ref().unwrap().fields,
+            zero_text(),
+            "an arrow drag in Move mode moves the part"
+        );
+        harness.get_by_label("Rotate").click();
+        harness.step();
+        let fields = harness.state().move_draft.as_ref().unwrap().fields.clone();
+        drag_grip(&mut harness, Grip::Arm(0), 40.);
+        assert_eq!(
+            harness.state().move_draft.as_ref().unwrap().fields,
+            fields,
+            "an arrow drag in Rotate mode changes nothing"
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+    }
+
+    #[test]
+    fn enter_reads_typed_fields_first() {
+        let dir = tempfile::tempdir().unwrap();
+        bin_project(dir.path());
+        let mut harness = open(dir.path());
+        open_move(&mut harness);
+        harness.get_by_label("Move").click();
+        harness.step();
+        // The text changes in this frame. Enter runs before the panel reads it.
+        harness.state_mut().move_draft.as_mut().unwrap().fields[0] = "5".into();
+        harness.key_press(egui::Key::Enter);
+        wait_for_commit(&mut harness);
+        let saved = saved_placement(dir.path(), "bin");
+        assert_eq!(saved.translation[0], 5.);
+    }
+
+    #[test]
+    fn saved_angles_have_no_float_noise() {
+        let dir = tempfile::tempdir().unwrap();
+        bin_project(dir.path());
+        let mut harness = open(dir.path());
+        open_move(&mut harness);
+        harness.get_by_label("Rotate").click();
+        harness.step();
+        {
+            let draft = harness.state_mut().move_draft.as_mut().unwrap();
+            draft.axis = 2;
+            draft.angle = "90".into();
+        }
+        harness.step();
+        harness.key_press(egui::Key::Enter);
+        wait_for_commit(&mut harness);
+        let (data, _) = faber_wiring::read(dir.path()).unwrap();
+        assert_eq!(
+            data.parts["bin"].placement.rotation,
+            [Scalar::Number(0.), Scalar::Number(0.), Scalar::Number(90.)]
+        );
+    }
+
+    #[test]
+    fn copy_of_purchased_part_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        bin_project(dir.path());
+        let mut project = faber_wiring::open(dir.path(), false, None).unwrap();
+        let hash = "f940c8dadc7ad6fe0337a3802cafe12cc716e64c1c519f432a01dea892f6c25e";
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/fastener-check/assets")
+            .join(hash);
+        project
+            .import_with_record(
+                "screw".into(),
+                "Screw".into(),
+                &source,
+                true,
+                Some(faber_model::Purchased {
+                    source: "FreeCAD-library".into(),
+                    licence: "CC BY 3.0".into(),
+                    designation: "M3 x 10".into(),
+                    mass_g: None,
+                }),
+            )
+            .unwrap();
+        drop(project);
+        let mut harness = open(dir.path());
+        harness.state_mut().start_move("screw");
+        harness.step();
+        harness.state_mut().move_draft.as_mut().unwrap().copy = true;
+        harness.step();
+        harness.get_by_label("OK").click();
+        harness.step();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while harness.state().pending.is_some() {
+            harness.step();
+            assert!(Instant::now() < deadline, "Move did not finish");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            harness.state().error.as_deref(),
+            Some("Part screw is a purchased part. A copy is not permitted.")
+        );
+        assert!(harness.state().move_draft.is_some());
+        let (data, _) = faber_wiring::read(dir.path()).unwrap();
+        assert_eq!(data.parts.len(), 2);
     }
 }

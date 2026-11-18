@@ -56,7 +56,7 @@ fn axis_and_point_references_rebuild_dependent_solids() {
         .unwrap();
     assert!((project.bodies[0].volume - 60. * std::f64::consts::PI).abs() < 1e-5);
     assert!((project.bodies[0].bounds[0][0] - 46.).abs() < 1e-5);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for (pointer, value) in [
         ("/geometry/features/0/geometry/direction", json!([0, 0, 0])),
         (
@@ -81,7 +81,7 @@ fn axis_and_point_references_rebuild_dependent_solids() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

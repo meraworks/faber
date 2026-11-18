@@ -11,7 +11,7 @@ fn preview_builds_candidate_without_saving_or_adding_undo_history() {
     let part: Part<Scalar> = serde_json::from_value(json!({"name":"Box","colour":[100,140,170],"geometry":{"op":"box","size":[10,20,"height"]}})).unwrap();
     project.put_part("box".into(), part).unwrap();
     let before = project.data.clone();
-    let saved = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let saved = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let edit = Edit::SetParam {
         name: "height".into(),
         expression: "60".into(),
@@ -22,7 +22,7 @@ fn preview_builds_candidate_without_saving_or_adding_undo_history() {
     assert_eq!(project.data, before);
     assert!((project.bodies[0].volume - 6000.).abs() < 1e-5);
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         saved
     );
     assert!(
@@ -56,7 +56,7 @@ fn strict_preview_uses_checks_without_saving_rejected_geometry() {
     )
     .unwrap();
     project.put_part("box".into(), part.clone()).unwrap();
-    let saved = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let saved = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let operations = vec![Edit::PutPart {
         id: "copy".into(),
         part,
@@ -65,7 +65,7 @@ fn strict_preview_uses_checks_without_saving_rejected_geometry() {
     assert_eq!(project.preview_batch(operations, false).unwrap().1.len(), 2);
     assert_eq!(project.bodies.len(), 1);
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         saved
     );
 }

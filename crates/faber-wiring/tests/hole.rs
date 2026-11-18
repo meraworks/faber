@@ -35,7 +35,7 @@ fn holes_cut_known_volumes_and_keep_parameter_links() {
         .set_params([("diameter".into(), "6".into())].into())
         .unwrap();
     assert!((project.bodies[0].volume - (8000. - 90. * std::f64::consts::PI)).abs() < 1e-5);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for head in [
         json!({"kind":"counterbore","diameter":4,"depth":3}),
         json!({"kind":"counterbore","diameter":8,"depth":11}),
@@ -44,7 +44,7 @@ fn holes_cut_known_volumes_and_keep_parameter_links() {
     ] {
         assert!(project.put_part("block".into(), part(head)).is_err());
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }
@@ -59,7 +59,7 @@ fn holes_cut_known_volumes_and_keep_parameter_links() {
             .contains("does not remove material")
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     drop(project);

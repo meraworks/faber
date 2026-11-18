@@ -53,11 +53,11 @@ fn a_failed_journal_write_does_not_change_the_project() {
     let mut project =
         faber_wiring::open(directory.path(), true, Some("Write failure".into())).unwrap();
     project.put_part("box".into(), part(30.)).unwrap();
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     std::fs::create_dir(directory.path().join(".faber/history/2.json")).unwrap();
     assert!(project.put_part("box".into(), part(40.)).is_err());
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     assert!((project.bodies[0].volume - 6000.).abs() < 1e-6);
@@ -90,7 +90,7 @@ fn restore_refuses_invalid_geometry_without_changing_the_project() {
         faber_wiring::open(directory.path(), true, Some("Checkpoint".into())).unwrap();
     project.put_part("box".into(), part(30.)).unwrap();
     project.checkpoint("first").unwrap();
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let mut invalid = project.data.clone();
     invalid.parts.insert("box".into(), part(-10.));
     std::fs::write(
@@ -102,7 +102,7 @@ fn restore_refuses_invalid_geometry_without_changing_the_project() {
     .unwrap();
     assert!(project.restore("first").is_err());
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     assert!((project.bodies[0].volume - 6000.).abs() < 1e-6);

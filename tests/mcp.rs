@@ -84,10 +84,8 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
         json!({"name":"put_part","arguments":{"id":"base","part":part}}),
     );
     assert_ne!(put["isError"], true, "{put}");
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
-    let base_revision = serde_json::from_slice::<Value>(&before).unwrap()["revision"]
-        .as_u64()
-        .unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
+    let base_revision = faber_files::read(dir.path()).unwrap().revision;
     let mut proposed = part.clone();
     proposed["geometry"]["height"] = json!(60);
     let preview = request(
@@ -146,7 +144,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
     }
     assert_ne!(views[0], views[1]);
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
     let stale = request(
@@ -157,7 +155,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
     );
     assert_eq!(stale["isError"], true);
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
     let mut bad = part;
@@ -168,7 +166,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
     );
     assert_eq!(refused["isError"], true);
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
     let export = request(
@@ -339,7 +337,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
         json!({"name":"interference","arguments":{"proximity_mm":-1}}),
     );
     assert_eq!(invalid["isError"], true);
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     let refused = request(
         "tools/call",
         json!({"name":"put_part","arguments":{"strict":true,"id":"inside","part":{"name":"Inside","colour":[100,140,170],"geometry":{"op":"box","size":[1,1,1]},"placement":{"translation":[2,2,2]}}}}),
@@ -353,7 +351,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
         "{refused}"
     );
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
     let added = request(
@@ -431,7 +429,7 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
         json!({"name":"remove_part","arguments":{"id":"imported"}}),
     );
     assert_ne!(removed["isError"], true);
-    let saved = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let saved = faber_wiring::project_fingerprint(dir.path()).unwrap();
     let bad_path = dir.path().join("bad.step");
     std::fs::write(&bad_path, b"not a model").unwrap();
     let refused = request(
@@ -441,7 +439,10 @@ fn stdio_tools_build_save_reopen_and_refuse_bad_geometry() {
         }}),
     );
     assert_eq!(refused["isError"], true, "{refused}");
-    assert_eq!(std::fs::read(dir.path().join("faber.json")).unwrap(), saved);
+    assert_eq!(
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
+        saved
+    );
     let status = request("tools/call", json!({"name":"status","arguments":{}}));
     assert_ne!(status["isError"], true);
     drop(input);
@@ -898,6 +899,37 @@ fn stdio_move_part_copy_keeps_the_source() {
         json!({"id":"src","translate":[1.,0.,0.],"copy_as":"copy"}),
     );
     assert!(taken.contains("already exists"), "{taken}");
+    s.finish();
+}
+
+#[test]
+fn stdio_move_part_refuses_a_copy_of_a_purchased_part() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/fastener-check/assets")
+        .join("f940c8dadc7ad6fe0337a3802cafe12cc716e64c1c519f432a01dea892f6c25e");
+    let step = dir.path().join("screw.step");
+    std::fs::copy(source, &step).unwrap();
+    let mut s = Session::start(dir.path());
+    s.ok(
+        "import_part",
+        json!({
+            "id": "screw",
+            "name": "Screw",
+            "path": step.display().to_string(),
+            "purchased": {"source": "FreeCAD-library", "licence": "CC BY 3.0", "designation": "M3 x 10"}
+        }),
+    );
+    let moved = s.ok("move_part", json!({"id":"screw","translate":[12.,0.,0.]}));
+    assert_near(&moved["placement"]["translation"], &[12., 0., 0.]);
+    let refused = s.refused(
+        "move_part",
+        json!({"id":"screw","translate":[1.,0.,0.],"copy_as":"copy"}),
+    );
+    assert_eq!(
+        refused,
+        "Part screw is a purchased part. A copy is not permitted."
+    );
     s.finish();
 }
 

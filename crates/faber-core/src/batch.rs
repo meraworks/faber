@@ -326,9 +326,17 @@ fn candidate(data: &ProjectData, operations: Vec<Operation>) -> Result<ProjectDa
     if operations.is_empty() || operations.len() > 2000 {
         return Err("Batch needs between 1 and 2000 operations".into());
     }
+    // One operation has no position to name. Several operations name the failing one.
+    let several = operations.len() > 1;
     let mut next = data.clone();
     for (position, item) in operations.into_iter().enumerate() {
-        operation(&mut next, item).map_err(|e| format!("Batch operation {}: {e}", position + 1))?;
+        operation(&mut next, item).map_err(|e| {
+            if several {
+                format!("Batch operation {}: {e}", position + 1)
+            } else {
+                e
+            }
+        })?;
     }
     Ok(next)
 }

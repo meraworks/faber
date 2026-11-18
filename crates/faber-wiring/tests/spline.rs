@@ -28,7 +28,7 @@ fn sketch_tangent_expressions_rebuild_and_refuse_invalid_edits() {
         .unwrap();
     let second = project.bodies[0].volume;
     assert!(first > 0. && second > 0. && (first - second).abs() > 1.);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for tangents in [
         json!([[0, 0], [1, 0]]),
         json!([[1, 0], [0, 0]]),
@@ -46,7 +46,7 @@ fn sketch_tangent_expressions_rebuild_and_refuse_invalid_edits() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }
@@ -132,7 +132,7 @@ fn spline_sketch_extrudes_and_spline_path_sweeps_with_parameters() {
         "Volume: {volume}; expected {}",
         30. * std::f64::consts::PI
     );
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for points in [
         json!([]),
         json!([[0, 0, 10]]),
@@ -151,7 +151,7 @@ fn spline_sketch_extrudes_and_spline_path_sweeps_with_parameters() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

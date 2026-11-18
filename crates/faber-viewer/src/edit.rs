@@ -241,9 +241,9 @@ mod tests {
         let (data, bodies) = load_project(&root, Some("New design".into())).unwrap();
         assert_eq!(data.name, "New design");
         assert!(bodies.is_empty());
-        let saved = std::fs::read(root.join("faber.json")).unwrap();
+        let saved = faber_wiring::project_fingerprint(&root).unwrap();
         assert!(load_project(&root, Some("Replacement".into())).is_err());
-        assert_eq!(std::fs::read(root.join("faber.json")).unwrap(), saved);
+        assert_eq!(faber_wiring::project_fingerprint(&root).unwrap(), saved);
         assert_eq!(load_project(&root, None).unwrap().0, data);
         let missing = directory.path().join("missing");
         assert!(load_project(&missing, None).is_err());

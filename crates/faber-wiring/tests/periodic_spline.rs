@@ -28,7 +28,7 @@ fn periodic_sketch_closes_without_a_line_and_scales_after_reopen() {
         .set_params([("r".into(), "20".into())].into())
         .unwrap();
     assert!((project.bodies[0].volume - 4. * volume).abs() < 1e-4);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for points in [json!([[0, 10]]), json!([[0, 10], [-10, 0], [20, 0]])] {
         let mut invalid = recipe.clone();
         invalid["geometry"]["features"][0]["geometry"]["profile"]["outer"]["segments"][0]["points"] =
@@ -42,7 +42,7 @@ fn periodic_sketch_closes_without_a_line_and_scales_after_reopen() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

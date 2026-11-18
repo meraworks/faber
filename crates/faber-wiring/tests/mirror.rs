@@ -30,14 +30,14 @@ fn mirror_preserves_volume_across_an_oblique_offset_plane() {
     project.edit_feature("block", "mirror", both).unwrap();
     let (_, bodies) = faber_wiring::read(directory.path()).unwrap();
     assert!((bodies[0].volume - 48.).abs() < 1e-5);
-    let saved = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let saved = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let invalid = serde_json::from_value(
         json!({"op":"mirror","source":"seed","origin":[0,0,0],"normal":[0,0,0],"keep_source":true}),
     )
     .unwrap();
     assert!(project.edit_feature("block", "mirror", invalid).is_err());
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         saved
     );
 }

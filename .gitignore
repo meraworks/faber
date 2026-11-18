@@ -16,3 +16,4 @@ DESIGN.md
 # Downloaded third-party model without a licence record. Keep it local.
 examples/multiboard-8x8/
 examples/honeycomb-bin/assets/
+.faber.lock

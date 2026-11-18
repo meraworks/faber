@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "Ratio indicator",
+  "geometry": {
+    "op": "box",
+    "size": [
+      20.0,
+      3.0,
+      2.0
+    ]
+  },
+  "colour": [
+    168,
+    114,
+    157
+  ],
+  "group": "",
+  "note": ""
+}

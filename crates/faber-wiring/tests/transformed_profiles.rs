@@ -49,14 +49,14 @@ fn transformed_sketch_and_curve_build_a_solid_and_rebuild_after_parameter_edits(
     assert!((project.bodies[0].bounds[0][0] - 23.).abs() < 1e-5);
     let (_, bodies) = faber_wiring::read(directory.path()).unwrap();
     assert!((bodies[0].bounds[0][0] - 23.).abs() < 1e-5);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for output in ["moved_section", "moved_path"] {
         let mut invalid = recipe.clone();
         invalid["geometry"]["output"] = json!(output);
         let part: Part<Scalar> = serde_json::from_value(invalid).unwrap();
         assert!(project.put_part("rod".into(), part).is_err());
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

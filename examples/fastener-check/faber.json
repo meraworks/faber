@@ -1,34 +1,6 @@
 {
-  "schema": 1,
+  "schema": 2,
   "revision": 2,
   "name": "Fastener check",
-  "parts": {
-    "screw": {
-      "name": "Downloaded M3 x 10 screw",
-      "geometry": {
-        "op": "imported",
-        "asset": "f940c8dadc7ad6fe0337a3802cafe12cc716e64c1c519f432a01dea892f6c25e"
-      },
-      "placement": {
-        "translation": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0
-        ]
-      },
-      "colour": [
-        100,
-        140,
-        170
-      ],
-      "group": "",
-      "note": "Original model by obijuan. CC BY 3.0. Source and unchanged file hash in README.md."
-    }
-  },
   "params": {}
 }

@@ -106,7 +106,7 @@ pub fn interference(
             threads: 6,
         },
     )?;
-    confirm_contacts(bodies, &mut report)?;
+    confirm_contacts(bodies, contacts, &mut report)?;
     confirm_declared(bodies, contacts, &mut report)?;
     Ok(report)
 }
@@ -164,7 +164,11 @@ fn set_status(report: &mut faber_clash::Report) {
 
 /// Each pair that the mesh check reports as contact must have no common volume in the exact kernel.
 /// A pair with volume is interference. The mesh depth can be too small.
-fn confirm_contacts(bodies: &[Body], report: &mut faber_clash::Report) -> Result<()> {
+fn confirm_contacts(
+    bodies: &[Body],
+    contacts: &std::collections::BTreeMap<String, Contact>,
+    report: &mut faber_clash::Report,
+) -> Result<()> {
     for mut finding in std::mem::take(&mut report.contacts) {
         let Some(properties) = exact_common(bodies, &finding.a, &finding.b)? else {
             finding.kind = faber_clash::FindingKind::Interference;
@@ -172,7 +176,13 @@ fn confirm_contacts(bodies: &[Body], report: &mut faber_clash::Report) -> Result
             continue;
         };
         if properties.volume <= CONTACT_VOLUME_MM3 {
-            report.contacts.push(finding);
+            // A declared pair that only touches is an allowed contact.
+            if contacts.contains_key(&faber_core::contact_key(&finding.a, &finding.b)) {
+                finding.kind = faber_clash::FindingKind::AllowedContact;
+                report.allowed_contacts.push(finding);
+            } else {
+                report.contacts.push(finding);
+            }
         } else {
             finding.kind = faber_clash::FindingKind::Interference;
             finding.depth_mm = finding.depth_mm.max(thickness_mm(&properties));
@@ -255,6 +265,11 @@ pub fn read(path: &Path) -> Result<(ProjectData, Vec<Body>)> {
         Some(&faber_files::FileFeatureCache::new(path)),
     )?;
     Ok((data, bodies))
+}
+
+/// A value that changes when a project file changes. The viewer watches it.
+pub fn project_fingerprint(path: &Path) -> Result<(std::time::SystemTime, u64)> {
+    faber_files::fingerprint(path)
 }
 
 pub fn create(path: &Path, name: String) -> Result<Project> {

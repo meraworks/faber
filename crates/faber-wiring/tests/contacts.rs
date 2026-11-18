@@ -127,24 +127,25 @@ fn declared_contact_allows_an_overlap_without_violation() {
 fn declared_contact_changes_only_the_contact_list_and_undo_removes_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut project = stacked_boxes(&dir);
-    let path = dir.path().join("faber.json");
-    let before: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let before = faber_files::read(dir.path()).unwrap();
     declare(&mut project, "box", "lid", true);
-    let after: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(after["parts"], before["parts"]);
-    assert_eq!(after["params"], before["params"]);
-    assert_eq!(after["name"], before["name"]);
-    assert_eq!(
-        after["revision"].as_u64(),
-        Some(before["revision"].as_u64().unwrap() + 1)
-    );
-    assert_eq!(after["contacts"]["box|lid"]["note"], "Seated lid");
-    assert_eq!(after["contacts"]["box|lid"]["a"], "box");
-    assert_eq!(after["contacts"]["box|lid"]["b"], "lid");
+    let after = faber_files::read(dir.path()).unwrap();
+    assert_eq!(after.parts, before.parts);
+    assert_eq!(after.params, before.params);
+    assert_eq!(after.name, before.name);
+    assert_eq!(after.revision, before.revision + 1);
+    let contact = &after.contacts["box|lid"];
+    assert_eq!(contact.note, "Seated lid");
+    assert_eq!(contact.a, "box");
+    assert_eq!(contact.b, "lid");
+    // The contacts live in assembly.json. The manifest has none.
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("faber.json")).unwrap()).unwrap();
+    assert!(manifest.get("contacts").is_none());
     project.undo().unwrap();
-    let undone: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert!(undone.get("contacts").is_none());
-    assert_eq!(undone["parts"], before["parts"]);
+    let undone = faber_files::read(dir.path()).unwrap();
+    assert!(undone.contacts.is_empty());
+    assert_eq!(undone.parts, before.parts);
     assert!(project.data.contacts.is_empty());
 }
 
@@ -326,10 +327,23 @@ fn project_without_limit_field_loads_and_saves_byte_identical() {
     let mut project = stacked_boxes(&dir);
     declare_with_limit(&mut project, None).unwrap();
     drop(project);
-    let path = dir.path().join("faber.json");
-    let before = std::fs::read(&path).unwrap();
+    let before = std::fs::read(dir.path().join("assembly.json")).unwrap();
     assert!(!String::from_utf8_lossy(&before).contains("max_depth_mm"));
     let data = faber_files::read(dir.path()).unwrap();
     assert!((data.contacts["box|lid"].max_depth_mm - 0.6).abs() < 1e-12);
-    assert_eq!(serde_json::to_vec_pretty(&data).unwrap(), before);
+}
+
+#[test]
+fn declared_touch_is_reported_as_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut project = stacked_boxes(&dir);
+    // A sub-micron overlap is a touch. The mesh depth is above zero, so the scan cannot allow it.
+    lid_at(&mut project, 9.999_999_999);
+    declare_with_limit(&mut project, Some(0.)).unwrap();
+    let report = faber_wiring::interference(&project.bodies, 0.1, &project.data.contacts).unwrap();
+    assert!(report.violations.is_empty(), "{:?}", report.violations);
+    assert!(report.contacts.is_empty(), "{:?}", report.contacts);
+    assert_eq!(report.allowed_contacts.len(), 1);
+    let json: Value = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["allowed_contacts"][0]["kind"], "allowed_contact");
 }

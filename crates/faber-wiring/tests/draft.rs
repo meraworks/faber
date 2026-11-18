@@ -35,7 +35,7 @@ fn drafted_faces_keep_their_source_when_the_angle_changes() {
             "{faces:?}"
         );
     }
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let mut invalid = recipe;
     invalid["geometry"]["features"][2]["geometry"]["face"]["created_by"] = json!("draft");
     assert!(
@@ -47,7 +47,7 @@ fn drafted_faces_keep_their_source_when_the_angle_changes() {
             .is_err()
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     drop(project);
@@ -78,7 +78,7 @@ fn draft_tapers_selected_faces_about_a_neutral_plane() {
         .set_params([("angle".into(), (-angle).to_string())].into())
         .unwrap();
     assert!((project.bodies[0].volume - 6600.).abs() < 1e-5);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for value in ["0", "90", "45"] {
         assert!(
             project
@@ -86,7 +86,7 @@ fn draft_tapers_selected_faces_about_a_neutral_plane() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

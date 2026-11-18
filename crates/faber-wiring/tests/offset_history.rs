@@ -48,7 +48,7 @@ fn offset_tracks_source_faces_and_new_round_transitions() {
             new_count
         );
     }
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let mut invalid = recipe;
     invalid["geometry"]["features"][2]["geometry"]["face"]["created_by"] = json!("offset");
     assert!(
@@ -60,7 +60,7 @@ fn offset_tracks_source_faces_and_new_round_transitions() {
             .is_err()
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     drop(project);

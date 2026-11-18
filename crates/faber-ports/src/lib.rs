@@ -442,3 +442,19 @@ pub enum HistoryMove {
 pub trait Exchange: Send + Sync {
     fn write(&self, mesh: &Mesh, path: &Path) -> Result<()>;
 }
+
+/// True when an id is a valid part or feature name. The id is also a file name.
+/// Only ASCII letters, digits, `_` and `-` pass. Windows device names do not pass.
+pub fn valid_id(id: &str) -> bool {
+    let upper = id.to_ascii_uppercase();
+    let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.len() == 4
+            && matches!(upper.as_bytes()[3], b'1'..=b'9'));
+    !reserved
+        && !id.is_empty()
+        && id.len() <= 100
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+}

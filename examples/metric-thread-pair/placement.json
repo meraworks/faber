@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "parts": {
+    "shaft": {
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "sleeve": {
+      "translation": [
+        14.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  }
+}

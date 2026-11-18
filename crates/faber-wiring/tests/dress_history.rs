@@ -56,7 +56,7 @@ fn dress_operations_preserve_old_faces_and_name_new_faces() {
             };
             assert!((new[0].area - area).abs() < 1e-5);
         }
-        let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+        let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
         let mut invalid = recipe;
         invalid["geometry"]["features"][2]["geometry"]["face"]["created_by"] = json!("dress");
         assert!(
@@ -68,7 +68,7 @@ fn dress_operations_preserve_old_faces_and_name_new_faces() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
         drop(project);

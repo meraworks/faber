@@ -1,6 +1,7 @@
 //! Stdio tools call the same project operations as the CLI.
 
 use crate::input::Checked;
+use crate::schema_tool;
 use base64::Engine;
 use faber_core::{PartInfo, Project};
 use faber_model::{Edit, Feature, Geometry, Part, ProjectData, Scalar};
@@ -16,6 +17,72 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub const GUIDE: &str = include_str!("../docs/modelling-guide.md");
+
+/// Short start-up instructions for the client. The guide has the details.
+const INSTRUCTIONS: &str = "Faber builds editable solids. Units are millimetres and degrees. Z is up. Axes are right-handed.
+
+Follow this loop for each change:
+1. Call open with an absolute project path. Set create to true only for a new project.
+2. Call status, params or part_info to read the current state.
+3. Send the edits as one operations array to preview_batch. Nothing is saved.
+4. Send the same operations to batch with expected_revision set to base_revision. Faber saves the change.
+5. Call measure and part_info to check the result. Call render to see the model.
+
+Call the schema tool to read the shape of a recipe. Use kind geometry with no op for the list of ops. Add op to read one op.
+Call the guide tool to read the modelling guide. Call guide with no topic to list the topics.
+If a call fails, the error names the field and the JSON path. Correct that field and send the call again.";
+
+/// A heading of the guide, with its line number and level.
+struct Heading<'a> {
+    line: usize,
+    level: usize,
+    text: &'a str,
+}
+
+/// Reads the headings of a Markdown guide. Lines in code fences are not headings.
+fn guide_headings(markdown: &str) -> Vec<Heading<'_>> {
+    let mut fenced = false;
+    let mut headings = Vec::new();
+    for (line, text) in markdown.lines().enumerate() {
+        if text.starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        let level = text.chars().take_while(|c| *c == '#').count();
+        if !fenced && (1..=6).contains(&level) && text[level..].starts_with(' ') {
+            headings.push(Heading {
+                line,
+                level,
+                text: text[level + 1..].trim(),
+            });
+        }
+    }
+    headings
+}
+
+/// The text of one topic: its heading and the lines up to the next heading of the same or higher level.
+fn guide_section(markdown: &str, topic: &str) -> Option<String> {
+    let headings = guide_headings(markdown);
+    let index = headings
+        .iter()
+        .position(|heading| heading.level > 1 && heading.text.eq_ignore_ascii_case(topic))?;
+    let start = headings[index].line;
+    let end = headings[index + 1..]
+        .iter()
+        .find(|heading| heading.level <= headings[index].level)
+        .map_or(markdown.lines().count(), |heading| heading.line);
+    let lines: Vec<&str> = markdown.lines().collect();
+    Some(lines[start..end].join("\n").trim_end().to_string())
+}
+
+/// Topics for the guide tool: every heading below the title.
+fn guide_topics(markdown: &str) -> Vec<&str> {
+    guide_headings(markdown)
+        .into_iter()
+        .filter(|heading| heading.level > 1)
+        .map(|heading| heading.text)
+        .collect()
+}
 
 #[derive(Clone)]
 pub struct Faber {
@@ -43,6 +110,8 @@ pub struct PutPart {
     #[serde(default)]
     strict: bool,
     id: String,
+    /// Part recipe. Read the shape with the schema tool, kind part.
+    #[schemars(with = "serde_json::Value")]
     part: Part<Scalar>,
 }
 
@@ -145,6 +214,8 @@ pub struct MotionPose {
 pub struct PutParts {
     #[serde(default)]
     strict: bool,
+    /// Map from part id to part recipe. Read the shape with the schema tool, kind part.
+    #[schemars(with = "BTreeMap<String, serde_json::Value>")]
     parts: BTreeMap<String, Part<Scalar>>,
 }
 
@@ -243,7 +314,8 @@ fn default_critical_angle() -> f64 {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Batch {
-    #[schemars(with = "Vec<faber_core::Operation>")]
+    /// Ordered operations. Each has a tool field. Read the shapes with the schema tool, kind edit.
+    #[schemars(with = "Vec<serde_json::Value>")]
     operations: Vec<Value>,
     expected_revision: Option<u64>,
     #[serde(default)]
@@ -253,7 +325,8 @@ pub struct Batch {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewBatch {
-    #[schemars(with = "Vec<faber_core::Operation>")]
+    /// Ordered operations. Each has a tool field. Read the shapes with the schema tool, kind edit.
+    #[schemars(with = "Vec<serde_json::Value>")]
     operations: Vec<Value>,
     expected_revision: Option<u64>,
     #[serde(default)]
@@ -338,8 +411,14 @@ fn batch_operations(items: Vec<Value>) -> Result<Vec<faber_core::Operation>, Str
                 return Ok(faber_core::Operation::set_part_info(info));
             }
             if !BATCH_TOOLS.contains(&tool.as_str()) {
+                let near = schema_tool::nearest(&tool, &BATCH_TOOLS);
+                let hint = if near.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Nearest: {}.", near.join(", "))
+                };
                 return Err(format!(
-                    "Batch operation {number}: unknown tool `{tool}`. Accepted tools: {accepted}."
+                    "Batch operation {number}: unknown tool `{tool}`.{hint} Accepted tools: {accepted}."
                 ));
             }
             let edit = crate::input::read::<Edit>(
@@ -370,6 +449,8 @@ pub struct AddFeature {
     #[serde(default)]
     strict: bool,
     part: String,
+    /// Feature recipe. Read the shape with the schema tool, kind feature.
+    #[schemars(with = "serde_json::Value")]
     feature: Feature<Scalar>,
     before: Option<String>,
     #[serde(default)]
@@ -383,6 +464,8 @@ pub struct EditFeature {
     strict: bool,
     part: String,
     id: String,
+    /// Geometry of the feature. Read the shape with the schema tool, kind geometry.
+    #[schemars(with = "serde_json::Value")]
     geometry: Geometry<Scalar>,
 }
 
@@ -403,6 +486,13 @@ pub struct MoveFeature {
     part: String,
     id: String,
     before: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GuideArgs {
+    /// A topic from the list. Omit it to list the topics.
+    topic: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -1102,7 +1192,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Move or turn a part. Give exactly one mode: translate, rotate, point_to_point or position. Set copy_as to keep the source part. Returns the placement, bounds and revision. The change is one undo step."
+        description = "Move or turn a part. Give exactly one mode: translate, rotate, point_to_point or position. Set copy_as to keep the source part. In rotate, origin is the world origin. Returns the placement, bounds and revision. The change is one undo step."
     )]
     fn move_part(
         &self,
@@ -1280,9 +1370,36 @@ impl Faber {
         })
     }
 
-    #[tool(description = "Read the modelling guide.")]
-    fn guide(&self) -> CallToolResult {
-        result(Ok(json!({"guide":GUIDE})))
+    #[tool(
+        description = "Read the modelling guide. Without topic, list the topics and read the quick start. With topic, read that section."
+    )]
+    fn guide(&self, Parameters(Checked(args)): Parameters<Checked<GuideArgs>>) -> CallToolResult {
+        result(match args.topic {
+            None => Ok(json!({
+                "schema":1,
+                "topics":guide_topics(GUIDE),
+                "quick_start":guide_section(GUIDE, "Quick start"),
+            })),
+            Some(topic) => match guide_section(GUIDE, &topic) {
+                Some(text) => Ok(json!({"schema":1,"topic":topic,"text":text})),
+                None => Err(schema_tool::unknown(
+                    "topic",
+                    &topic,
+                    &guide_topics(GUIDE),
+                    "Call guide with no topic to list the topics.",
+                )),
+            },
+        })
+    }
+
+    #[tool(
+        description = "Read the shape of a recipe. Use kind geometry with no op for one line for each op. Set op to read one op schema with its definitions."
+    )]
+    fn schema(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<schema_tool::SchemaArgs>>,
+    ) -> CallToolResult {
+        result(schema_tool::read(args))
     }
 
     #[tool(
@@ -1337,6 +1454,6 @@ impl ServerHandler for Faber {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("faber", env!("CARGO_PKG_VERSION")))
-            .with_instructions(GUIDE)
+            .with_instructions(INSTRUCTIONS)
     }
 }

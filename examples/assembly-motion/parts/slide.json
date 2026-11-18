@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "Carriage",
+  "geometry": {
+    "op": "box",
+    "size": [
+      8.0,
+      8.0,
+      8.0
+    ]
+  },
+  "colour": [
+    163,
+    165,
+    86
+  ],
+  "group": "",
+  "note": ""
+}

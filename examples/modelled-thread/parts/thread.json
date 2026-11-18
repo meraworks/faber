@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "name": "Modelled helical ridge and shaft",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "path",
+        "geometry": {
+          "op": "helix",
+          "radius": "shaft_radius",
+          "pitch": "thread_pitch",
+          "turns": "thread_length/thread_pitch",
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "section",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "regular_polygon",
+              "centre": [
+                0.0,
+                0.0
+              ],
+              "radius": "0.3*thread_pitch",
+              "sides": 3,
+              "rotation": 0.0
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              "shaft_radius",
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              "atan(thread_pitch/(2*pi*shaft_radius))-90",
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "ridge",
+        "geometry": {
+          "op": "sweep_sketch",
+          "frenet": true,
+          "source": "section",
+          "path": "path"
+        }
+      },
+      {
+        "id": "shaft",
+        "geometry": {
+          "op": "cylinder",
+          "radius": "shaft_radius",
+          "height": "thread_length"
+        }
+      },
+      {
+        "id": "threaded",
+        "geometry": {
+          "op": "union",
+          "left": "shaft",
+          "right": "ridge"
+        }
+      },
+      {
+        "id": "limit",
+        "geometry": {
+          "op": "cylinder",
+          "radius": "shaft_radius+thread_pitch",
+          "height": "thread_length"
+        }
+      },
+      {
+        "id": "trimmed",
+        "geometry": {
+          "op": "intersection",
+          "left": "threaded",
+          "right": "limit"
+        }
+      }
+    ],
+    "output": "trimmed"
+  },
+  "colour": [
+    155,
+    170,
+    185
+  ],
+  "group": "",
+  "note": ""
+}

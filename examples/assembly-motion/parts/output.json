@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "Follower arm",
+  "geometry": {
+    "op": "box",
+    "size": [
+      5.0,
+      25.0,
+      3.0
+    ]
+  },
+  "colour": [
+    89,
+    148,
+    193
+  ],
+  "group": "",
+  "note": ""
+}

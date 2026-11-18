@@ -65,7 +65,7 @@ fn render_can_frame_one_saved_or_candidate_part() {
         json!({"path":root.join("all.png"),"width":128,"height":96}),
     );
     assert_ne!(selected, std::fs::read(root.join("all.png")).unwrap());
-    let before = std::fs::read(root.join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(root).unwrap();
     client.tool(
         "preview_batch",
         json!({
@@ -74,7 +74,7 @@ fn render_can_frame_one_saved_or_candidate_part() {
         }),
     );
     assert_eq!(selected, std::fs::read(root.join("candidate.png")).unwrap());
-    assert_eq!(before, std::fs::read(root.join("faber.json")).unwrap());
+    assert_eq!(before, faber_wiring::project_fingerprint(root).unwrap());
     let missing = client.request(
         "tools/call",
         json!({"name":"render","arguments":{
@@ -103,7 +103,7 @@ fn mass_properties_over_stdio_read_the_placed_solid_without_saving() {
     let part = json!({"name":"Box","colour":[120,160,180],"geometry":{"op":"box","size":[10,20,30]},
         "placement":{"translation":[5,0,0]}});
     client.tool("put_parts", json!({"parts":{"box":part}}));
-    let before = std::fs::read(root.join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(root).unwrap();
     let mass = client.tool("mass_properties", json!({"id":"box","density_g_cm3":1}));
     assert_eq!(mass["coordinates"], "world");
     assert!((mass["volume_mm3"].as_f64().unwrap() - 6000.).abs() < 1e-7);
@@ -123,5 +123,5 @@ fn mass_properties_over_stdio_read_the_placed_solid_without_saving() {
         );
         assert_eq!(refused["isError"], true);
     }
-    assert_eq!(before, std::fs::read(root.join("faber.json")).unwrap());
+    assert_eq!(before, faber_wiring::project_fingerprint(root).unwrap());
 }

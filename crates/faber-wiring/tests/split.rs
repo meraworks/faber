@@ -50,7 +50,7 @@ fn split_keeps_both_or_one_side_and_rebuilds_from_parameters() {
         .set_params([("height".into(), "15".into())].into())
         .unwrap();
     assert!((project.bodies[0].volume - 3000.).abs() < 1e-5);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for (origin, normal) in [
         (json!([0, 0, 40]), json!([0, 0, 1])),
         (json!([0, 0, 0]), json!([0, 0, 1])),
@@ -62,7 +62,7 @@ fn split_keeps_both_or_one_side_and_rebuilds_from_parameters() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

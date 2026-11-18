@@ -161,6 +161,9 @@ fn settings(direction: [f64; 3], critical_deg: f64) -> Result<(DVec3, f64)> {
 }
 
 fn check(mesh: &Mesh) -> Result<()> {
+    if mesh.vertices.iter().flatten().any(|v| !v.is_finite()) {
+        return Err("Mesh vertex must be finite".into());
+    }
     let count = mesh.vertices.len();
     if mesh
         .triangles
@@ -184,6 +187,20 @@ fn triangle_area(mesh: &Mesh, triangle: &[u32; 3]) -> f64 {
         .length()
 }
 
+/// Maps each vertex to the first vertex at the same position, to 1e-6 mm.
+/// Faces that meet at a seam then share an edge.
+fn welded(mesh: &Mesh) -> Vec<u32> {
+    let mut first: HashMap<[i64; 3], u32> = HashMap::new();
+    mesh.vertices
+        .iter()
+        .enumerate()
+        .map(|(index, v)| {
+            let key = v.map(|c| (c * 1e6).round() as i64);
+            *first.entry(key).or_insert(index as u32)
+        })
+        .collect()
+}
+
 /// Groups support triangles that share an edge.
 fn support_regions(mesh: &Mesh, facings: &[Facing], part: usize) -> Vec<Region> {
     let support: Vec<usize> = facings
@@ -192,12 +209,14 @@ fn support_regions(mesh: &Mesh, facings: &[Facing], part: usize) -> Vec<Region> 
         .filter(|(_, facing)| matches!(facing, Facing::Support { .. }))
         .map(|(index, _)| index)
         .collect();
+    let weld = welded(mesh);
     let mut parent: Vec<usize> = (0..mesh.triangles.len()).collect();
     let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
     for &index in &support {
         let triangle = mesh.triangles[index];
         for k in 0..3 {
-            let (a, b) = (triangle[k], triangle[(k + 1) % 3]);
+            let a = weld[triangle[k] as usize];
+            let b = weld[triangle[(k + 1) % 3] as usize];
             let edge = (a.min(b), a.max(b));
             match edges.get(&edge) {
                 Some(&other) => {
@@ -409,6 +428,44 @@ mod tests {
         assert!(classify(&mesh, [0., 0., 0.], 45.).is_err());
         assert!(classify(&mesh, [0., 0., 1.], 91.).is_err());
         assert!(classify(&mesh, [0., 0., 1.], f64::NAN).is_err());
+    }
+
+    #[test]
+    fn regions_join_across_face_seams() {
+        // Two underside quads meet at x = 10. Their seam vertices have no shared index.
+        // A bed quad lies below them.
+        let mut mesh = Mesh::default();
+        quad(
+            &mut mesh,
+            [[0., 0., 5.], [10., 0., 5.], [10., 10., 5.], [0., 10., 5.]],
+            [0., 0., -1.],
+        );
+        quad(
+            &mut mesh,
+            [[10., 0., 5.], [20., 0., 5.], [20., 10., 5.], [10., 10., 5.]],
+            [0., 0., -1.],
+        );
+        quad(
+            &mut mesh,
+            [
+                [-50., 0., 0.],
+                [-40., 0., 0.],
+                [-40., 10., 0.],
+                [-50., 10., 0.],
+            ],
+            [0., 0., -1.],
+        );
+        let report = analyse(&[&mesh], [0., 0., 1.], 45.).unwrap();
+        assert_eq!(report.regions_total, 1);
+        assert_near(report.regions[0].area_mm2, 200.);
+    }
+
+    #[test]
+    fn non_finite_vertex_is_refused() {
+        let mut mesh = cube(10.);
+        mesh.vertices[0][1] = f64::NAN;
+        assert!(classify(&mesh, [0., 0., 1.], 45.).is_err());
+        assert!(analyse(&[&mesh], [0., 0., 1.], 45.).is_err());
     }
 
     #[test]

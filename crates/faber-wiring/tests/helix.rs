@@ -39,7 +39,7 @@ fn helix_sweeps_in_both_directions_and_rebuilds_turn_count() {
         .set_params([("turns".into(), "2".into())].into())
         .unwrap();
     assert!((project.bodies[0].volume - 2. * volume).abs() < 0.002);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for (field, value) in [
         ("pitch", 0.),
         ("radius", 0.),
@@ -58,7 +58,7 @@ fn helix_sweeps_in_both_directions_and_rebuilds_turn_count() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

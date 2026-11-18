@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "motion": {
+    "joints": {
+      "carriage": {
+        "kind": "slider",
+        "parts": [
+          "slide"
+        ],
+        "parent": null,
+        "origin": [
+          15.0,
+          -16.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "limits": [
+          -10.0,
+          10.0
+        ]
+      },
+      "indicator": {
+        "kind": "revolute",
+        "parts": [
+          "wheel"
+        ],
+        "parent": null,
+        "origin": [
+          56.0,
+          -16.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limits": null
+      },
+      "input": {
+        "kind": "revolute",
+        "parts": [
+          "input"
+        ],
+        "parent": null,
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limits": [
+          -45.0,
+          45.0
+        ]
+      },
+      "output": {
+        "kind": "revolute",
+        "parts": [
+          "output"
+        ],
+        "parent": null,
+        "origin": [
+          40.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limits": null
+      }
+    },
+    "gears": {
+      "indicator": {
+        "driver": "input",
+        "ratio": -2.0
+      }
+    },
+    "linkages": {
+      "connecting_rod": {
+        "driver": "input",
+        "follower": "output",
+        "driver_pin": [
+          0.0,
+          20.0,
+          3.0
+        ],
+        "follower_pin": [
+          40.0,
+          20.0,
+          3.0
+        ],
+        "rod_parts": [
+          "rod"
+        ]
+      }
+    }
+  },
+  "contacts": {}
+}

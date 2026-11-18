@@ -193,7 +193,7 @@ fn malformed_and_unknown_references_are_refused_and_the_file_is_unchanged() {
     let dir = tempfile::tempdir().unwrap();
     let mut project = project(&dir);
     block(&mut project);
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     let refused = [
         json!({"plane":{"kind":"plane","origin":[0,0,0],"normal":[0,0,0]}}),
         json!({"plane":{"kind":"face","part":"missing",
@@ -206,7 +206,7 @@ fn malformed_and_unknown_references_are_refused_and_the_file_is_unchanged() {
     }
     assert!(project.data.sections.is_empty());
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
 }
@@ -282,14 +282,12 @@ fn removing_a_part_refuses_when_a_plane_uses_it_and_prunes_part_lists() {
 }
 
 #[test]
-fn project_without_sections_keeps_its_bytes() {
+fn project_without_sections_writes_no_analysis_file() {
     let dir = tempfile::tempdir().unwrap();
     let mut project = project(&dir);
     block(&mut project);
-    let path = dir.path().join("faber.json");
-    let before = std::fs::read(&path).unwrap();
-    assert!(!String::from_utf8_lossy(&before).contains("sections"));
     drop(project);
+    assert!(!dir.path().join("analysis.json").exists());
     let data = faber_files::read(dir.path()).unwrap();
-    assert_eq!(serde_json::to_vec_pretty(&data).unwrap(), before);
+    assert!(data.sections.is_empty());
 }

@@ -1,0 +1,228 @@
+//! Checks the size of the MCP context, the schema tool, the guide topics and typed errors.
+
+use serde_json::{Value, json};
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
+struct Session {
+    child: Child,
+    input: ChildStdin,
+    output: BufReader<ChildStdout>,
+    id: u64,
+    init: Value,
+}
+
+impl Session {
+    fn start() -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_faber"))
+            .arg("mcp")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        let mut session = Self {
+            child,
+            input,
+            output,
+            id: 0,
+            init: Value::Null,
+        };
+        session.init = session.rpc(
+            "initialize",
+            json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"faber-test","version":"1"}}),
+        );
+        writeln!(
+            session.input,
+            "{}",
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+        )
+        .unwrap();
+        session.input.flush().unwrap();
+        session
+    }
+
+    fn rpc(&mut self, method: &str, params: Value) -> Value {
+        self.id += 1;
+        writeln!(
+            self.input,
+            "{}",
+            json!({"jsonrpc":"2.0","id":self.id,"method":method,"params":params})
+        )
+        .unwrap();
+        self.input.flush().unwrap();
+        let mut line = String::new();
+        self.output.read_line(&mut line).unwrap();
+        assert!(!line.is_empty(), "MCP server stopped");
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert!(reply.get("error").is_none(), "{reply}");
+        reply["result"].clone()
+    }
+
+    /// Calls a tool. Returns the error flag and the parsed reply, or the text of an error.
+    fn call(&mut self, tool: &str, arguments: Value) -> (bool, Value) {
+        let result = self.rpc("tools/call", json!({"name":tool,"arguments":arguments}));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let value = serde_json::from_str(text).unwrap_or_else(|_| json!(text));
+        (result["isError"] == true, value)
+    }
+
+    fn ok(&mut self, tool: &str, arguments: Value) -> Value {
+        let (failed, value) = self.call(tool, arguments);
+        assert!(!failed, "{tool}: {value}");
+        value
+    }
+
+    /// Returns the error text. The call must fail.
+    fn refused(&mut self, tool: &str, arguments: Value) -> String {
+        let (failed, value) = self.call(tool, arguments);
+        assert!(failed, "{tool} should refuse: {value}");
+        value.as_str().unwrap().to_string()
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn open_project(session: &mut Session, dir: &Path) {
+    session.ok(
+        "open",
+        json!({"path":dir.display().to_string(),"create":true,"name":"Context"}),
+    );
+}
+
+/// Operation names of the Geometry schema, read from the schemars schema.
+fn schema_op_names() -> Vec<String> {
+    let schema = serde_json::to_value(schemars::schema_for!(
+        faber_model::Geometry<faber_model::Scalar>
+    ))
+    .unwrap();
+    let variants = schema["oneOf"]
+        .as_array()
+        .or_else(|| schema["anyOf"].as_array())
+        .expect("Geometry schema has variants");
+    variants
+        .iter()
+        .map(|variant| {
+            variant["properties"]["op"]["const"]
+                .as_str()
+                .expect("each variant names its op")
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn tools_list_is_small() {
+    let mut session = Session::start();
+    let list = session.rpc("tools/list", json!({}));
+    let total = serde_json::to_string(&list).unwrap().len();
+    assert!(total < 60_000, "tools/list is {total} characters");
+    for tool in list["tools"].as_array().unwrap() {
+        let size = serde_json::to_string(tool).unwrap().len();
+        assert!(size <= 6_000, "{} is {size} characters", tool["name"]);
+    }
+}
+
+#[test]
+fn instructions_are_short() {
+    let session = Session::start();
+    let text = session.init["instructions"].as_str().unwrap();
+    assert!(text.chars().count() <= 2_500, "{} characters", text.len());
+    assert!(text.contains("guide"), "{text}");
+    assert!(text.contains("schema"), "{text}");
+}
+
+#[test]
+fn schema_tool_gives_one_op() {
+    let mut session = Session::start();
+    let value = session.ok("schema", json!({"kind":"geometry","op":"pipe"}));
+    let text = value.to_string();
+    assert!(text.contains("\"diameter\""), "{text}");
+    assert!(text.contains("\"wall\""), "{text}");
+    assert!(text.len() < 4_000, "{} characters", text.len());
+
+    let error = session.refused("schema", json!({"kind":"geometry","op":"boxx"}));
+    assert!(
+        error.starts_with("Unknown op boxx. Nearest: box."),
+        "{error}"
+    );
+}
+
+#[test]
+fn op_list_names_every_op() {
+    let mut session = Session::start();
+    let value = session.ok("schema", json!({"kind":"geometry"}));
+    let names: Vec<String> = value["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| {
+            line.as_str()
+                .unwrap()
+                .split(':')
+                .next()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    let mut expected = schema_op_names();
+    let mut listed = names.clone();
+    expected.sort();
+    listed.sort();
+    assert_eq!(listed, expected);
+}
+
+#[test]
+fn typed_errors_survive() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::start();
+    open_project(&mut session, dir.path());
+    let bad_outer = json!([[0, 0], [10, 0], [10, true]]);
+    let error = session.refused(
+        "put_part",
+        json!({"id":"base","part":{"name":"Base","geometry":{"op":"extrude","profile":{"outer":bad_outer},"height":5},"colour":[80,100,120]}}),
+    );
+    assert!(
+        error.starts_with("failed to deserialize parameters: part.geometry.profile.outer[2]: "),
+        "{error}"
+    );
+    let error = session.refused(
+        "add_feature",
+        json!({"part":"base","feature":{"id":"walls","geometry":{"op":"extrude","profile":{"outer":bad_outer},"height":5}}}),
+    );
+    assert!(
+        error.starts_with("failed to deserialize parameters: feature.geometry.profile.outer[2]: "),
+        "{error}"
+    );
+}
+
+#[test]
+fn guide_topic_returns_one_section() {
+    let mut session = Session::start();
+    let index = session.ok("guide", json!({}));
+    let topics: Vec<&str> = index["topics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|topic| topic.as_str().unwrap())
+        .collect();
+    assert!(topics.contains(&"Quick start"), "{topics:?}");
+    assert!(index["quick_start"].as_str().unwrap().contains("six steps"));
+
+    let section = session.ok("guide", json!({"topic":"Quick start"}));
+    let text = section["text"].as_str().unwrap();
+    assert!(text.starts_with("## Quick start"), "{text}");
+    assert!(text.contains("six steps"), "{text}");
+    assert!(!text.contains("## Common mistakes"), "{text}");
+
+    let error = session.refused("guide", json!({"topic":"Quik start"}));
+    assert!(error.contains("Nearest: Quick start."), "{error}");
+}

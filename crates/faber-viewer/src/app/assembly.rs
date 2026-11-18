@@ -440,14 +440,27 @@ mod tests {
     use super::*;
     use egui_kittest::kittest::Queryable;
 
+    fn copy_folder(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_folder(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn dragging_an_arm_moves_the_linkage_and_keeps_the_camera_fixed() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("faber.json"),
-            include_bytes!("../../../../examples/assembly-motion/faber.json"),
-        )
-        .unwrap();
+        copy_folder(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/assembly-motion"),
+            dir.path(),
+        );
         let (data, bodies) = faber_wiring::read(dir.path()).unwrap();
         let path = dir.path().to_owned();
         let mut h = egui_kittest::Harness::builder()

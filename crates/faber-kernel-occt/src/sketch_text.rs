@@ -4,6 +4,23 @@ use skrifa::{
     FontRef, MetadataProvider, instance::LocationRef, instance::Size, outline::OutlinePen,
 };
 
+/// A shape that `sketch` built from text regions. Only this shape extrudes region by region.
+pub(crate) struct TextRegions(Shape);
+
+/// Returns the shape under a text marker, or the shape itself.
+pub(crate) fn unmarked(shape: &Shape) -> &Shape {
+    shape.get::<TextRegions>().map_or(shape, |marked| &marked.0)
+}
+
+/// Gives a copy of a text shape the text marker, when `source` has it.
+pub(crate) fn carried(source: &Shape, copy: Shape) -> Shape {
+    if source.get::<TextRegions>().is_some() {
+        Shape::new(TextRegions(copy))
+    } else {
+        copy
+    }
+}
+
 /// Built-in fonts. The data is compiled into the program.
 const FONTS: [(&str, &[u8]); 2] = [
     ("ubuntu-light", epaint_default_fonts::UBUNTU_LIGHT),
@@ -31,16 +48,21 @@ pub(crate) fn sketch<K: Kernel>(
             Some(previous) => kernel.combine(&previous, &face, Combine::Union)?,
         });
     }
-    shape.ok_or_else(|| "Text has no visible outline".into())
+    let shape = shape.ok_or("Text has no visible outline")?;
+    Ok(Shape::new(TextRegions(shape)))
 }
 
-/// Extrudes each face of a multi-region sketch and fuses the solids.
-/// Returns None for a shape that is not a solid-free group of faces.
+/// Extrudes each face of a multi-region text sketch and fuses the solids.
+/// Returns None for a shape that is not a text sketch with a solid-free group of faces.
 pub(crate) fn extrude_regions<K: Kernel>(
     kernel: &K,
     shape: &Shape,
     vector: [f64; 3],
 ) -> Result<Option<Shape>> {
+    let Some(marked) = shape.get::<TextRegions>() else {
+        return Ok(None);
+    };
+    let shape = &marked.0;
     let count = kernel.face_count(shape)?;
     if count < 2 || kernel.properties(shape)?.solids > 0 {
         return Ok(None);
@@ -382,6 +404,25 @@ mod tests {
             *font = Some("comic".into());
         }
         assert!(expand(&unknown).is_err());
+    }
+
+    #[test]
+    fn extrude_refuses_a_non_text_open_surface() {
+        // Two faces that do not come from a text sketch must not become one prism each.
+        let kernel = crate::OcctKernel;
+        let placement = Placement::default();
+        let square = |x: f64| SketchProfile {
+            outer: SketchLoop::Polygon {
+                points: vec![[x, 0.], [x + 10., 0.], [x + 10., 10.], [x, 10.]],
+                corner_radius: None,
+            },
+            holes: Vec::new(),
+        };
+        let left = kernel.sketch(&square(0.), &placement).unwrap();
+        let right = kernel.sketch(&square(20.), &placement).unwrap();
+        let faces = kernel.combine(&left, &right, Combine::Union).unwrap();
+        assert_eq!(kernel.face_count(&faces).unwrap(), 2);
+        assert!(kernel.extrude_shape(&faces, [0., 0., 1.]).is_err());
     }
 
     #[test]

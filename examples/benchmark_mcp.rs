@@ -46,6 +46,8 @@ fn main() {
         .unwrap()
         .join(if cfg!(windows) { "faber.exe" } else { "faber" });
     let fixture: Value = serde_json::from_str(include_str!("hex-bin/faber.json")).unwrap();
+    let mut part: Value = serde_json::from_str(include_str!("hex-bin/parts/bin.json")).unwrap();
+    part.as_object_mut().unwrap().remove("schema");
     let scratch = std::env::current_dir().unwrap().join(".cargo");
     std::fs::create_dir_all(&scratch).unwrap();
     let scratch = std::fs::canonicalize(scratch).unwrap();
@@ -61,7 +63,7 @@ fn main() {
     for (name, expression) in fixture["params"].as_object().unwrap() {
         operations.push(json!({"tool":"set_param","name":name,"expression":expression}));
     }
-    operations.push(json!({"tool":"put_part","id":"bin","part":fixture["parts"]["bin"]}));
+    operations.push(json!({"tool":"put_part","id":"bin","part":part}));
     let (initial_ms, report) = timed(&mut client, "batch", json!({"operations":operations}));
     assert_eq!(report["part_count"], 1);
     let original_volume = report["parts"][0]["volume_mm3"].as_f64().unwrap();

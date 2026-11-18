@@ -9,10 +9,10 @@ fn strict_batch_refuses_new_interference_without_a_saved_change() {
         {"tool":"put_part","id":"a","part":{"name":"A","colour":[100,140,170],"geometry":{"op":"box","size":[10,10,10]}}},
         {"tool":"put_part","id":"b","part":{"name":"B","colour":[100,140,170],"geometry":{"op":"box","size":[2,2,2]},"placement":{"translation":[3,3,3]}}}
     ])).unwrap();
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     assert!(project.batch_strict(operations).is_err());
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
     assert!(project.bodies.is_empty());

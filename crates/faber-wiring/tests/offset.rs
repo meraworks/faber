@@ -30,7 +30,7 @@ fn offset_expands_round_corners_and_contracts_a_solid() {
         .set_params([("distance".into(), "-1".into())].into())
         .unwrap();
     assert!((project.bodies[0].volume - 512.).abs() < 1e-6);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for value in ["0", "-6"] {
         assert!(
             project
@@ -38,7 +38,7 @@ fn offset_expands_round_corners_and_contracts_a_solid() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

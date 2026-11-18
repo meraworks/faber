@@ -51,14 +51,14 @@ fn thicken_preserves_sketch_holes_in_both_directions() {
         assert!((body.bounds[0][2] - thickness.min(0.)).abs() < 1e-5);
         assert!((body.bounds[1][2] - thickness.max(0.)).abs() < 1e-5);
     }
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     assert!(
         project
             .set_params([("thickness".into(), "0".into())].into())
             .is_err()
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     drop(project);

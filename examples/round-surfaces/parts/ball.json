@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "Ball",
+  "geometry": {
+    "op": "sphere",
+    "radius": 16.0
+  },
+  "colour": [
+    90,
+    150,
+    205
+  ],
+  "group": "",
+  "note": ""
+}

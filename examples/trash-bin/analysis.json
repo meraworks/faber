@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "sections": {
+    "cells": {
+      "plane": {
+        "kind": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          162.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "reverse": false,
+      "visible": true,
+      "note": "Middle of the honeycomb, z 162"
+    },
+    "centre": {
+      "plane": {
+        "kind": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      "reverse": false,
+      "visible": true,
+      "note": "Plane x = 0. Cuts both grip slots and the vent wall."
+    },
+    "floor": {
+      "plane": {
+        "kind": "face",
+        "part": "bin",
+        "feature": null,
+        "face": {
+          "created_by": null,
+          "normal": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "near_centre": null,
+          "in_box": [
+            [
+              -500.0,
+              -500.0,
+              "floor_z - 0.5"
+            ],
+            [
+              500.0,
+              500.0,
+              "floor_z + 0.5"
+            ]
+          ],
+          "area": null,
+          "tolerance": 1e-6,
+          "expect": 1
+        },
+        "offset": 20.0
+      },
+      "reverse": false,
+      "visible": true,
+      "note": "Horizontal, 20 mm above the inner floor."
+    }
+  }
+}

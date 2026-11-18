@@ -27,6 +27,7 @@ edition = "2024"
 [dependencies]
 faber-clash = { path = "crates/faber-clash" }
 faber-core = { path = "crates/faber-core" }
+faber-files = { path = "crates/faber-files" }
 faber-model = { path = "crates/faber-model" }
 faber-ports = { path = "crates/faber-ports" }
 faber-scene = { path = "crates/faber-scene" }

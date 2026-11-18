@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "Input arm",
+  "geometry": {
+    "op": "box",
+    "size": [
+      5.0,
+      25.0,
+      3.0
+    ]
+  },
+  "colour": [
+    216,
+    116,
+    60
+  ],
+  "group": "",
+  "note": ""
+}

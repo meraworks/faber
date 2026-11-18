@@ -75,11 +75,7 @@ pub fn import(archive: &Path, destination: &Path) -> Result<(), String> {
             } => (project, volume, bounds),
             Reply::Error(message) => return Err(message),
         };
-    let recipe = tempfile::NamedTempFile::new_in(work.path()).map_err(|e| e.to_string())?;
-    serde_json::to_writer_pretty(recipe.as_file(), &project).map_err(|e| e.to_string())?;
-    recipe.as_file().sync_all().map_err(|e| e.to_string())?;
-    let recipe = recipe.into_temp_path();
-    fs::copy(&recipe, work.path().join("faber.json")).map_err(|e| e.to_string())?;
+    faber_files::layout::write(work.path(), &project)?;
     let (_, bodies) = crate::read(work.path())?;
     let [body] = bodies.as_slice() else {
         return Err("The archive and the rebuilt project have different body counts".into());
@@ -95,9 +91,9 @@ pub fn import(archive: &Path, destination: &Path) -> Result<(), String> {
     {
         return Err("The rebuilt solid differs from the source volume or bounds".into());
     }
-    fs::create_dir(destination).map_err(|e| e.to_string())?;
-    if let Err(err) = recipe.persist_noclobber(destination.join("faber.json")) {
-        let _ = fs::remove_dir(destination);
+    let kept = work.keep();
+    if let Err(err) = fs::rename(&kept, destination) {
+        let _ = fs::remove_dir_all(&kept);
         return Err(err.to_string());
     }
     Ok(())

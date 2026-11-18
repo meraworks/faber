@@ -42,7 +42,7 @@ fn minimum_distance_measures_placed_solids_without_saving() {
     let mut other = part;
     other.placement.translation = [13., 24., 0.].map(Scalar::Number);
     project.put_part("b".into(), other.clone()).unwrap();
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let measured = project.measure_distance("a", "b").unwrap();
     assert!((measured.distance_mm - 5.).abs() < 1e-7);
     assert!((measured.point_a[0] - 10.).abs() < 1e-7);
@@ -52,7 +52,7 @@ fn minimum_distance_measures_placed_solids_without_saving() {
     assert!((project.measure_distance("b", "a").unwrap().distance_mm - 5.).abs() < 1e-7);
     assert!(project.measure_distance("a", "missing").is_err());
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     for x in [10., 5., 0.] {

@@ -163,21 +163,32 @@ names a kernel, a file format or a vendor.
 A project is a folder in git. One project holds many parts and assemblies.
 
 ```
-faber.json          name, shared parameters, materials, print profile, rules
-parts/<name>.json   one part: parameters and the feature list
-assemblies/<name>.json  instances, joints, poses, contacts
-vendor/<id>.json    record of a purchased part: source, licence, hash, mass
-vendor/<id>.step    the model as downloaded (STEP, or STL/OBJ if no STEP exists)
-notes.json          comments of the person, attached to geometry
+faber.json          manifest: schema 2, revision, name, shared parameters
+parts/<id>.json     one part: name, colour, group, note, geometry (no placement)
+placement.json      the placement of each part, by id
+assembly.json       motion and declared contacts (absent when empty)
+analysis.json       saved section analyses (absent when empty)
+.faber/             history and checkpoints (written by Faber only)
 out/                exported files
-cache/              shapes, meshes, pictures, journal (not in git)
+vendor/<id>.json    (planned) record of a purchased part
+vendor/<id>.step    (planned) the model as downloaded
 ```
 
 Rules for the files:
 
 - Each file has a `schema` integer. `faber schema` prints the JSON schema.
+- A schema 1 `faber.json` holds the whole project in one file. Faber still reads it.
+  `faber migrate <dir>` writes the split layout and prints each changed file.
 - Keyed collections are sorted maps, so that diffs stay stable.
-- Faber writes each file atomically (temporary file, then rename).
+- Faber writes each file atomically (temporary file, then rename). It writes only
+  the files whose bytes change.
+- A change writes the files in this order: the history snapshot, the changed part
+  files, the placement, assembly and analysis files, the removal of part files of
+  removed parts, and `faber.json` last.
+- The history snapshot of the last revision is written before the layout files.
+  A mixed state after a crash is read as an external edit. A stop before the
+  removal leaves a part file with no placement entry. Such a part reads with the
+  identity placement.
 - A `.faber.lock` file prevents a second engine on the same project. The
   viewer never takes the lock.
 - A file in `vendor/` is read-only for all tools.

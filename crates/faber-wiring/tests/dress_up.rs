@@ -20,7 +20,7 @@ fn geometric_edge_selectors_follow_parameter_changes_and_refuse_wrong_counts() {
         .set_params([("height".into(), "60".into())].into())
         .unwrap();
     assert!((project.bodies[0].volume - area * 60.).abs() < 1e-5);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let mut wrong = recipe;
     wrong["geometry"]["features"][1]["geometry"]["edges"]["expect"] = json!(1);
     let wrong: Part<Scalar> = serde_json::from_value(wrong).unwrap();
@@ -28,7 +28,7 @@ fn geometric_edge_selectors_follow_parameter_changes_and_refuse_wrong_counts() {
     assert!(error.contains("expected 1"), "{error}");
     assert_eq!(
         before,
-        std::fs::read(directory.path().join("faber.json")).unwrap()
+        faber_wiring::project_fingerprint(directory.path()).unwrap()
     );
     let too_large = serde_json::from_value(json!({"op":"fillet","source":"block","edges":{"parallel":[0,0,1],"expect":4,"tolerance":0.000001},"radius":100})).unwrap();
     let error = project
@@ -37,7 +37,7 @@ fn geometric_edge_selectors_follow_parameter_changes_and_refuse_wrong_counts() {
     assert!(error.contains("tested value"), "{error}");
     assert_eq!(
         before,
-        std::fs::read(directory.path().join("faber.json")).unwrap()
+        faber_wiring::project_fingerprint(directory.path()).unwrap()
     );
     let chamfer = serde_json::from_value(json!({"op":"chamfer","source":"block","edges":{"parallel":[0,0,1],"expect":4,"tolerance":0.000001},"distance":1})).unwrap();
     project.edit_feature("part", "round", chamfer).unwrap();

@@ -80,7 +80,7 @@ fn sketch_grid_repeats_holes_and_rebuilds_from_parameters() {
     assert!((project.bodies[0].volume - (2400. - 48. * std::f64::consts::PI)).abs() < 1e-5);
     let (_, faces) = project.feature_topology("plate", "solid").unwrap();
     assert_eq!(faces.len(), 12);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for count in [json!([0, 3]), json!([257, 1]), json!([1000000, 1000000])] {
         let mut invalid = recipe.clone();
         invalid["geometry"]["features"][0]["geometry"]["profile"]["holes"][0]["count"] = count;
@@ -93,7 +93,7 @@ fn sketch_grid_repeats_holes_and_rebuilds_from_parameters() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }
@@ -103,7 +103,7 @@ fn sketch_grid_repeats_holes_and_rebuilds_from_parameters() {
             .is_err()
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     drop(project);

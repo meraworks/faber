@@ -42,7 +42,7 @@ fn shared_edge_selection_survives_dimension_changes() {
         .put_part("box".into(), recipe("chamfer", both_sides, 2))
         .unwrap();
     assert!((project.bodies[0].volume - 8920.).abs() < 1e-5);
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for second in [
         face([0., 0., -1.]),
         face([0., 0., 1.]),
@@ -54,7 +54,7 @@ fn shared_edge_selection_survives_dimension_changes() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

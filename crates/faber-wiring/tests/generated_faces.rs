@@ -67,7 +67,7 @@ fn extrude_and_revolve_faces_belong_to_the_solid_feature() {
             .set_params([("height".into(), "15".into())].into())
             .unwrap();
         assert!((project.bodies[0].bounds[0][2] - 15.).abs() < 1e-5);
-        let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+        let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
         let mut invalid = recipe;
         invalid["geometry"]["features"][2]["geometry"]["face"]["created_by"] = json!("profile");
         assert!(
@@ -79,7 +79,7 @@ fn extrude_and_revolve_faces_belong_to_the_solid_feature() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
         drop(project);

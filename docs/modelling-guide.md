@@ -1,7 +1,7 @@
 # Faber modelling guide
 
 Faber builds editable solids through stdio MCP. The client starts `faber mcp`.
-Use `tools/list` to read the argument schema of each tool. `faber schema` prints
+Call `schema` to read the shape of a recipe. Call `guide` with a topic to read one section. `faber schema` prints
 the project JSON schema. The separate viewer reads the same files.
 
 ## Quick start
@@ -74,6 +74,32 @@ Faber refuses the wrong form with `unknown field args`. These tools can be batch
 - `delete_feature`
 - `move_feature`
 - `set_contact`
+
+## Project files
+
+A project folder holds `faber.json` (name, parameters, revision), one
+`parts/<id>.json` for each part, and `placement.json`. It also holds
+`assembly.json` and `analysis.json` when they have content.
+
+A part file has no placement. Edit a part file as text when the design needs it.
+A syntax error names the file, the line and the column.
+
+A project with one `faber.json` still opens. Run `faber migrate <dir>` to write
+the split layout.
+
+## Schema tool
+
+Call `schema` with a `kind` before you write a recipe. The kinds are `part`, `feature`, `geometry`, `sketch_loop`, `selector`, `section` and `edit`.
+
+Call `schema` with `kind: geometry` and no `op` to list every op. Each line names the op and its fields. A `?` marks an optional field.
+
+Add `op` to read the full schema of one op with its definitions. An unknown op name gives the nearest names.
+
+## Verify the result
+
+Call `measure` to read the distance between two parts. Call `part_info` to read the bounds and volume of a part.
+
+Compare these values with your own calculation. Then call `render` to check the shape.
 
 ## Common mistakes
 
@@ -598,7 +624,7 @@ A surface crossing that the mesh check cannot measure is still a violation.
 
 For example, a lid that seats 0.3 mm into its base gives no violation. If `max_depth_mm` is 0.6, a lid that goes 5 mm into the base is a violation. If `max_depth_mm` is 6, the same lid gives no violation.
 
-A declaration changes only the `contacts` list in `faber.json`. It also counts as one revision. Use `undo` to remove it. Removing a part also removes its declared contacts.
+A declaration changes only the contacts in `assembly.json`. It also counts as one revision. Use `undo` to remove it. Removing a part also removes its declared contacts.
 
 ### Export refusal
 
@@ -682,7 +708,7 @@ In the viewer, select the OVERHANG check box in the analysis panel. Red faces ar
 
 Add a `thread` feature after the feature that makes the shaft or bore. Set `source` to that feature. Use `face.cylinder_radius` and `face.internal` to select one cylindrical face. Set `size` to a coarse metric designation such as `M6`. Set `length` and `offset` in millimetres. Set `left_handed` to `true` for a left-hand thread.
 
-Open `examples/metric-thread-pair/faber.json` for an M6 shaft and sleeve. Each thread has an axial length of 8 mm. The profile uses nominal dimensions. It has no tolerance class or allowance for a printed fit.
+Open `examples/metric-thread-pair` for an M6 shaft and sleeve. Each thread has an axial length of 8 mm. The profile uses nominal dimensions. It has no tolerance class or allowance for a printed fit.
 
 ## Drive an assembly
 

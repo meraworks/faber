@@ -44,7 +44,7 @@ fn split_tracks_old_faces_and_the_cut_face_after_plane_changes() {
             assert!((cut[0].centre[2] - f64::from(height)).abs() < 1e-5);
             assert!((cut[0].area - 200.).abs() < 1e-5);
         }
-        let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+        let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
         let mut invalid = recipe;
         invalid["geometry"]["features"][2]["geometry"]["face"]["created_by"] = json!("base");
         assert!(
@@ -56,7 +56,7 @@ fn split_tracks_old_faces_and_the_cut_face_after_plane_changes() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
         drop(project);

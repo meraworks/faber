@@ -52,7 +52,7 @@ fn named_plane_rebuilds_attached_sketches_and_refuses_wrong_references() {
             project.bodies[0].bounds
         );
     }
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for reference in ["missing", "profile", "pad"] {
         let mut invalid = recipe();
         invalid["geometry"]["features"][1]["geometry"]["plane"] = json!(reference);
@@ -65,7 +65,7 @@ fn named_plane_rebuilds_attached_sketches_and_refuses_wrong_references() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }
@@ -80,7 +80,7 @@ fn named_plane_rebuilds_attached_sketches_and_refuses_wrong_references() {
             .is_err()
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     for (pointer, value) in [
@@ -102,7 +102,7 @@ fn named_plane_rebuilds_attached_sketches_and_refuses_wrong_references() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

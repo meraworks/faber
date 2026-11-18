@@ -35,8 +35,8 @@ fn with_disk(mut head: Vec<Value>, tail: Vec<Value>) -> Value {
     Value::Array(head)
 }
 
-fn file(directory: &std::path::Path) -> Vec<u8> {
-    std::fs::read(directory.join("faber.json")).unwrap()
+fn file(directory: &std::path::Path) -> (std::time::SystemTime, u64) {
+    faber_wiring::project_fingerprint(directory).unwrap()
 }
 
 #[test]

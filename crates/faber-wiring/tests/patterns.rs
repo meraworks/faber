@@ -29,7 +29,7 @@ fn circular_pattern_uses_an_offset_oblique_axis_and_parameter_angles() {
         .unwrap();
     let (_, bodies) = faber_wiring::read(directory.path()).unwrap();
     assert!((bodies[0].volume - 4. * std::f64::consts::PI).abs() < 1e-5);
-    let saved = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let saved = faber_wiring::project_fingerprint(directory.path()).unwrap();
     assert!(
         project
             .set_params([("angle".into(), "0".into())].into())
@@ -38,7 +38,7 @@ fn circular_pattern_uses_an_offset_oblique_axis_and_parameter_angles() {
     let invalid = serde_json::from_value(json!({"op":"circular_pattern","source":"seed","count":3,"origin":[100,200,300],"axis":[0,0,0],"angle":120})).unwrap();
     assert!(project.edit_feature("balls", "ring", invalid).is_err());
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         saved
     );
 }
@@ -92,7 +92,7 @@ fn linear_pattern_rebuilds_and_refuses_invalid_counts_without_saving() {
     assert!((project.bodies[0].volume - 2500.).abs() < 1e-5);
     let (_, bodies) = faber_wiring::read(directory.path()).unwrap();
     assert!((bodies[0].volume - 2500.).abs() < 1e-5);
-    let saved = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let saved = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for count in ["0", "-1", "2.5", "1001"] {
         assert!(
             project
@@ -100,7 +100,7 @@ fn linear_pattern_rebuilds_and_refuses_invalid_counts_without_saving() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             saved
         );
     }
@@ -110,7 +110,7 @@ fn linear_pattern_rebuilds_and_refuses_invalid_counts_without_saving() {
             .is_err()
     );
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         saved
     );
     project

@@ -39,11 +39,10 @@ fn set_part_info_changes_note_and_colour_and_keeps_the_volume() {
     assert_eq!(project.data.parts["box"].group, "Frame");
     assert!((project.bodies[0].volume - volume).abs() < 1e-9);
     assert_eq!(project.bodies[0].colour, [10, 20, 30]);
-    let saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(dir.path().join("faber.json")).unwrap()).unwrap();
-    assert_eq!(saved["parts"]["box"]["note"], "second");
-    assert_eq!(saved["parts"]["box"]["colour"], json!([10, 20, 30]));
-    assert_eq!(saved["revision"], revision + 1);
+    let saved = faber_files::read(dir.path()).unwrap();
+    assert_eq!(saved.parts["box"].note, "second");
+    assert_eq!(saved.parts["box"].colour, [10, 20, 30]);
+    assert_eq!(saved.revision, revision + 1);
 }
 
 #[test]
@@ -73,7 +72,7 @@ fn set_part_info_refuses_unknown_ids_and_empty_changes_without_saving() {
     let dir = tempfile::tempdir().unwrap();
     let mut project = faber_wiring::open(dir.path(), true, Some("Refuse".into())).unwrap();
     project.put_part("box".into(), box_part("first")).unwrap();
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     let unknown = project.set_part_info(PartInfo {
         id: "missing".into(),
         note: Some("x".into()),
@@ -92,7 +91,7 @@ fn set_part_info_refuses_unknown_ids_and_empty_changes_without_saving() {
     });
     assert!(blank_name.is_err());
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
     assert_eq!(project.data.parts["box"].note, "first");
@@ -131,7 +130,7 @@ fn batch_refuses_malformed_set_part_info_and_keeps_the_file() {
     let dir = tempfile::tempdir().unwrap();
     let mut project = faber_wiring::open(dir.path(), true, Some("Malformed".into())).unwrap();
     project.put_part("box".into(), box_part("first")).unwrap();
-    let before = std::fs::read(dir.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
     for value in [
         json!({"id": "box", "colour": [256, 0, 0]}),
         json!({"id": "box", "colour": [1, 2]}),
@@ -157,7 +156,7 @@ fn batch_refuses_malformed_set_part_info_and_keeps_the_file() {
     );
     assert!(refused.is_err());
     assert_eq!(
-        std::fs::read(dir.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
         before
     );
     assert_eq!(project.data.parts["box"].note, "first");

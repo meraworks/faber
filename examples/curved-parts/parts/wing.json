@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "name": "Tapered twisted wing",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "root",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "path",
+              "start": [
+                0.0,
+                0.0
+              ],
+              "segments": [
+                {
+                  "kind": "bezier",
+                  "control1": [
+                    0.0,
+                    8.0
+                  ],
+                  "control2": [
+                    50.0,
+                    8.0
+                  ],
+                  "end": [
+                    100.0,
+                    0.0
+                  ]
+                },
+                {
+                  "kind": "bezier",
+                  "control1": [
+                    50.0,
+                    -8.0
+                  ],
+                  "control2": [
+                    0.0,
+                    -8.0
+                  ],
+                  "end": [
+                    0.0,
+                    0.0
+                  ]
+                }
+              ]
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "tip",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "path",
+              "start": [
+                0.0,
+                0.0
+              ],
+              "segments": [
+                {
+                  "kind": "bezier",
+                  "control1": [
+                    0.0,
+                    4.8
+                  ],
+                  "control2": [
+                    30.0,
+                    4.8
+                  ],
+                  "end": [
+                    60.0,
+                    0.0
+                  ]
+                },
+                {
+                  "kind": "bezier",
+                  "control1": [
+                    30.0,
+                    -4.8
+                  ],
+                  "control2": [
+                    0.0,
+                    -4.8
+                  ],
+                  "end": [
+                    0.0,
+                    0.0
+                  ]
+                }
+              ]
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              10.0,
+              0.0,
+              "span"
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              -5.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "loft",
+        "geometry": {
+          "op": "loft_sketches",
+          "sources": [
+            "root",
+            "tip"
+          ],
+          "ruled": true
+        }
+      }
+    ],
+    "output": "loft"
+  },
+  "colour": [
+    105,
+    155,
+    170
+  ],
+  "group": "",
+  "note": "Two symmetric Bezier sections. This example has no aerodynamic validation."
+}

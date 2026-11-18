@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "Connecting rod",
+  "geometry": {
+    "op": "box",
+    "size": [
+      44.0,
+      4.0,
+      3.0
+    ]
+  },
+  "colour": [
+    137,
+    172,
+    175
+  ],
+  "group": "",
+  "note": ""
+}

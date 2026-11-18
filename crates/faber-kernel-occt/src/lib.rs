@@ -593,7 +593,7 @@ fn shape_call(action: impl FnOnce(*mut *mut c_void, *mut c_char, usize) -> i32) 
 }
 
 fn pointer(shape: &Shape) -> Result<*const c_void> {
-    shape
+    sketch_text::unmarked(shape)
         .get::<OwnedShape>()
         .map(|s| s.0.as_ptr().cast_const())
         .ok_or_else(|| "Shape belongs to another adapter".into())
@@ -1820,7 +1820,7 @@ impl Kernel for OcctKernel {
         })
     }
 
-    fn transform_shape(&self, shape: &Shape, placement: &Placement) -> Result<Shape> {
+    fn transform_shape(&self, source: &Shape, placement: &Placement) -> Result<Shape> {
         if placement
             .rotation
             .iter()
@@ -1829,7 +1829,7 @@ impl Kernel for OcctKernel {
         {
             return Err("Placement is outside the supported range".into());
         }
-        let shape = pointer(shape)?;
+        let shape = pointer(source)?;
         let [x, y, z] = placement.rotation.map(f64::to_radians);
         let rotation =
             DMat3::from_rotation_z(z) * DMat3::from_rotation_y(y) * DMat3::from_rotation_x(x);
@@ -1840,9 +1840,10 @@ impl Kernel for OcctKernel {
                 rotation.col(i % 4)[i / 4]
             }
         });
-        shape_call(|out, error, len| unsafe {
+        let copy = shape_call(|out, error, len| unsafe {
             faber_transform(shape, matrix.as_ptr(), out, error, len)
-        })
+        })?;
+        Ok(sketch_text::carried(source, copy))
     }
     fn combine(&self, left: &Shape, right: &Shape, operation: Combine) -> Result<Shape> {
         let (left, right) = (pointer(left)?, pointer(right)?);

@@ -1,5 +1,9 @@
-use faber_model::{Part, Scalar};
+use faber_core::Project;
+use faber_geometry::NativeKernel;
+use faber_model::{Part, ProjectData, Scalar};
+use faber_ports::{HistoryMove, ProjectStore};
 use serde_json::json;
+use std::sync::{Arc, Mutex};
 
 fn recipe() -> Part<Scalar> {
     serde_json::from_value(json!({
@@ -23,7 +27,7 @@ fn feature_topology_uses_source_coordinates_and_updates_after_edits() {
     let mut part = recipe();
     part.placement.translation = [100., 200., 300.].map(Scalar::Number);
     project.put_part("block".into(), part).unwrap();
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     let (edges, faces) = project.feature_topology("block", "base").unwrap();
     assert_eq!(edges.len(), 12);
     assert_eq!(faces.len(), 6);
@@ -38,7 +42,7 @@ fn feature_topology_uses_source_coordinates_and_updates_after_edits() {
     assert!(project.feature_topology("block", "missing").is_err());
     assert!(project.feature_topology("missing", "base").is_err());
     assert_eq!(
-        std::fs::read(directory.path().join("faber.json")).unwrap(),
+        faber_wiring::project_fingerprint(directory.path()).unwrap(),
         before
     );
     project
@@ -87,7 +91,7 @@ fn invalid_feature_references_and_duplicate_ids_do_not_change_saved_project() {
         .set_params([("height".into(), "30".into())].into())
         .unwrap();
     project.put_part("block".into(), recipe()).unwrap();
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for mode in 0..3 {
         let mut bad = serde_json::to_value(recipe()).unwrap();
         match mode {
@@ -99,7 +103,7 @@ fn invalid_feature_references_and_duplicate_ids_do_not_change_saved_project() {
         assert!(project.put_part("block".into(), bad).is_err());
         assert_eq!(
             before,
-            std::fs::read(directory.path().join("faber.json")).unwrap()
+            faber_wiring::project_fingerprint(directory.path()).unwrap()
         );
     }
 }
@@ -127,14 +131,90 @@ fn feature_edits_preserve_order_and_refuse_broken_dependencies() {
         .unwrap();
     project.move_feature("block", "spare", None).unwrap();
     project.delete_feature("block", "spare").unwrap();
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     assert!(project.delete_feature("block", "tool").is_err());
     assert!(project.move_feature("block", "cut", Some("base")).is_err());
     assert!(project.delete_feature("block", "missing").is_err());
     assert_eq!(
         before,
-        std::fs::read(directory.path().join("faber.json")).unwrap()
+        faber_wiring::project_fingerprint(directory.path()).unwrap()
     );
     let reopened = faber_wiring::read(directory.path()).unwrap();
     assert!((reopened.1[0].volume - 1200.).abs() < 1e-6);
+}
+
+/// A store with explicit undo and redo stacks.
+struct StepStore {
+    current: Mutex<ProjectData>,
+    undo: Mutex<Vec<ProjectData>>,
+    redo: Mutex<Vec<ProjectData>>,
+}
+
+impl ProjectStore for StepStore {
+    fn load(&self) -> Result<ProjectData, String> {
+        Ok(self.current.lock().unwrap().clone())
+    }
+    fn save(&self, _: Option<u64>, data: &ProjectData) -> Result<(), String> {
+        *self.current.lock().unwrap() = data.clone();
+        Ok(())
+    }
+    fn history_target(&self, action: HistoryMove) -> Result<ProjectData, String> {
+        let stack = match action {
+            HistoryMove::Undo => &self.undo,
+            HistoryMove::Redo => &self.redo,
+        };
+        stack
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .ok_or_else(|| "No history step is available".to_string())
+    }
+    fn save_history(
+        &self,
+        expected: &ProjectData,
+        data: &ProjectData,
+        action: HistoryMove,
+    ) -> Result<(), String> {
+        let (from, to) = match action {
+            HistoryMove::Undo => (&self.undo, &self.redo),
+            HistoryMove::Redo => (&self.redo, &self.undo),
+        };
+        from.lock()
+            .unwrap()
+            .pop()
+            .ok_or_else(|| "No history step is available".to_string())?;
+        to.lock().unwrap().push(expected.clone());
+        *self.current.lock().unwrap() = data.clone();
+        Ok(())
+    }
+}
+
+#[test]
+fn undo_across_a_revision_only_step_moves_the_history() {
+    // Histories written before the no-op guard can hold a step that differs only by revision.
+    let current = ProjectData {
+        schema: 1,
+        revision: 2,
+        name: "History".into(),
+        parts: Default::default(),
+        params: Default::default(),
+        contacts: Default::default(),
+        motion: Default::default(),
+        sections: Default::default(),
+    };
+    let older = ProjectData {
+        revision: 1,
+        ..current.clone()
+    };
+    let store = Arc::new(StepStore {
+        current: Mutex::new(current),
+        undo: Mutex::new(vec![older]),
+        redo: Mutex::new(vec![]),
+    });
+    let mut project = Project::open(store.clone(), Arc::new(NativeKernel)).unwrap();
+    project.undo().unwrap();
+    assert!(store.undo.lock().unwrap().is_empty());
+    assert_eq!(store.redo.lock().unwrap().len(), 1);
+    assert!(project.undo().is_err());
 }

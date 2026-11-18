@@ -43,7 +43,7 @@ fn created_by_tracks_modified_faces_through_transform_and_cut() {
             .count(),
         1
     );
-    let before = std::fs::read(directory.path().join("faber.json")).unwrap();
+    let before = faber_wiring::project_fingerprint(directory.path()).unwrap();
     for creator in ["missing", "tool", "cut", "base"] {
         let mut invalid = recipe();
         invalid["geometry"]["features"][4]["geometry"]["face"]["created_by"] = json!(creator);
@@ -56,7 +56,7 @@ fn created_by_tracks_modified_faces_through_transform_and_cut() {
                 .is_err()
         );
         assert_eq!(
-            std::fs::read(directory.path().join("faber.json")).unwrap(),
+            faber_wiring::project_fingerprint(directory.path()).unwrap(),
             before
         );
     }

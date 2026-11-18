@@ -1,7 +1,7 @@
 //! Moves and aligns placed parts. The math is pure. Project methods save one change.
 
 use crate::{Project, valid_id};
-use faber_model::{Part, Placement, Scalar};
+use faber_model::{Geometry, Part, Placement, Scalar};
 use faber_ports::Result;
 use glam::{DMat3, DVec3};
 use schemars::JsonSchema;
@@ -277,6 +277,18 @@ pub fn plain(id: &str, placement: &Placement<Scalar>) -> Result<Placement> {
     })
 }
 
+/// Refuses a copy of a purchased part. A purchased part is a real model, so a copy must not change it.
+pub fn refuse_purchased_copy(id: &str, part: &Part<Scalar>) -> Result<()> {
+    match &part.geometry {
+        Geometry::Imported {
+            purchased: Some(_), ..
+        } => Err(format!(
+            "Part {id} is a purchased part. A copy is not permitted."
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn vector(values: [f64; 3]) -> Result<DVec3> {
     if values.iter().all(|value| value.is_finite()) {
         Ok(DVec3::from(values))
@@ -294,7 +306,7 @@ fn make(translation: DVec3, euler_deg: [f64; 3]) -> Placement {
 }
 
 /// Rounds to nine decimal places. The `+ 0.0` turns negative zero into zero.
-fn tidy(value: f64) -> f64 {
+pub fn tidy(value: f64) -> f64 {
     (value * DECIMALS).round() / DECIMALS + 0.0
 }
 
@@ -381,6 +393,7 @@ impl Project {
         match copy_as {
             None => self.put_parts(BTreeMap::from([(id.to_string(), part)])),
             Some(new_id) => {
+                refuse_purchased_copy(id, &part)?;
                 if !valid_id(new_id) {
                     return Err(format!("Invalid part id: {new_id}"));
                 }
@@ -560,5 +573,12 @@ mod tests {
             align_shift(moving, origin, Axis::Z, AlignMode::Max, 0.),
             -15.
         );
+    }
+
+    #[test]
+    fn tidy_removes_float_noise_and_negative_zero() {
+        assert_eq!(tidy(90.00000000000001), 90.);
+        assert!(tidy(-1e-17).is_sign_positive());
+        assert_eq!(tidy(12.5), 12.5);
     }
 }

@@ -46,7 +46,7 @@ opening a window.
 To connect an MCP client, set its command to the full path of `faber.exe`
 and its arguments to `["mcp"]`. There is no required viewer or daemon.
 
-Run `faber schema` to print the current project JSON schema. The
+Run `faber migrate <dir>` to split an old one-file project into the modular layout. Run `faber schema` to print the current project JSON schema. The
 [modelling guide](docs/modelling-guide.md) describes batching, preview, source
 queries and units. The CLI guide and MCP guide return this same text.
 
