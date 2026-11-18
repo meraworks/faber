@@ -22,11 +22,23 @@ use std::time::SystemTime;
 const MANIFEST_SCHEMA: u32 = 2;
 const FILE_SCHEMA: u32 = 1;
 const ONE_FILE_SCHEMA: u32 = 1;
-const OPTIONAL_FILES: [&str; 3] = ["placement.json", "assembly.json", "analysis.json"];
+const OPTIONAL_FILES: [&str; 4] = [
+    "placement.json",
+    "assembly.json",
+    "analysis.json",
+    "manufacture.json",
+];
 
 #[derive(Deserialize)]
 struct Probe {
     schema: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManufactureFile {
+    schema: u32,
+    printer: faber_model::Printer,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -149,7 +161,15 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         }
         None => Default::default(),
     };
+    let printer = match read_optional::<ManufactureFile>(root, "manufacture.json")? {
+        Some(file) => {
+            check_schema(&file.schema, "manufacture.json")?;
+            Some(file.printer)
+        }
+        None => None,
+    };
     Ok(ProjectData {
+        printer,
         materials: manifest.materials,
         studies,
         schema: ONE_FILE_SCHEMA,
@@ -166,6 +186,9 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
 /// Writes the split layout. Writes only files whose bytes change. Removes
 /// part files of removed parts. Writes faber.json last.
 pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
+    if let Some(printer) = &data.printer {
+        printer.validate()?;
+    }
     if let Some(id) = data.parts.keys().find(|id| !faber_ports::valid_id(id)) {
         return Err(format!("Invalid part name for a file: {id}"));
     }
@@ -210,6 +233,15 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
             studies: data.studies.clone(),
         };
         put(root, "analysis.json", &file, &mut changed)?;
+    }
+    if let Some(printer) = &data.printer {
+        let file = ManufactureFile {
+            schema: FILE_SCHEMA,
+            printer: printer.clone(),
+        };
+        put(root, "manufacture.json", &file, &mut changed)?;
+    } else {
+        remove(root.join("manufacture.json"), &mut changed)?;
     }
     // Last, after the placement. A part file without a placement entry reads with
     // the identity placement, so a stop before this point still reads.

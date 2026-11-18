@@ -33,6 +33,44 @@ fn fixture() -> ProjectData {
     serde_json::from_str(ONE_FILE).unwrap()
 }
 
+#[test]
+fn manufacture_file_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut data = fixture();
+    layout::write(dir.path(), &data).unwrap();
+    let before = layout::fingerprint(dir.path()).unwrap();
+    let printer = serde_json::from_value(serde_json::json!({
+        "name": "Bench printer", "bed_mm": [200,180,170],
+        "nozzle_mm": 0.6, "layer_mm": 0.2
+    }))
+    .unwrap();
+    data.printer = Some(printer);
+    layout::write(dir.path(), &data).unwrap();
+    let path = dir.path().join("manufacture.json");
+    let file: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(file["schema"], 1);
+    assert_eq!(file["printer"]["min_wall_mm"], 1.2);
+    assert_eq!(layout::read(dir.path()).unwrap(), data);
+    assert_ne!(layout::fingerprint(dir.path()).unwrap(), before);
+    fs::write(&path, r#"{"schema":2,"printer":null}"#).unwrap();
+    assert!(layout::read(dir.path()).is_err());
+    data.printer = None;
+    layout::write(dir.path(), &data).unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+fn project_without_manufacture_file_reads_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    layout::write(dir.path(), &fixture()).unwrap();
+    let printer = layout::read(dir.path())
+        .unwrap()
+        .printer
+        .unwrap_or_default();
+    assert_eq!(printer.bed_mm, [220., 220., 250.]);
+    assert_eq!(printer.clearance_mm.slide, 0.25);
+}
+
 fn relative(root: &Path, paths: &[PathBuf]) -> Vec<String> {
     let mut names: Vec<String> = paths
         .iter()

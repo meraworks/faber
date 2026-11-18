@@ -194,6 +194,7 @@ impl ProjectStore for StepStore {
 fn undo_across_a_revision_only_step_moves_the_history() {
     // Histories written before the no-op guard can hold a step that differs only by revision.
     let current = ProjectData {
+        printer: None,
         studies: Default::default(),
         materials: Default::default(),
         schema: 1,

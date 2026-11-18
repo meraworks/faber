@@ -1,6 +1,8 @@
 //! Project recipes. Lengths are in millimetres and angles are in degrees.
 
 mod material;
+mod printer;
+pub use printer::{Clearance, Printer};
 pub mod motion;
 pub mod study;
 pub use material::{MaterialClass, MaterialData};
@@ -12,6 +14,9 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Edit {
+    SetPrinter {
+        printer: Printer,
+    },
     SetStudy {
         id: String,
         study: study::Study<Scalar>,
@@ -1048,6 +1053,8 @@ pub struct Part<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub printer: Option<Printer>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub studies: BTreeMap<String, study::Study<Scalar>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

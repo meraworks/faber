@@ -281,6 +281,7 @@ fn empty_project(root: &Path) -> ProjectData {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled".into());
     ProjectData {
+        printer: None,
         studies: Default::default(),
         materials: Default::default(),
         schema: 1,

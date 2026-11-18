@@ -125,6 +125,10 @@ fn history<'a>(
 
 fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
     match edit {
+        Edit::SetPrinter { printer } => {
+            printer.validate()?;
+            data.printer = Some(printer);
+        }
         Edit::SetParam { name, expression } => {
             data.params.insert(name, expression);
         }
@@ -342,6 +346,10 @@ impl Project {
     pub fn batch_strict(&mut self, operations: Vec<Edit>) -> Result<()> {
         self.batch_operations(to_operations(operations), true)
     }
+    pub fn set_printer(&mut self, printer: faber_model::Printer) -> Result<()> {
+        self.batch(vec![Edit::SetPrinter { printer }])
+    }
+
     pub fn set_study(
         &mut self,
         id: String,
