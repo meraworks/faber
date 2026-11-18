@@ -316,3 +316,25 @@ fn edit_schema_exposes_the_material_assignment() {
     }
     assert!(found, "The edit schema omits set_part_info.");
 }
+
+#[test]
+fn press_pull_uses_the_picked_face_and_checks_the_revision() {
+    let mut session = Session::start();
+    let dir = tempfile::tempdir().unwrap();
+    open_project(&mut session, dir.path());
+    session.ok("put_part",json!({"id":"cube","part":{"name":"Cube","colour":[75,110,190],"geometry":{"op":"box","size":[20,20,20]}}}));
+    let answer = session.ok(
+        "press_pull",
+        json!({"id":"cube","face":1,"distance_mm":3.0,"expected_revision":1}),
+    );
+    assert_eq!(answer["revision"], 2);
+    assert!((answer["volume_mm3"].as_f64().unwrap() - 9200.).abs() < 1e-6);
+    assert!(
+        session
+            .refused(
+                "press_pull",
+                json!({"id":"cube","face":1,"distance_mm":3,"expected_revision":1})
+            )
+            .contains("revision")
+    );
+}

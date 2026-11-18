@@ -279,6 +279,17 @@ pub struct SetMaterial {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct PressPull {
+    id: String,
+    face: u32,
+    distance_mm: f64,
+    expected_revision: u64,
+    #[serde(default)]
+    strict: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveMaterial {
     id: String,
     expected_revision: Option<u64>,
@@ -1094,6 +1105,26 @@ impl Faber {
             check_revision(p, args.expected_revision)?;
             p.set_material(args.id.clone(), args.material)?;
             Ok(json!({"id":args.id,"revision":p.data.revision}))
+        })
+    }
+
+    #[tool(
+        description = "Move one planar face along its normal. Use the face index from topology at the specified revision."
+    )]
+    fn press_pull(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<PressPull>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, Some(args.expected_revision))?;
+            let face = faber_wiring::press_pull::PressFace::new(p, &args.id, args.face)?;
+            faber_wiring::press_pull::apply(p, &face, args.distance_mm, args.strict)?;
+            let body = p
+                .bodies
+                .iter()
+                .find(|b| b.id == args.id)
+                .ok_or("Part has no solid.")?;
+            Ok(json!({"id":args.id,"revision":p.data.revision,"volume_mm3":body.volume}))
         })
     }
 

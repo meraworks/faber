@@ -1,6 +1,7 @@
 //! Adapter composition.
 
 pub mod archive;
+pub use faber_core::press_pull::{self, preview_feature};
 pub mod parameters;
 
 pub mod motion_check;
@@ -368,6 +369,32 @@ fn open_with_store(
     Ok((project, store))
 }
 
+/// Opens an editable design snapshot for a preview without a file lock.
+pub fn preview_project(path: &Path, data: ProjectData) -> Result<Project> {
+    struct Snapshot(ProjectData);
+    impl ProjectStore for Snapshot {
+        fn load(&self) -> Result<ProjectData> {
+            Ok(self.0.clone())
+        }
+        fn save(&self, _: Option<u64>, _: &ProjectData) -> Result<()> {
+            Err("A preview cannot save a project.".into())
+        }
+    }
+    let source = design_source();
+    let mut project = Project::open_with_cache(
+        Arc::new(Snapshot(data)),
+        Arc::new(OcctKernel),
+        Some(Arc::new(faber_files::FileAssets::new(path))),
+        None,
+    )?;
+    project.set_source(
+        source
+            .has_source(path)
+            .then(|| source.file_name().to_owned()),
+    );
+    Ok(project)
+}
+
 pub fn read(path: &Path) -> Result<(ProjectData, Vec<Body>)> {
     let data = faber_files::read(path)?;
     let bodies = faber_core::build_with_cache(
@@ -610,4 +637,11 @@ pub fn render_view(
         return Err("Image size must be between 64 and 4096 pixels".into());
     }
     faber_render::save_view(bodies, path, section, width, height, view)
+}
+
+pub fn pick_topology(
+    body: &Body,
+    data: &ProjectData,
+) -> Result<faber_core::pick_selector::PickTopology> {
+    faber_core::pick_selector::PickTopology::read(&OcctKernel, body, data)
 }

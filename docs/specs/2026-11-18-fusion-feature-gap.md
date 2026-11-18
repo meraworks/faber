@@ -7,7 +7,9 @@ files. Fusion was not run.
 ## Viewer controls
 
 Chunk 17 adds canvas selection, a view cube, command search and keyboard
-control of edit windows. Face and edge selection are in chunk 18.
+control of edit windows. Chunk 18 adds face and edge selection, feature picks,
+a marking menu and press pull for one planar face. Press pull records the
+change in the part history. An arbitrary offset of curved faces is still open.
 
 ## Materials and shared geometry
 
@@ -84,7 +86,7 @@ Status: **have** = Faber has it, **part** = a reduced form, **gap** = absent.
 | --- | --- | --- |
 | Move/Copy (free, XYZ, rotate, point to point) | numeric placement form; `Transform` feature | part |
 | Align | none | gap |
-| Press Pull, Offset Faces | offset (whole solid) | part |
+| Press Pull, Offset Faces | planar press pull, offset of a whole solid | part |
 | Fillet (constant) | fillet | have |
 | Fillet (variable, chord, rule, full round) | none | gap |
 | Chamfer (equal) | chamfer | have |

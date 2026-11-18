@@ -29,6 +29,7 @@ pub fn append_feature(
         .get(part_id)
         .ok_or("Part is missing")?
         .clone();
+    faber_core::pick_selector::editable_part(part_id, &part)?;
     let (mut features, output) = match part.geometry {
         Geometry::History { features, output } => (features, output),
         geometry => (

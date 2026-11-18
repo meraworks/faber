@@ -1,8 +1,10 @@
 //! Shared GPU renderer for the viewer and image files.
 
+mod face_marks;
 use bytemuck::{Pod, Zeroable};
 use faber_ports::{Body, Mesh, Result};
 use faber_scene::{Camera, Section, section};
+use face_marks::FaceMarks;
 use glam::Vec3;
 use std::{collections::BTreeSet, path::Path};
 use wgpu::util::DeviceExt;
@@ -58,6 +60,7 @@ pub struct Target {
 }
 
 pub struct DrawList {
+    marks: FaceMarks,
     buffer: wgpu::Buffer,
     count: u32,
     cap_meshes: std::collections::BTreeMap<String, Mesh>,
@@ -72,6 +75,7 @@ impl DrawList {
         posed: bool,
     ) {
         pass.set_vertex_buffer(0, self.buffer.slice(..));
+        pass.set_vertex_buffer(2, self.marks.buffer.slice(..));
         if !posed && hidden.is_empty() {
             pass.draw(0..self.count, 0..1);
             return;
@@ -211,6 +215,11 @@ impl Gpu {
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &transforms,
                     }),
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: 4,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![8=>Uint32],
+                    }),
                 ],
             },
             fragment: Some(wgpu::FragmentState {
@@ -344,6 +353,7 @@ impl Gpu {
         paint: &std::collections::BTreeMap<String, Vec<[u8; 3]>>,
     ) -> Result<DrawList> {
         let mut vertices = Vec::new();
+        let mut face_ranges = Default::default();
         let mut ranges = std::collections::BTreeMap::new();
         let mut floor = 0f32;
         let mut extent = 300f32;
@@ -371,6 +381,7 @@ impl Gpu {
                 append(&mut vertices, &cut.surface, colour, 0.);
                 append(&mut vertices, &cut.cap, colour, 2.);
             } else {
+                FaceMarks::index(&mut face_ranges, &body.id, start, &body.face_of_triangle);
                 let paint = paint.get(&body.id).map(Vec::as_slice);
                 append_painted(&mut vertices, &body.mesh, colour, 0., paint);
             }
@@ -395,6 +406,7 @@ impl Gpu {
                 usage: wgpu::BufferUsages::VERTEX,
             });
         Ok(DrawList {
+            marks: FaceMarks::new(&self.device, vertices.len(), face_ranges),
             cap_meshes: Default::default(),
             buffer,
             ranges,
@@ -456,6 +468,7 @@ impl Gpu {
             usage: wgpu::BufferUsages::VERTEX,
         });
         Ok(Some(DrawList {
+            marks: FaceMarks::new(device, vertices.len(), Default::default()),
             cap_meshes,
             buffer,
             count: vertices.len() as u32,

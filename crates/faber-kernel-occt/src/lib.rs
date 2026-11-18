@@ -162,6 +162,22 @@ struct RawEdge {
 }
 
 struct OwnedShape(NonNull<c_void>);
+
+#[repr(C)]
+#[derive(Default)]
+struct RawEdgeLines {
+    owner: *mut c_void,
+    points: *const [f64; 3],
+    point_count: usize,
+    ends: *const u32,
+    edge_count: usize,
+}
+
+impl Drop for RawEdgeLines {
+    fn drop(&mut self) {
+        unsafe { faber_free_edge_lines(self.owner) };
+    }
+}
 // Every access and deletion holds GATE.
 unsafe impl Send for OwnedShape {}
 unsafe impl Sync for OwnedShape {}
@@ -534,6 +550,14 @@ unsafe extern "C" {
         normals: *mut *const f64,
     );
     fn faber_mesh_face_indices(input: *const c_void) -> *const u32;
+    fn faber_edge_lines(
+        shape: *const c_void,
+        tolerance: f64,
+        result: *mut RawEdgeLines,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
+    fn faber_free_edge_lines(lines: *mut c_void);
     fn faber_read(
         path: *const c_char,
         result: *mut *mut c_void,
@@ -1967,6 +1991,43 @@ impl Kernel for OcctKernel {
     }
     fn tessellate(&self, shape: &Shape, tolerance: f64) -> Result<Mesh> {
         Ok(self.tessellate_faces(shape, tolerance)?.mesh)
+    }
+    fn tessellate_edges(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::EdgeLines> {
+        positive(tolerance)?;
+        let shape = pointer(shape)?;
+        let _guard = gate();
+        let mut raw = RawEdgeLines::default();
+        let mut buffer = [0; 1024];
+        error(
+            unsafe {
+                faber_edge_lines(
+                    shape,
+                    tolerance,
+                    &mut raw,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                )
+            },
+            &buffer,
+        )?;
+        let mut lines = faber_ports::EdgeLines::default();
+        if raw.edge_count > 0 {
+            let ends = unsafe { std::slice::from_raw_parts(raw.ends, raw.edge_count) };
+            let mut start = 0;
+            lines.ranges = ends
+                .iter()
+                .map(|&end| {
+                    let range = start..end;
+                    start = end;
+                    range
+                })
+                .collect();
+        }
+        if raw.point_count > 0 {
+            lines.points =
+                unsafe { std::slice::from_raw_parts(raw.points, raw.point_count) }.to_vec();
+        }
+        Ok(lines)
     }
     fn tessellate_faces(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::FaceMesh> {
         positive(tolerance)?;

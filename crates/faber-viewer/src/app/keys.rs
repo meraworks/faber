@@ -25,6 +25,7 @@ pub(crate) enum Command {
     Project(bool),
     ExactPlacement,
     PointToPoint,
+    PressPull,
     Align,
     EditFeatures,
     CopyPlacement,
@@ -65,6 +66,7 @@ pub(crate) fn command_for(
             _ if window_open => None,
             (Key::Delete, false, false) => Some(Command::Delete),
             (Key::F, false, false) => Some(Command::Fit),
+            (Key::Q, false, false) => Some(Command::PressPull),
             (Key::M, false, false) => Some(Command::Move),
             (Key::S, false, false) => Some(Command::Search),
             (Key::S, false, true) => Some(Command::ToggleSection),
@@ -80,6 +82,12 @@ impl Shell {
         let text_focus = ctx.text_edit_focused();
         let command = ctx.input(|i| command_for(i, text_focus, self.window.open.is_some()));
         let Some(command) = command else { return };
+        if self.marking.anchor.is_some() {
+            if matches!(command, Command::Escape) {
+                self.marking.anchor = None;
+            }
+            return;
+        }
         if egui::Popup::is_any_open(ctx) {
             if matches!(command, Command::Escape) {
                 egui::Popup::close_all(ctx);
@@ -131,6 +139,12 @@ impl Shell {
                             .is_none_or(|target| self.data.parts.contains_key(target))
                 })
             }
+            PressPull => {
+                idle && self.project_loaded
+                    && self.window.open.is_none()
+                    && self.press.is_none()
+                    && matches!(self.picks.last(), Some(Pick::Face { .. }))
+            }
             Feature(_) => idle && selection,
             ShowAll => !self.hidden.is_empty(),
             Parameters => idle,
@@ -142,6 +156,24 @@ impl Shell {
         use Command::*;
         if !self.command_enabled(command) {
             return;
+        }
+        if let Some(tool) = &self.press {
+            if tool.submitting {
+                return;
+            }
+            match command {
+                Escape => self.close_press(),
+                Apply => self.apply_press(ctx),
+                Fit | Top | Front | Iso => (),
+                _ => return,
+            }
+            if matches!(command, Escape | Apply) {
+                return;
+            }
+        }
+        if !matches!(command, Escape | Apply | Search) {
+            self.marking.last = Some(command);
+            self.marking.anchor = None;
         }
         let selected = self.selected.clone();
         match command {
@@ -188,6 +220,7 @@ impl Shell {
                     }
                 }
             }
+            PressPull => self.start_press(ctx),
             Search => {
                 self.search.open = true;
                 self.search.query.clear();

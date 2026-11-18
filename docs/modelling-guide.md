@@ -824,7 +824,8 @@ a part for its tools.
 
 | Action | Control |
 | --- | --- |
-| Pan | Middle drag or right drag |
+| Pan | Middle drag |
+| Choose a marking menu command | Right drag towards the command, then release |
 | Orbit | Shift + middle drag or Alt + left drag |
 | Zoom at the pointer | Wheel |
 | Fit the model | F or double-click the middle button |
@@ -870,3 +871,28 @@ in `.svg` or `.dxf`. Put lines, circles and arcs on named layers. Supply a
 sheet size in millimetres. Coordinates start at the lower left. The SVG writer
 converts the vertical coordinate to the page direction. A vector document
 contains sheet geometry and text. Solid modelling history stays in the project.
+
+
+## Picking and press pull
+
+Open `examples/press-pull-block`. Set the selection filter to Face. Pick the
+top face and press Q. Drag the arrow out of the block, or enter 10 mm in the
+distance field. Release the arrow or press Enter to save the change. The block
+is now 30 mm high. One Undo restores the original height.
+
+A negative distance cuts into the part. Escape cancels a drag. The preview
+needs a planar face on an editable solid. An imported mesh without face data
+supports body selection only.
+
+Use the Edge filter to pick an edge for a fillet or chamfer. The inspector
+identifies the selected item. Hold Ctrl or Shift to select more items.
+The saved feature uses a geometric selector so that it can find the same set
+after the part changes size.
+
+Right-click in the view to show the marking menu. Click a command, or hold the
+right button, drag towards the command and release. The top command repeats
+the last operation. Use the middle button to pan.
+
+For MCP, use `topology` to find a planar face and `press_pull` to move it.
+Supply the revision at which you read the face index and a signed distance
+in millimetres. The reply gives the new revision and part volume.

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "name": "Practice block",
+  "colour": [
+    79,
+    154,
+    167
+  ],
+  "geometry": {
+    "op": "history",
+    "output": "base",
+    "features": [
+      {
+        "id": "base",
+        "geometry": {
+          "op": "box",
+          "size": [
+            20,
+            20,
+            "height"
+          ]
+        }
+      }
+    ]
+  }
+}

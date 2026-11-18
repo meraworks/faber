@@ -47,6 +47,7 @@ fn tube_body() -> Body {
         volume: 20. * 40. * 60. - 20. * 20. * 30.,
         bounds: [[-10., -20., -30.], [10., 20., 30.]],
         face_of_triangle: Vec::new(),
+        edge_lines: Default::default(),
         shape: None,
     }
 }

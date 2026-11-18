@@ -1417,3 +1417,20 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
 - In the release build, 100 000 rays on a 100 000-triangle mesh took 151 ms. There were 58 846 hits. The time excludes tree construction.
 - Workspace Clippy passed with warnings denied. All 660 tests passed. The release throughput test ran separately.
 - The release build and silent install passed. The installed CLI read the material sample project.
+
+
+## Fusion parity 18: Direct manipulation
+
+- The viewer selects bodies, solid faces and edges. Edge polylines use the
+  existing mesh cache and part placement. A geometric selector stores the
+  result of a pick in the history.
+- The marking menu accepts a click or a drag. The list below it keeps the
+  actions for the selected part. The middle mouse button pans.
+- A press pull previews a planar change on a worker. Escape discards it.
+  Release or Enter saves one undo step. The MCP tool requires the revision
+  that supplied the face index.
+- The example is `examples/press-pull-block`. Its 20 mm cube has a volume of
+  8000 mm³. A 10 mm outward change gives 12 000 mm³ and a 5 mm inward
+  change gives 6000 mm³.
+- All 696 workspace tests passed. Workspace Clippy passed with warnings denied.
+- The release build and silent install passed. The installed CLI read the practice block.

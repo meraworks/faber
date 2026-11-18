@@ -6,6 +6,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod edge_pick;
+pub use edge_pick::{EdgeHit, pick_edge, pick_edge_hit, pick_edge_hit_where};
+
 mod rectangle;
 pub use rectangle::{RectMode, mesh_in_rect};
 
@@ -430,13 +433,10 @@ impl Camera {
         ) * glam::camera::rh::view::look_at_mat4(self.eye(), self.target, self.reference_up())
     }
     pub fn ray(&self, aspect: f32, point: [f32; 2]) -> (DVec3, DVec3) {
-        let inverse = self.matrix(aspect).inverse();
-        let a = inverse
-            .project_point3(Vec3::new(point[0], point[1], 0.))
-            .as_dvec3();
-        let b = inverse
-            .project_point3(Vec3::new(point[0], point[1], 1.))
-            .as_dvec3();
+        let inverse = self.matrix(aspect).as_dmat4().inverse();
+        let [x, y] = point.map(f64::from);
+        let a = inverse.project_point3(DVec3::new(x, y, 0.));
+        let b = inverse.project_point3(DVec3::new(x, y, 1.));
         (a, (b - a).normalize())
     }
 }
@@ -473,13 +473,24 @@ pub fn pick_visible(
     direction: DVec3,
     plane: Option<Section>,
 ) -> Option<f64> {
+    pick_triangle(mesh, origin, direction, plane).map(|(distance, _)| distance)
+}
+
+/// The nearest visible triangle and its distance along the ray.
+pub fn pick_triangle(
+    mesh: &Mesh,
+    origin: DVec3,
+    direction: DVec3,
+    plane: Option<Section>,
+) -> Option<(f64, usize)> {
     let clip = plane.map(|p| {
         let sign = if p.reverse { -1. } else { 1. };
         let normal = DVec3::from(p.normal).normalize() * sign;
         (normal.dot(origin) - sign * p.offset, normal.dot(direction))
     });
     let mut nearest = f64::INFINITY;
-    for t in &mesh.triangles {
+    let mut index = 0;
+    for (i, t) in mesh.triangles.iter().enumerate() {
         let [a, b, c] = t.map(|i| DVec3::from(mesh.vertices[i as usize]));
         let (e1, e2) = (b - a, c - a);
         let h = direction.cross(e2);
@@ -496,12 +507,14 @@ pub fn pick_visible(
             && v >= 0.
             && u + v <= 1.
             && distance > 0.
+            && distance < nearest
             && clip.is_none_or(|(base, slope)| base + slope * distance <= 1e-8)
         {
-            nearest = nearest.min(distance);
+            nearest = distance;
+            index = i;
         }
     }
-    nearest.is_finite().then_some(nearest)
+    nearest.is_finite().then_some((nearest, index))
 }
 
 #[cfg(test)]

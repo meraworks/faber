@@ -2,7 +2,7 @@
 
 use crate::placement::rotation_matrix;
 use faber_model::{Geometry, Placement};
-use faber_ports::{Body, FaceMesh, Kernel, Mesh, Result, Shape};
+use faber_ports::{Body, EdgeLines, FaceMesh, Kernel, Mesh, Result, Shape};
 use glam::{DMat3, DVec3};
 use std::time::Instant;
 
@@ -13,6 +13,7 @@ pub(crate) struct LocalBody {
     pub shape: Option<Shape>,
     pub mesh: Mesh,
     pub face_of_triangle: Vec<u32>,
+    pub edge_lines: EdgeLines,
     pub volume: f64,
     /// Unplaced bounds: exact for a shape, from the mesh otherwise.
     pub bounds: [[f64; 3]; 2],
@@ -32,6 +33,7 @@ pub fn face_triangles(body: &Body, face: u32) -> Vec<[[f64; 3]; 3]> {
 /// The placed mesh, bounds and shape of one part.
 pub(crate) struct PlacedParts {
     pub mesh: Mesh,
+    pub edge_lines: EdgeLines,
     pub bounds: [[f64; 3]; 2],
     pub shape: Option<Shape>,
 }
@@ -110,6 +112,10 @@ pub(crate) fn place_timed(
     timing.bounds = elapsed(started);
     let started = Instant::now();
     let mut mesh = local.mesh.clone();
+    let mut edge_lines = local.edge_lines.clone();
+    for p in &mut edge_lines.points {
+        *p = (rotation * DVec3::from(*p) + translation).to_array();
+    }
     for p in &mut mesh.vertices {
         *p = (rotation * DVec3::from(*p) + translation).to_array();
     }
@@ -127,6 +133,7 @@ pub(crate) fn place_timed(
     timing.mesh = elapsed(started);
     Ok(PlacedParts {
         mesh,
+        edge_lines,
         bounds: exact_bounds.unwrap_or([lo.to_array(), hi.to_array()]),
         shape,
     })
@@ -166,29 +173,24 @@ pub(crate) fn elapsed(started: Instant) -> f64 {
 }
 
 /// Stores a mesh as little-endian numbers. Each list starts with its count.
-pub(crate) fn encode_mesh(faces: &FaceMesh) -> Vec<u8> {
+fn write_mesh(out: &mut Vec<u8>, faces: &FaceMesh) {
     let mesh = &faces.mesh;
-    let mut out = Vec::new();
-    push_count(&mut out, mesh.vertices.len());
+    push_count(out, mesh.vertices.len());
     for vertex in &mesh.vertices {
-        push_all(&mut out, vertex.iter().map(|v| v.to_le_bytes()));
+        push_all(out, vertex.iter().map(|v| v.to_le_bytes()));
     }
-    push_count(&mut out, mesh.triangles.len());
+    push_count(out, mesh.triangles.len());
     for triangle in &mesh.triangles {
-        push_all(&mut out, triangle.iter().map(|i| i.to_le_bytes()));
+        push_all(out, triangle.iter().map(|i| i.to_le_bytes()));
     }
-    push_count(&mut out, mesh.normals.len());
+    push_count(out, mesh.normals.len());
     for normal in &mesh.normals {
-        push_all(&mut out, normal.iter().map(|v| v.to_le_bytes()));
+        push_all(out, normal.iter().map(|v| v.to_le_bytes()));
     }
-    push_all(
-        &mut out,
-        faces.face_of_triangle.iter().map(|i| i.to_le_bytes()),
-    );
-    out
+    push_all(out, faces.face_of_triangle.iter().map(|i| i.to_le_bytes()));
 }
 
-/// Reads a mesh from `encode_mesh`. Any malformed byte returns None.
+/// Reads a mesh from `write_mesh`. Any malformed byte returns None.
 pub(crate) fn decode_mesh(bytes: &[u8]) -> Option<FaceMesh> {
     let mut reader = Reader(bytes);
     let vertices = (0..reader.count()?)
@@ -224,6 +226,61 @@ pub(crate) fn decode_mesh(bytes: &[u8]) -> Option<FaceMesh> {
     })
 }
 
+pub(crate) fn encode_body_mesh(mesh: &FaceMesh, lines: &EdgeLines) -> Vec<u8> {
+    let mut out = Vec::new();
+    push_count(&mut out, lines.points.len());
+    for point in &lines.points {
+        push_all(&mut out, point.iter().map(|v| v.to_le_bytes()));
+    }
+    push_count(&mut out, lines.ranges.len());
+    push_all(
+        &mut out,
+        lines.ranges.iter().map(|range| range.end.to_le_bytes()),
+    );
+    write_mesh(&mut out, mesh);
+    out
+}
+
+pub(crate) fn decode_body_mesh(bytes: &[u8]) -> Option<(FaceMesh, EdgeLines)> {
+    let mut reader = Reader(bytes);
+    let point_count = reader.count()?;
+    if point_count > reader.0.len() / 24 {
+        return None;
+    }
+    let points = (0..point_count)
+        .map(|_| Some([reader.f64()?, reader.f64()?, reader.f64()?]))
+        .collect::<Option<Vec<_>>>()?;
+    let count = reader.count()?;
+    if count > reader.0.len() / 4 {
+        return None;
+    }
+    let mut start = 0;
+    let ranges = (0..count)
+        .map(|_| {
+            let end = reader.u32()?;
+            let range = start..end;
+            start = end;
+            Some(range)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((decode_mesh(reader.0)?, EdgeLines { points, ranges }))
+}
+
+pub(crate) fn valid_edge_lines(lines: &EdgeLines, count: u32) -> bool {
+    if lines.ranges.len() != count as usize || !lines.points.iter().flatten().all(|v| v.is_finite())
+    {
+        return false;
+    }
+    let mut start = 0;
+    for range in &lines.ranges {
+        if range.start != start || range.end < start || range.end - start == 1 {
+            return false;
+        }
+        start = range.end;
+    }
+    start as usize == lines.points.len()
+}
+
 fn push_count(out: &mut Vec<u8>, count: usize) {
     out.extend_from_slice(&(count as u64).to_le_bytes());
 }
@@ -255,7 +312,13 @@ impl Reader<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_mesh, encode_mesh};
+    use super::{decode_mesh, write_mesh};
+
+    fn encode_mesh(mesh: &faber_ports::FaceMesh) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_mesh(&mut out, mesh);
+        out
+    }
     use faber_ports::{FaceMesh, Mesh};
 
     fn sample() -> FaceMesh {
@@ -277,6 +340,24 @@ mod tests {
         assert_eq!(decoded.mesh.triangles, mesh.mesh.triangles);
         assert_eq!(decoded.mesh.normals, mesh.mesh.normals);
         assert_eq!(decoded.face_of_triangle, mesh.face_of_triangle);
+    }
+
+    #[test]
+    fn edge_cache_keeps_empty_ranges_and_refuses_invalid_indices() {
+        use super::{decode_body_mesh, encode_body_mesh, valid_edge_lines};
+        let mut lines = faber_ports::EdgeLines {
+            points: vec![[0., 0., 0.], [4., 3., 2.]],
+            ranges: vec![0..0, 0..2],
+        };
+        let bytes = encode_body_mesh(&sample(), &lines);
+        let (_, decoded) = decode_body_mesh(&bytes).unwrap();
+        assert_eq!(decoded, lines);
+        assert!(valid_edge_lines(&decoded, 2));
+        assert!(!valid_edge_lines(&decoded, 3));
+        for invalid in [vec![0..1, 1..2], vec![0..0, 1..2], vec![0..0, 0..3]] {
+            lines.ranges = invalid;
+            assert!(!valid_edge_lines(&lines, 2));
+        }
     }
 
     #[test]

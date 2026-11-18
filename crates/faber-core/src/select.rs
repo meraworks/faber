@@ -31,7 +31,19 @@ pub(crate) fn plane(
         .into_iter()
         .find(|face| face.index == selected[0])
         .ok_or("Selected face is missing")?;
-    let normal = DVec3::from(face.normal.ok_or("A reference plane needs a planar face")?);
+    plane_axes(
+        face.centre,
+        face.normal.ok_or("A reference plane needs a planar face")?,
+        offset,
+    )
+}
+
+pub(crate) fn plane_axes(
+    centre: [f64; 3],
+    normal: [f64; 3],
+    offset: f64,
+) -> Result<faber_model::Placement> {
+    let normal = DVec3::from(normal);
     if !normal.is_finite() || normal.length() < 1e-10 {
         return Err("Selected face has an invalid normal".into());
     }
@@ -45,7 +57,7 @@ pub(crate) fn plane(
     let y = z.cross(x);
     let rotation = glam::DQuat::from_mat3(&glam::DMat3::from_cols(x, y, z));
     let (rz, ry, rx) = rotation.to_euler(glam::EulerRot::ZYX);
-    let origin = DVec3::from(face.centre) + z * offset;
+    let origin = DVec3::from(centre) + z * offset;
     if !origin.is_finite() || origin.abs().max_element() > 1e6 {
         return Err("Reference plane origin is outside the supported range".into());
     }
@@ -229,59 +241,71 @@ fn check_face_selector(shape: &Shape, selector: &FaceSelector) -> Result<()> {
     Ok(())
 }
 
-fn face_items(shape: &Shape, faces: &[FaceInfo], selector: &FaceSelector) -> Result<Vec<Item>> {
+pub(super) fn face_failures(
+    face: &FaceInfo,
+    selector: &FaceSelector,
+    origins: Option<&BTreeSet<String>>,
+) -> Vec<&'static str> {
     let normal = selector.normal.map(DVec3::from);
     let tolerance = selector.tolerance;
+    let mut failed = Vec::new();
+    if let Some(creator) = &selector.created_by
+        && !origins.is_some_and(|origins| origins.contains(creator))
+    {
+        failed.push("created_by");
+    }
+    if let Some(n) = normal
+        && !face
+            .normal
+            .is_some_and(|v| DVec3::from(v).dot(n.normalize()) >= 1. - 1e-8)
+    {
+        failed.push("normal");
+    }
+    if let Some(p) = selector.near_centre
+        && DVec3::from(p).distance(DVec3::from(face.centre)) > tolerance
+    {
+        failed.push("near_centre");
+    }
+    if let Some(bounds) = &selector.in_box
+        && !inside(face.centre, bounds, tolerance)
+    {
+        failed.push("in_box");
+    }
+    if let Some(radius) = selector.cylinder_radius
+        && !face
+            .cylinder
+            .as_ref()
+            .is_some_and(|c| (c.radius - radius).abs() <= tolerance)
+    {
+        failed.push("cylinder_radius");
+    }
+    if let Some(internal) = selector.internal
+        && !face
+            .cylinder
+            .as_ref()
+            .is_some_and(|c| c.internal == internal)
+    {
+        failed.push("internal");
+    }
+    if let Some(area) = selector.area
+        && (face.area - area).abs() > tolerance
+    {
+        failed.push("area");
+    }
+    failed
+}
+
+fn face_items(shape: &Shape, faces: &[FaceInfo], selector: &FaceSelector) -> Result<Vec<Item>> {
     Ok(faces
         .iter()
         .map(|face| {
-            let mut failed = Vec::new();
-            if let Some(creator) = &selector.created_by
-                && !shape
+            let failed = face_failures(
+                face,
+                selector,
+                shape
                     .face_origins()
-                    .and_then(|origins| origins.get(&face.index))
-                    .is_some_and(|origins| origins.contains(creator))
-            {
-                failed.push("created_by");
-            }
-            if let Some(n) = normal
-                && !face
-                    .normal
-                    .is_some_and(|v| DVec3::from(v).dot(n.normalize()) >= 1. - 1e-8)
-            {
-                failed.push("normal");
-            }
-            if let Some(p) = selector.near_centre
-                && DVec3::from(p).distance(DVec3::from(face.centre)) > tolerance
-            {
-                failed.push("near_centre");
-            }
-            if let Some(bounds) = &selector.in_box
-                && !inside(face.centre, bounds, tolerance)
-            {
-                failed.push("in_box");
-            }
-            if let Some(radius) = selector.cylinder_radius
-                && !face
-                    .cylinder
-                    .as_ref()
-                    .is_some_and(|c| (c.radius - radius).abs() <= tolerance)
-            {
-                failed.push("cylinder_radius");
-            }
-            if let Some(internal) = selector.internal
-                && !face
-                    .cylinder
-                    .as_ref()
-                    .is_some_and(|c| c.internal == internal)
-            {
-                failed.push("internal");
-            }
-            if let Some(area) = selector.area
-                && (face.area - area).abs() > tolerance
-            {
-                failed.push("area");
-            }
+                    .and_then(|origins| origins.get(&face.index)),
+            );
             let normal_text = face
                 .normal
                 .map_or("normal -".to_string(), |n| format!("normal {}", vector(n)));
@@ -328,13 +352,46 @@ fn check_edge_selector(selector: &EdgeSelector) -> Result<()> {
     check_box(&selector.in_box)
 }
 
+pub(super) fn edge_failures(edge: &EdgeInfo, selector: &EdgeSelector) -> Vec<&'static str> {
+    let direction = selector.parallel.map(DVec3::from).map(DVec3::normalize);
+    let tolerance = selector.tolerance;
+    let mut failed = Vec::new();
+    if let Some(d) = direction
+        && !edge
+            .direction
+            .is_some_and(|v| DVec3::from(v).dot(d).abs() >= 1. - 1e-8)
+    {
+        failed.push("parallel");
+    }
+    if let Some(p) = selector.near_centre
+        && DVec3::from(p).distance(DVec3::from(edge.centre)) > tolerance
+    {
+        failed.push("near_centre");
+    }
+    if let Some(bounds) = &selector.in_box
+        && !inside(edge.centre, bounds, tolerance)
+    {
+        failed.push("in_box");
+    }
+    if let Some(length) = selector.length
+        && (edge.length - length).abs() > tolerance
+    {
+        failed.push("length");
+    }
+    if let Some(radius) = selector.radius
+        && !edge.radius.is_some_and(|r| (r - radius).abs() <= tolerance)
+    {
+        failed.push("radius");
+    }
+    failed
+}
+
 fn edge_items(
     kernel: &dyn Kernel,
     shape: &Shape,
     edges: &[EdgeInfo],
     selector: &EdgeSelector,
 ) -> Result<Vec<Item>> {
-    let direction = selector.parallel.map(DVec3::from).map(DVec3::normalize);
     let between = if let Some([a, b]) = &selector.between {
         let left = faces(kernel, shape, a)?;
         let right = faces(kernel, shape, b)?;
@@ -369,7 +426,6 @@ fn edge_items(
     } else {
         None
     };
-    let tolerance = selector.tolerance;
     Ok(edges
         .iter()
         .map(|edge| {
@@ -386,33 +442,7 @@ fn edge_items(
             {
                 failed.push("of_face");
             }
-            if let Some(d) = direction
-                && !edge
-                    .direction
-                    .is_some_and(|v| DVec3::from(v).dot(d).abs() >= 1. - 1e-8)
-            {
-                failed.push("parallel");
-            }
-            if let Some(p) = selector.near_centre
-                && DVec3::from(p).distance(DVec3::from(edge.centre)) > tolerance
-            {
-                failed.push("near_centre");
-            }
-            if let Some(bounds) = &selector.in_box
-                && !inside(edge.centre, bounds, tolerance)
-            {
-                failed.push("in_box");
-            }
-            if let Some(length) = selector.length
-                && (edge.length - length).abs() > tolerance
-            {
-                failed.push("length");
-            }
-            if let Some(radius) = selector.radius
-                && !edge.radius.is_some_and(|r| (r - radius).abs() <= tolerance)
-            {
-                failed.push("radius");
-            }
+            failed.extend(edge_failures(edge, selector));
             let mut line = format!("edge {} centre {}", edge.index, vector(edge.centre));
             if let Some(d) = edge.direction {
                 line.push_str(&format!(" direction {}", vector(d)));

@@ -381,6 +381,40 @@ impl FeatureForm {
         self.value = value;
     }
 
+    pub(crate) fn is_face_plane(&self) -> bool {
+        self.value["op"] == "plane_on_face"
+    }
+
+    pub(crate) fn pick_field(&self) -> Option<(&'static str, &'static str)> {
+        match self.value["op"].as_str()? {
+            "fillet" | "chamfer" => Some(("Edges", "edges")),
+            "shell" | "draft" => Some(("Faces", "faces")),
+            "plane_on_face" | "thicken" => Some(("Faces", "face")),
+            "hole" => Some(("Face", "placement")),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn set_picked(&mut self, key: &str, field: Value) -> Result<(), String> {
+        let mut value = self.geometry_value()?;
+        let displayed = match &self
+            .expected
+            .parts
+            .get(&self.part)
+            .ok_or("Select a part")?
+            .geometry
+        {
+            Geometry::History { output, .. } => output.as_str(),
+            _ => "source",
+        };
+        if value["source"].as_str() != Some(displayed) {
+            return Err("The displayed solid differs from the feature source. Set the selector fields manually.".into());
+        }
+        value[key] = field;
+        self.replace_value(value);
+        Ok(())
+    }
+
     pub fn geometry(&self) -> Result<Geometry<Scalar>, String> {
         let mut value = self.value.clone();
         for (path, enabled) in &self.flags {

@@ -24,6 +24,7 @@ const fn entry(name: &'static str, shortcut: &'static str, command: Command) -> 
 }
 const COMMANDS: &[CommandEntry] = &[
     entry("Fit view", "F", Command::Fit),
+    entry("Press pull", "Q", Command::PressPull),
     entry("Move/Copy", "M", Command::Move),
     entry("Section analysis", "Shift+S", Command::ToggleSection),
     entry("Undo", "Ctrl+Z", Command::Undo),

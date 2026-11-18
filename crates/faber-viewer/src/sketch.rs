@@ -7,6 +7,7 @@ pub enum Plane {
     Xy,
     Xz,
     Yz,
+    Face,
 }
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tool {
@@ -20,6 +21,7 @@ pub enum Tool {
 pub struct SketchDraft {
     pub expected: ProjectData,
     pub plane: Plane,
+    face_plane: Option<(Placement, [f64; 3])>,
     pub tool: Tool,
     pub points: Vec<[f64; 2]>,
     pub height: String,
@@ -165,6 +167,11 @@ impl SketchDraft {
             ui.label("Plane");
             for (name, plane) in [("XY", Plane::Xy), ("XZ", Plane::Xz), ("YZ", Plane::Yz)] {
                 ui.selectable_value(&mut self.plane, plane, name);
+            }
+            if self.face_plane.is_some() {
+                ui.selectable_value(&mut self.plane, Plane::Face, "Picked face");
+            } else {
+                ui.label("Pick a planar face in the view.");
             }
         });
         ui.horizontal(|ui| {
@@ -370,6 +377,7 @@ impl SketchDraft {
         Self {
             expected,
             plane: Plane::Xy,
+            face_plane: None,
             tool: Tool::Rectangle,
             points: vec![],
             height: "40".into(),
@@ -379,6 +387,11 @@ impl SketchDraft {
             periodic: false,
             spline: Default::default(),
         }
+    }
+    pub(crate) fn set_face(&mut self, origin: [f64; 3], normal: [f64; 3]) -> Result<(), String> {
+        self.face_plane = Some((faber_core::pick_selector::plane_at(origin, normal)?, normal));
+        self.plane = Plane::Face;
+        Ok(())
     }
     pub fn click(&mut self, point: [f64; 2]) {
         if !matches!(self.tool, Tool::Polygon | Tool::Spline) && self.points.len() == 2 {
@@ -450,6 +463,19 @@ impl SketchDraft {
         let mut placement = Placement::<Scalar>::default();
         let h = Scalar::Expression(self.height.clone());
         let vector = match self.plane {
+            Plane::Face => {
+                let (plane, normal) = self.face_plane.as_ref().ok_or("Pick a planar face.")?;
+                placement = plane.map_numbers(&mut |v| Ok(Scalar::Number(*v)))?;
+                normal.map(|n| {
+                    if n.abs() < 1e-12 {
+                        Scalar::Number(0.)
+                    } else if (n - 1.).abs() < 1e-12 {
+                        h.clone()
+                    } else {
+                        Scalar::Expression(format!("({}) * ({n})", self.height))
+                    }
+                })
+            }
             Plane::Xy => [0.0.into(), 0.0.into(), h],
             Plane::Xz => {
                 placement.rotation = [90.0.into(), 0.0.into(), 0.0.into()];
@@ -566,6 +592,7 @@ mod tests {
                     Plane::Xy => vec![20, 30, 40],
                     Plane::Xz => vec![20, 40, 30],
                     Plane::Yz => vec![40, 20, 30],
+                    Plane::Face => unreachable!("This test uses the three standard planes."),
                 }
             );
             let faber_model::Geometry::History { features, .. } =

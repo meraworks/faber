@@ -54,6 +54,7 @@ const PROJECT: &str = r#"{
 struct Counting {
     inner: OcctKernel,
     tessellate: AtomicUsize,
+    edge_lines: AtomicUsize,
     properties: AtomicUsize,
     faces: AtomicUsize,
 }
@@ -63,6 +64,7 @@ impl Counting {
         Arc::new(Self {
             inner: OcctKernel,
             tessellate: AtomicUsize::new(0),
+            edge_lines: AtomicUsize::new(0),
             properties: AtomicUsize::new(0),
             faces: AtomicUsize::new(0),
         })
@@ -102,6 +104,10 @@ impl Kernel for Counting {
     fn tessellate_faces(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::FaceMesh> {
         self.tessellate.fetch_add(1, Ordering::Relaxed);
         self.inner.tessellate_faces(shape, tolerance)
+    }
+    fn tessellate_edges(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::EdgeLines> {
+        self.edge_lines.fetch_add(1, Ordering::Relaxed);
+        self.inner.tessellate_edges(shape, tolerance)
     }
     fn build(&self, geometry: &Geometry) -> Result<Mesh> {
         self.inner.build(geometry)
@@ -382,6 +388,8 @@ fn warm_open_reads_the_mesh_from_the_feature_cache() {
     assert!(cold.tessellate.load(Ordering::Relaxed) > 0);
     let triangles = first.bodies[0].mesh.triangles.clone();
     let faces = first.bodies[0].face_of_triangle.clone();
+    let edges = first.bodies[0].edge_lines.clone();
+    assert!(!edges.is_empty());
     assert_eq!(faces.len(), triangles.len());
     drop(first);
 
@@ -391,6 +399,8 @@ fn warm_open_reads_the_mesh_from_the_feature_cache() {
     assert_eq!(warm.tessellate.load(Ordering::Relaxed), 0);
     assert_eq!(second.bodies[0].mesh.triangles, triangles);
     assert_eq!(second.bodies[0].face_of_triangle, faces);
+    assert_eq!(second.bodies[0].edge_lines, edges);
+    assert_eq!(warm.edge_lines.load(Ordering::Relaxed), 0);
 }
 
 #[test]
@@ -486,4 +496,23 @@ fn moved_part_keeps_the_feature_of_each_face() {
     place(&mut project, "p", [30., -4., 2.], [0., 0., 90.]);
 
     assert_eq!(created_by(&project, "p"), before);
+}
+
+#[test]
+fn edge_lines_move_with_the_part() {
+    let dir = project_dir();
+    let kernel = Counting::new();
+    let mut project = open(dir.path(), &kernel);
+    let lines = body(&project, "p").edge_lines.clone();
+    assert!(!lines.ranges.is_empty());
+    let calls = kernel.edge_lines.load(Ordering::Relaxed);
+    assert!(calls > 0);
+    place(&mut project, "p", [3., 4., 5.], [0., 0., 90.]);
+    let moved = &body(&project, "p").edge_lines;
+    assert_eq!(moved.ranges, lines.ranges);
+    assert_eq!(moved.points.len(), lines.points.len());
+    for ([x, y, z], p) in lines.points.iter().zip(&moved.points) {
+        assert!(glam::DVec3::new(3. - y, 4. + x, 5. + z).distance(glam::DVec3::from(*p)) < 1e-9);
+    }
+    assert_eq!(kernel.edge_lines.load(Ordering::Relaxed), calls);
 }

@@ -46,6 +46,7 @@ fn cube() -> Body {
         volume: 8000.,
         bounds: [[0., 0., 0.], [20., 20., 20.]],
         face_of_triangle: Vec::new(),
+        edge_lines: Default::default(),
         shape: None,
     }
 }

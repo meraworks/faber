@@ -7,17 +7,30 @@ mod command_search;
 #[cfg(test)]
 mod controls_fixture;
 mod dialogs;
+#[cfg(test)]
+mod edge_pick_tests;
+mod face_pick;
+use face_pick::{Pick, SelectFilter};
+#[cfg(test)]
+mod face_pick_tests;
 mod feature_tools;
 #[cfg(test)]
 mod forms_tests;
 mod keys;
 #[cfg(test)]
 mod keys_tests;
+mod marking_menu;
 mod material;
 #[cfg(test)]
 mod material_tests;
 mod motion_relations;
 mod move_tool;
+mod pick_tools;
+#[cfg(test)]
+mod pick_tools_tests;
+mod press_pull;
+#[cfg(test)]
+mod press_pull_tests;
 mod selection;
 #[cfg(test)]
 mod selection_tests;
@@ -222,6 +235,7 @@ fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
 pub struct Shell {
     window: WindowState,
     search: command_search::CommandSearch,
+    marking: marking_menu::MarkingMenu,
     deleting: Option<String>,
     delete_notice: Option<(String, Instant)>,
     project_loaded: bool,
@@ -231,6 +245,7 @@ pub struct Shell {
     recent: Vec<(String, PathBuf)>,
     motion: assembly::Controls,
     root: PathBuf,
+    press: Option<press_pull::Tool>,
     pub data: ProjectData,
     pub bodies: std::sync::Arc<Vec<Body>>,
     pub camera: Camera,
@@ -243,6 +258,12 @@ pub struct Shell {
     // Press point of a rectangle selection on empty space.
     box_drag: Option<egui::Pos2>,
     hover_pos: Option<egui::Pos2>,
+    select_filter: SelectFilter,
+    picks: Vec<Pick>,
+    pick_point: Option<[f64; 3]>,
+    hover_pick: Option<Pick>,
+    hover_body: Option<String>,
+    pick_info: face_pick::InfoCache,
     reveal_features: bool,
     copied_placement: Option<(String, faber_model::Placement<faber_model::Scalar>)>,
     pub section_selected: Option<String>,
@@ -269,6 +290,8 @@ pub struct Shell {
     frame_ms: f64,
     parameter_draft: Option<(ProjectData, BTreeMap<String, String>)>,
     saving: bool,
+    pending_pick_action: Option<pick_tools::PendingPick>,
+    pick_tool_filter: Option<SelectFilter>,
     feature_draft: Option<crate::feature_form::FeatureForm>,
     sketch_draft: Option<crate::sketch::SketchDraft>,
     import_draft: Option<ImportDraft>,
@@ -353,6 +376,7 @@ impl Shell {
             motion: Default::default(),
             root,
             data,
+            press: None,
             bodies: bodies.into(),
             camera,
             section_on: plane.is_some(),
@@ -366,6 +390,12 @@ impl Shell {
             extra_selected: BTreeSet::new(),
             box_drag: None,
             hover_pos: None,
+            select_filter: Default::default(),
+            picks: Vec::new(),
+            pick_point: None,
+            hover_pick: None,
+            hover_body: None,
+            pick_info: Default::default(),
             reveal_features: false,
             copied_placement: None,
             section_selected: None,
@@ -391,6 +421,8 @@ impl Shell {
             frame_ms: 0.,
             parameter_draft: None,
             saving: false,
+            pending_pick_action: None,
+            pick_tool_filter: None,
             feature_draft: None,
             sketch_draft: None,
             import_draft: None,
@@ -412,6 +444,7 @@ impl Shell {
             export_message: None,
             window: Default::default(),
             search: Default::default(),
+            marking: Default::default(),
             deleting: None,
             delete_notice: None,
         }
@@ -432,6 +465,16 @@ impl Shell {
                 .clicked()
             {
                 self.run_command(ui.ctx(), keys::Command::ToggleSection);
+            }
+            if ui
+                .add_enabled(
+                    self.command_enabled(keys::Command::PressPull),
+                    egui::Button::new("Press pull"),
+                )
+                .on_hover_text("Offset a planar face (Q)")
+                .clicked()
+            {
+                self.run_command(ui.ctx(), keys::Command::PressPull);
             }
             ui.add_space(10.);
             if ui.button("Fit").on_hover_text("Fit view (F)").clicked() {
@@ -1101,6 +1144,7 @@ impl Shell {
     fn new_feature(&mut self, part_id: &str, kind: ToolKind) -> Result<(), String> {
         use faber_model::{Geometry, Scalar};
         let part = self.data.parts.get(part_id).ok_or("Select a part")?;
+        faber_core::pick_selector::editable_part(part_id, part)?;
         let prefix = match kind {
             ToolKind::Plane => "plane",
             ToolKind::FacePlane => "face_plane",
@@ -1410,6 +1454,7 @@ impl Shell {
         let Some(form) = &mut self.feature_draft else {
             return;
         };
+        let mut choose_pick = false;
         let mut preset_changed = false;
         let mut apply = false;
         let mut cancel = false;
@@ -1431,6 +1476,9 @@ impl Shell {
                     ui.label(form.help);
                 }
                 ui.add_enabled_ui(!self.saving, |ui| {
+                    if let Some((label,_))=form.pick_field() {
+                        choose_pick=ui.button(label).on_hover_text("Select items in the model view. Hold Ctrl to select more than one.").clicked();
+                    }
                     match form.hole_options(ui) {
                         Ok(changed) => preset_changed = changed,
                         Err(error) => *window_error = Some(error),
@@ -1466,21 +1514,23 @@ impl Shell {
                     ui.horizontal(|ui| {
                         apply = ui
                             .add_enabled(
-                                can_apply && self.pending.is_none(),
+                                can_apply && self.pending.is_none() && self.pending_pick_action.is_none(),
                                 egui::Button::new("Apply feature"),
                             )
                             .clicked();
                         cancel = ui.button("Cancel feature").clicked();
                     });
                 });
-                if self.saving {
+                if self.saving || self.pending_pick_action.is_some() {
                     ui.spinner();
                 }
             },
         );
         self.window.dirty |= preset_changed;
         cancel |= event == WindowEvent::Cancel;
-        apply |= event == WindowEvent::Apply && self.pending.is_none();
+        apply |= event == WindowEvent::Apply
+            && self.pending.is_none()
+            && self.pending_pick_action.is_none();
         if apply {
             match form.geometry() {
                 Err(error) => self.window.error = Some(error),
@@ -1516,6 +1566,9 @@ impl Shell {
                 }
             }
         }
+        if choose_pick {
+            self.enter_pick_tool();
+        }
         if cancel {
             self.cancel_window();
         }
@@ -1538,17 +1591,22 @@ impl Shell {
             ctx.content_rect(),
             |ui, _, can_apply| {
                 ui.add_enabled_ui(!self.saving, |ui| {
-                    create = draft.ui(ui, can_apply && self.pending.is_none());
+                    create = draft.ui(
+                        ui,
+                        can_apply && self.pending.is_none() && self.pending_pick_action.is_none(),
+                    );
                     cancel = ui.button("Cancel sketch").clicked();
                 });
-                if self.saving {
+                if self.saving || self.pending_pick_action.is_some() {
                     ui.spinner();
                 }
             },
         );
         self.window.dirty |= draft.points.len() != point_count;
         cancel |= event == WindowEvent::Cancel;
-        create |= event == WindowEvent::Apply && self.pending.is_none();
+        create |= event == WindowEvent::Apply
+            && self.pending.is_none()
+            && self.pending_pick_action.is_none();
         if create && self.pending.is_none() {
             match draft.part() {
                 Err(error) => self.window.error = Some(error),
@@ -1703,6 +1761,7 @@ impl Shell {
                     }
                     let changing_project = self.pending_project.is_some();
                     if let Some(root) = self.pending_project.take() {
+                        self.marking = Default::default();
                         self.project_loaded = true;
                         self.root = root;
                         self.modified = faber_wiring::project_fingerprint(&self.root).ok();
@@ -1731,6 +1790,10 @@ impl Shell {
                     if self.data.motion != data.motion || changing_project {
                         self.motion = Default::default();
                     }
+                    if self.data != data || changing_project {
+                        self.clear_entity_picks();
+                        self.pick_info = Default::default();
+                    }
                     self.data = data;
                     self.bodies = bodies.into();
                     self.list = None;
@@ -1744,6 +1807,9 @@ impl Shell {
                     self.prune_selection();
                 }
                 Err(e) => {
+                    if let Some(tool) = &mut self.press {
+                        tool.submitting = false;
+                    }
                     if self.window.saving {
                         self.window.error = Some(e.clone());
                     }
@@ -2148,9 +2214,8 @@ impl Shell {
                 )
                 .on_disabled_hover_text("Select a part first.")
                 .clicked()
-                && let Some(id) = &part_id
             {
-                self.start_move(id);
+                self.run_command(ui.ctx(), keys::Command::Move);
             }
             if ui
                 .add_enabled(
@@ -2159,9 +2224,8 @@ impl Shell {
                 )
                 .on_disabled_hover_text("Select a part first.")
                 .clicked()
-                && let Some(id) = &part_id
             {
-                self.start_placement(id);
+                self.run_command(ui.ctx(), keys::Command::ExactPlacement);
             }
         });
         ui.horizontal_wrapped(|ui| {
@@ -2189,10 +2253,8 @@ impl Shell {
                     )
                     .on_disabled_hover_text("Select a part first.")
                     .clicked()
-                    && let Some(id) = &part_id
-                    && let Err(error) = self.new_feature(id, kind)
                 {
-                    self.error = Some(error);
+                    self.run_command(ui.ctx(), keys::Command::Feature(kind));
                 }
             }
             ui.menu_button("References", |ui| {
@@ -2216,11 +2278,7 @@ impl Shell {
                         .on_disabled_hover_text("Select a part first.")
                         .clicked()
                     {
-                        if let Some(id) = &part_id
-                            && let Err(error) = self.new_feature(id, kind)
-                        {
-                            self.error = Some(error);
-                        }
+                        self.run_command(ui.ctx(), keys::Command::Feature(kind));
                         ui.close();
                     }
                 }
@@ -2347,6 +2405,7 @@ impl Shell {
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
+        self.pick_inspector(ui);
         self.motion_controls(ui);
         ui.add_space(12.);
         ui.label(RichText::new("INSPECT").size(11.).color(MUTED));
@@ -2516,7 +2575,7 @@ impl Shell {
             );
             ui.label(
                 RichText::new(
-                    "Drag empty space to select. Middle or right drag to pan.\nShift + middle drag or Alt + left drag to orbit. Scroll to zoom.",
+                    "Drag empty space to select. Middle drag to pan. Right drag for commands.\nShift + middle drag or Alt + left drag to orbit. Scroll to zoom.",
                 )
                     .small()
                     .color(MUTED),
@@ -2874,11 +2933,15 @@ impl Shell {
                 corners,
             )
         });
-        let moving = self.move_canvas(ui, rect);
+        let moving = self.press_interact(ui, rect) || self.move_canvas(ui, rect);
         let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
-        let busy =
-            moving || alt || self.move_draft.is_some() || handle.as_ref().is_some_and(|h| h.3);
-        let boxed = self.box_select(ui, rect, busy, response.hovered());
+        let busy = moving
+            || alt
+            || self.marking.anchor.is_some()
+            || self.move_draft.is_some()
+            || handle.as_ref().is_some_and(|h| h.3);
+        let boxed = self.select_filter == SelectFilter::Body
+            && self.box_select(ui, rect, busy, response.hovered());
         let delta = ui.input(|i| i.pointer.delta());
         let joint_drag = self.drag_joint(
             ui,
@@ -2887,7 +2950,7 @@ impl Shell {
             handle.as_ref().is_some_and(|h| h.3) || moving,
         );
         // Fusion mapping. Left drag on empty space selects. Shift + middle, or Alt + left, orbits.
-        // Middle drag pans. Right drag pans too.
+        // Middle drag pans. Right drag selects a menu command.
         let orbit = (response.dragged_by(egui::PointerButton::Middle) && shift)
             || (response.dragged_by(egui::PointerButton::Primary) && alt);
         if orbit && !handle.as_ref().is_some_and(|h| h.3) && !joint_drag && !moving && !boxed {
@@ -2895,41 +2958,39 @@ impl Shell {
             self.camera.pitch = (self.camera.pitch + delta.y * 0.35).clamp(-85., 89.);
             self.dirty = true;
         }
-        let pan = response.dragged_by(egui::PointerButton::Secondary)
-            || (response.dragged_by(egui::PointerButton::Middle) && !shift);
+        let pan = response.dragged_by(egui::PointerButton::Middle) && !shift;
         if pan {
             let (right, up) = self.camera.screen_axes();
             self.camera.target +=
                 (-right * delta.x + up * delta.y) * self.camera.distance / rect.height();
             self.dirty = true;
         }
-        if (response.clicked() || response.secondary_clicked())
+        let right_press = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
+        if right_press
+            && self.marking.anchor.is_none()
+            && response.contains_pointer()
+            && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+        {
+            self.start_mark(rect, pos);
+        }
+        if response.clicked()
+            && self.marking.anchor.is_none()
             && !moving
             && !boxed
             && let Some(pos) = response.interact_pointer_pos()
         {
-            let picked = self.pick_body(rect, pos);
             let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
-            if response.secondary_clicked() {
-                self.select_menu_target(picked);
-            } else {
-                self.select_picked(picked, ctrl, shift);
-            }
+            self.pick_canvas(rect, pos, ctrl, shift, response.double_clicked(), false);
         }
         let hover = if busy || boxed || ui.input(|i| i.pointer.any_down()) {
             None
         } else {
             response.hover_pos().filter(|_| response.hovered())
         };
-        if self.hover_pos != hover {
-            self.hover_pos = hover;
-            let id = hover.and_then(|pos| self.pick_body(rect, pos));
-            if self.gpu.hovered != id {
-                self.gpu.hovered = id;
-                self.dirty = true;
-            }
+        if self.hover_pos != hover || (hover.is_some() && (self.dirty || self.mesh_dirty)) {
+            self.hover_entity(rect, hover);
         }
-        response.context_menu(|ui| self.body_menu(ui));
+        self.marking_menu(ui.ctx());
         let width = (rect.width() * ui.ctx().pixels_per_point())
             .round()
             .clamp(1., 4096.) as u32;
@@ -2961,17 +3022,22 @@ impl Shell {
             self.target = Some(target);
             self.dirty = true;
         }
+        let display_bodies = self
+            .press
+            .as_ref()
+            .and_then(|tool| tool.preview.as_ref())
+            .unwrap_or(&self.bodies);
         if self.list.is_none() {
             self.cut_indices = std::sync::Arc::new(
-                self.bodies
+                display_bodies
                     .iter()
                     .map(|b| faber_scene::SectionIndex::new(&b.mesh))
                     .collect(),
             );
-            let paint = self.overhang.paint(&self.bodies);
+            let paint = self.overhang.paint(display_bodies);
             match self
                 .gpu
-                .upload_painted(&self.bodies, &BTreeSet::new(), None, None, &paint)
+                .upload_painted(display_bodies, &BTreeSet::new(), None, None, &paint)
             {
                 Ok(list) => self.list = Some(list),
                 Err(e) => self.error = Some(e),
@@ -2986,7 +3052,7 @@ impl Shell {
             if let Some(next) = plane {
                 match Gpu::caps(
                     &self.gpu.device,
-                    &self.bodies,
+                    display_bodies,
                     &self.cut_indices,
                     &BTreeSet::new(),
                     next,
@@ -3002,6 +3068,15 @@ impl Shell {
         self.dirty |= self.mesh_dirty;
         self.mesh_dirty = false;
         if self.dirty
+            && let Some(list) = &mut self.list
+        {
+            list.mark_faces(
+                &self.gpu.queue,
+                self.picks.iter().filter_map(Pick::face_key),
+                self.hover_pick.as_ref().and_then(Pick::face_key),
+            );
+        }
+        if self.dirty
             && let (Some(target), Some(list)) = (&self.target, &self.list)
         {
             let start = Instant::now();
@@ -3009,7 +3084,10 @@ impl Shell {
                 target,
                 list,
                 self.camera,
-                self.selected.as_deref(),
+                self.selected.as_deref().filter(|_| {
+                    self.select_filter == SelectFilter::Body
+                        || matches!(self.picks.last(), Some(Pick::Body(_)))
+                }),
                 self.cap_plane,
                 self.caps.as_ref(),
                 &self.move_poses(),
@@ -3026,6 +3104,7 @@ impl Shell {
                 Color32::WHITE,
             );
         }
+        self.draw_pick_edges(ui, rect);
         self.view_cube(ui, rect);
         let painter = ui.painter();
         if let Some((centre, tip, grips, _, arcs, corners)) = handle {
@@ -3086,6 +3165,7 @@ impl Shell {
                 egui::Stroke::new(1., Color32::DARK_GRAY),
             );
         }
+        self.press_paint(ui, rect);
         self.move_paint(ui, rect);
         painter.text(
             rect.left_top() + Vec2::new(24., 22.),
@@ -3133,6 +3213,7 @@ impl eframe::App for Shell {
         let ctx = ui.ctx().clone();
         self.poll_dialog(&ctx);
         self.poll(&ctx);
+        self.poll_press();
         self.shortcut(&ctx);
         if !self.project_loaded {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -3390,9 +3471,11 @@ impl eframe::App for Shell {
         self.import_panel(&ctx);
         self.placement_panel(&ctx);
         self.move_panel(&ctx);
+        self.press_panel(&ctx);
         self.command_search(&ctx);
         self.project_panel(&ctx, frame);
         self.discard_question(&ctx);
+        self.poll_pick_info(&ctx);
     }
 }
 
@@ -4230,7 +4313,11 @@ mod tests {
 
         harness.get_by_label("PARAMETERS");
         harness.get_by_label("wall = 4");
-        assert!(harness.state().error.is_none());
+        assert!(
+            harness.state().error.is_none(),
+            "{:?}",
+            harness.state().error
+        );
         let target = harness.state().target.as_ref().unwrap();
         let native = harness.state().gpu.read(target).unwrap();
         let at = ((500 - 64) * target.width + (700 - 220)) as usize * 4;
@@ -5038,3 +5125,6 @@ mod tests {
 
 #[cfg(test)]
 mod windows_tests;
+
+#[cfg(test)]
+mod marking_menu_tests;

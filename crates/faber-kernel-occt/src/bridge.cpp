@@ -10,6 +10,7 @@
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepAdaptor_CompCurve.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
 #include <gp_GTrsf.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -983,6 +984,41 @@ extern "C" void faber_mesh_data(const void* input,const double** vertices,size_t
 
 extern "C" const uint32_t* faber_mesh_face_indices(const void* input) noexcept {
     return static_cast<const FaberMesh*>(input)->face_of_triangle.data();
+}
+
+struct FaberEdgeLines {
+    std::vector<double> points;
+    std::vector<uint32_t> ends;
+};
+
+extern "C" int faber_edge_lines(const void* shape,double tolerance,FaberEdgeLineData* result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&] {
+        TopTools_IndexedMapOfShape edges;
+        TopExp::MapShapes(static_cast<const FaberShape*>(shape)->value,TopAbs_EDGE,edges);
+        auto lines=std::make_unique<FaberEdgeLines>();
+        lines->ends.reserve(edges.Extent());
+        for(int index=1;index<=edges.Extent();++index) {
+            const auto edge=TopoDS::Edge(edges(index));
+            if(!BRep_Tool::Degenerated(edge)) {
+                BRepAdaptor_Curve curve(edge);
+                GCPnts_TangentialDeflection samples(curve,0.1,tolerance);
+                if(samples.NbPoints()<2) throw std::runtime_error("Edge has too few points");
+                if(lines->points.size()/3+samples.NbPoints()>UINT32_MAX)
+                    throw std::runtime_error("Edge lines exceed the point index limit");
+                for(int n=1;n<=samples.NbPoints();++n) {
+                    const auto point=samples.Value(n);
+                    lines->points.insert(lines->points.end(),{point.X(),point.Y(),point.Z()});
+                }
+            }
+            lines->ends.push_back(static_cast<uint32_t>(lines->points.size()/3));
+        }
+        *result={lines.get(),lines->points.data(),lines->points.size()/3,lines->ends.data(),lines->ends.size()};
+        lines.release();
+    });
+}
+
+extern "C" void faber_free_edge_lines(void* lines) noexcept {
+    delete static_cast<FaberEdgeLines*>(lines);
 }
 
 extern "C" int faber_write(const void* input,const char* path,char* error,size_t capacity) noexcept {

@@ -46,6 +46,25 @@ pub struct FaceMesh {
 }
 
 pub const FACE_MESH_UNSUPPORTED: &str = "Face mesh is not supported";
+pub const EDGE_LINES_UNSUPPORTED: &str = "Edge lines are not supported";
+
+/// Each range starts at the first point of an edge. Edge indices start at one.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EdgeLines {
+    pub points: Vec<[f64; 3]>,
+    pub ranges: Vec<std::ops::Range<u32>>,
+}
+
+impl EdgeLines {
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
+
+    pub fn edge(&self, id: u32) -> Option<&[[f64; 3]]> {
+        let range = self.ranges.get(id.checked_sub(1)? as usize)?;
+        self.points.get(range.start as usize..range.end as usize)
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Body {
@@ -57,6 +76,8 @@ pub struct Body {
     /// Empty when the source has no face indices.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_of_triangle: Vec<u32>,
+    #[serde(default, skip_serializing_if = "EdgeLines::is_empty")]
+    pub edge_lines: EdgeLines,
     pub volume: f64,
     pub bounds: [[f64; 3]; 2],
     #[serde(skip)]
@@ -283,6 +304,9 @@ pub trait Kernel: Send + Sync {
     }
     fn tessellate_faces(&self, _shape: &Shape, _tolerance: f64) -> Result<FaceMesh> {
         Err(FACE_MESH_UNSUPPORTED.into())
+    }
+    fn tessellate_edges(&self, _shape: &Shape, _tolerance: f64) -> Result<EdgeLines> {
+        Err(EDGE_LINES_UNSUPPORTED.into())
     }
     fn write_shape(&self, _shape: &Shape, _path: &Path) -> Result<()> {
         Err("Exact shape output is not available".into())

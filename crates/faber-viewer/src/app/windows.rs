@@ -93,6 +93,10 @@ impl WindowState {
 
 impl Shell {
     pub(super) fn cancel_window(&mut self) {
+        self.pending_pick_action = None;
+        if let Some(filter) = self.pick_tool_filter.take() {
+            self.set_filter(filter);
+        }
         if self.error == self.window.error {
             self.error = None;
         }
@@ -140,6 +144,7 @@ impl Shell {
             Draft::Sketch(d) => self.sketch_draft = Some(d),
             Draft::Move(d) => self.move_draft = Some(*d),
         }
+        self.enter_pick_tool();
     }
 
     pub(super) fn discard_question(&mut self, ctx: &egui::Context) {

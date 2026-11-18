@@ -15,8 +15,10 @@ pub mod materials;
 pub mod names;
 pub mod overhang;
 mod pattern;
+pub mod pick_selector;
 mod pipe;
 mod placement;
+pub mod press_pull;
 mod provenance;
 mod read_cache;
 mod scale;
@@ -956,6 +958,7 @@ impl Builder<'_> {
             colour: part.colour,
             mesh: placed.mesh,
             face_of_triangle: local.face_of_triangle.clone(),
+            edge_lines: placed.edge_lines,
             volume: local.volume,
             bounds: placed.bounds,
             shape,
@@ -1001,14 +1004,20 @@ impl Builder<'_> {
             }
             timing.properties = body_cache::elapsed(started);
             let started = std::time::Instant::now();
-            let mesh = self
-                .tessellate(&shape, properties.faces, output_key.as_deref())
+            let (mesh, edge_lines) = self
+                .tessellate(
+                    &shape,
+                    properties.faces,
+                    properties.edges,
+                    output_key.as_deref(),
+                )
                 .map_err(|error| part_error(id, &part.geometry, error))?;
             timing.tessellate = body_cache::elapsed(started);
             return Ok(body_cache::LocalBody {
                 geometry: part.geometry.clone(),
                 shape: Some(shape),
                 face_of_triangle: mesh.face_of_triangle,
+                edge_lines,
                 mesh: mesh.mesh,
                 volume: properties.volume,
                 bounds: properties.bounds,
@@ -1045,6 +1054,7 @@ impl Builder<'_> {
             shape: None,
             mesh,
             face_of_triangle: Vec::new(),
+            edge_lines: Default::default(),
             volume,
             bounds: [lo.to_array(), hi.to_array()],
         })
@@ -1086,8 +1096,9 @@ impl Builder<'_> {
         &self,
         shape: &Shape,
         face_count: u32,
+        edge_count: u32,
         output_key: Option<&str>,
-    ) -> Result<faber_ports::FaceMesh> {
+    ) -> Result<(faber_ports::FaceMesh, faber_ports::EdgeLines)> {
         let valid = |faces: &faber_ports::FaceMesh| {
             !faces.mesh.triangles.is_empty()
                 && faces.face_of_triangle.len() == faces.mesh.triangles.len()
@@ -1096,33 +1107,48 @@ impl Builder<'_> {
                     .iter()
                     .all(|i| (1..=face_count).contains(i))
         };
-        // The prefix identifies the 0.03 mm mesh with face indices.
+        // The prefix identifies the 0.03 mm mesh with faces and edge lines.
         let cached = match (self.persist, output_key) {
-            (Some(store), Some(key)) => Some((store, format!("mesh04{key}"))),
+            (Some(store), Some(key)) => Some((store, format!("mesh05{key}"))),
             _ => None,
         };
         if let Some((store, name)) = &cached
-            && let Some(mesh) = store.get(name).as_deref().and_then(body_cache::decode_mesh)
+            && let Some((mesh, lines)) = store
+                .get(name)
+                .as_deref()
+                .and_then(body_cache::decode_body_mesh)
             && valid(&mesh)
+            && body_cache::valid_edge_lines(&lines, edge_count)
         {
-            return Ok(mesh);
+            return Ok((mesh, lines));
         }
+        let lines = match self.kernel.tessellate_edges(shape, TESSELLATION_MM) {
+            Ok(lines) if body_cache::valid_edge_lines(&lines, edge_count) => lines,
+            Ok(_) => return Err("Edge lines do not match the topology".into()),
+            Err(error) if error == faber_ports::EDGE_LINES_UNSUPPORTED => Default::default(),
+            Err(error) => return Err(error),
+        };
         let mesh = match self.kernel.tessellate_faces(shape, TESSELLATION_MM) {
             Err(error) if error == faber_ports::FACE_MESH_UNSUPPORTED => {
-                return Ok(faber_ports::FaceMesh {
-                    mesh: self.kernel.tessellate(shape, TESSELLATION_MM)?,
-                    face_of_triangle: Vec::new(),
-                });
+                return Ok((
+                    faber_ports::FaceMesh {
+                        mesh: self.kernel.tessellate(shape, TESSELLATION_MM)?,
+                        face_of_triangle: Vec::new(),
+                    },
+                    lines,
+                ));
             }
             result => result?,
         };
         if !valid(&mesh) {
             return Err("Each triangle needs a face index".into());
         }
-        if let Some((store, name)) = &cached {
+        if let Some((store, name)) = &cached
+            && (!lines.is_empty() || edge_count == 0)
+        {
             // A failed write only means that the next open tessellates again.
-            let _ = store.put(name, &body_cache::encode_mesh(&mesh));
+            let _ = store.put(name, &body_cache::encode_body_mesh(&mesh, &lines));
         }
-        Ok(mesh)
+        Ok((mesh, lines))
     }
 }

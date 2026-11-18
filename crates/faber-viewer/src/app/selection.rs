@@ -23,6 +23,16 @@ impl Shell {
 
     /// Drops parts that are gone or hidden. A missing primary part gives way to an extra part.
     pub(super) fn prune_selection(&mut self) {
+        let data = &self.data;
+        let hidden = &self.hidden;
+        let count = self.picks.len();
+        self.picks
+            .retain(|p| data.parts.contains_key(p.part()) && !hidden.contains(p.part()));
+        if self.picks.len() != count {
+            self.pick_point = None;
+            self.hover_pos = None;
+            self.dirty = true;
+        }
         let mut extra = std::mem::take(&mut self.extra_selected);
         extra.retain(|id| self.visible(id));
         self.extra_selected = extra;
@@ -73,6 +83,7 @@ impl Shell {
 
     /// Selects one part. None clears the selection.
     pub(super) fn select_only(&mut self, id: Option<String>) {
+        self.clear_entity_picks();
         self.mesh_dirty |= self.selected != id || !self.extra_selected.is_empty();
         self.extra_selected.clear();
         self.selected = id;
