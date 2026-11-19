@@ -112,6 +112,19 @@
   groove(id, body, face, loop, side, width, depth, clearance)::
     faber.feature(id, 'groove', { body: body, face: face, loop: loop, side: side, width: width, depth: depth, clearance: clearance }),
 
+  remove_faces(id, body, faces)::
+    faber.feature(id, 'remove_faces', { body: body, faces: faces }),
+
+  move_faces(id, body, faces, distance)::
+    faber.feature(id, 'move_faces', { body: body, faces: faces, distance: distance }),
+
+  split_face(id, body, face, tool)::
+    faber.feature(id, 'split_face', { body: body, face: face, tool: tool }),
+
+  emboss(id, body, face, sketch, depth, mode='raise', at=null)::
+    faber.feature(id, 'emboss', { body: body, face: face, sketch: sketch, depth: depth, mode: mode }
+      + (if at == null then {} else { at: at })),
+
   // Join fragments. Each part id must be unique. The later fragment keeps
   // the other fields. Refuses a part id that two fragments have.
   merge(fragments)::

@@ -130,8 +130,35 @@ pub(crate) fn resolve_with(
         }
         Ok(())
     }
-    for part in data.parts.values() {
+    let mut checked = std::collections::BTreeSet::new();
+    for (id, part) in &data.parts {
         visit(&part.geometry, store, &mut paths, true)?;
+        let Geometry::History { features, .. } = &part.geometry else {
+            continue;
+        };
+        if !features.iter().any(|f| {
+            !f.suppressed
+                && matches!(
+                    f.geometry,
+                    Geometry::RemoveFaces { .. }
+                        | Geometry::MoveFaces { .. }
+                        | Geometry::SplitFace { .. }
+                        | Geometry::Emboss { .. }
+                )
+        }) {
+            continue;
+        }
+        crate::pick_selector::editable_part(id, part)?;
+        for f in features.iter().filter(|f| !f.suppressed) {
+            if let Geometry::Imported { asset, .. } = &f.geometry
+                && checked.insert(asset)
+                && store
+                    .ok_or("Asset storage is not available")?
+                    .is_mesh(&paths[asset])?
+            {
+                return Err(format!("Part {id} is a mesh. Convert it to a solid first."));
+            }
+        }
     }
     Ok(paths)
 }

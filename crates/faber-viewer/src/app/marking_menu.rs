@@ -12,6 +12,9 @@ pub(super) struct MarkingMenu {
     pub(super) anchor: Option<egui::Pos2>,
     pub(super) last: Option<Command>,
     held: bool,
+    pub(super) face: Option<u32>,
+    #[cfg(test)]
+    pub(super) context_clip: Option<egui::Rect>,
 }
 
 const ENTRIES: [(&str, Option<Command>); 8] = [
@@ -140,7 +143,15 @@ impl Shell {
         let screen = ctx.content_rect().shrink(5.);
         let radius = RADIUS.min(screen.width() * 0.5).min(screen.height() * 0.35);
         let size = egui::Vec2::splat(radius * 2.);
-        let context_height = if self.selected.is_some() { 248. } else { 142. };
+        let context_height = if self.marking.face.is_some()
+            || matches!(self.picks.last(), Some(Pick::Face { .. }))
+        {
+            352.
+        } else if self.selected.is_some() {
+            248.
+        } else {
+            142.
+        };
         let height = (size.y + context_height).min(screen.height());
         let top = egui::pos2(
             (origin.x - radius).clamp(screen.left(), (screen.right() - size.x).max(screen.left())),
@@ -152,6 +163,8 @@ impl Shell {
             .fixed_pos(top)
             .movable(false)
             .show(ctx, |ui| {
+                ui.set_width(size.x);
+                ui.set_height(height);
                 let (ring, _) = ui.allocate_exact_size(size, egui::Sense::hover());
                 let centre = ring.center();
                 let active = if self.marking.held {
@@ -181,10 +194,15 @@ impl Shell {
                         egui::ScrollArea::vertical()
                             .id_salt("marking_context")
                             .max_height(
-                                (screen.bottom() - ui.cursor().top() - 10.)
-                                    .clamp(30., context_height),
+                                (height - size.y - ui.spacing().item_spacing.y - 14.).max(30.),
                             )
-                            .show(ui, |ui| self.body_menu(ui));
+                            .show(ui, |ui| {
+                                #[cfg(test)]
+                                {
+                                    self.marking.context_clip = Some(ui.clip_rect());
+                                }
+                                self.body_menu(ui, true);
+                            });
                     });
                 });
                 context.response.should_close()

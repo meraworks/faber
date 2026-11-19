@@ -5,13 +5,37 @@ mod polygon;
 mod three_mf;
 
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
+const STEP_HEADER: &[u8] = b"ISO-10303-21;";
+
+pub(crate) fn is_mesh(path: &Path) -> std::io::Result<bool> {
+    use std::io::{BufRead, BufReader, Read};
+    let mut input = BufReader::new(std::fs::File::open(path)?);
+    loop {
+        let data = input.fill_buf()?;
+        if data.is_empty() {
+            return Ok(true);
+        }
+        let at = data.len() - data.trim_ascii_start().len();
+        let found = at < data.len();
+        input.consume(at);
+        if found {
+            break;
+        }
+    }
+    let mut signature = [0; STEP_HEADER.len()];
+    match input.read_exact(&mut signature) {
+        Ok(()) => Ok(signature != STEP_HEADER),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(true),
+        Err(error) => Err(error),
+    }
+}
 
 pub(crate) fn read(path: &Path) -> Result<Option<Mesh>> {
     if std::fs::metadata(path).map_err(|e| e.to_string())?.len() > MAX_BYTES {
         return Err("Model exceeds the 512 MiB input limit".into());
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    if bytes.trim_ascii_start().starts_with(b"ISO-10303-21;") {
+    if bytes.trim_ascii_start().starts_with(STEP_HEADER) {
         return Ok(None);
     }
     let text = std::str::from_utf8(&bytes).ok();

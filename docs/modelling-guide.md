@@ -518,7 +518,7 @@ Text can only be the outer boundary of a sketch. A text sketch cannot have extra
 
 Faber refuses text with no visible outline, such as a space only. Faber refuses a non-positive height.
 
-For raised or engraved text on a face, use the existing sketch route. Use `plane_on_face` for the face, `sketch_on_plane` for the letters and `extrude_sketch` for the depth. A positive vector adds material. A negative vector removes material when the result is a `difference`. Extrusion vectors use part coordinates. Faber has no separate emboss feature.
+To raise or engrave text on a flat or cylindrical face, use **Emboss** as described in **Face operations**. For a separate planar extrusion, use `plane_on_face` for the face, `sketch_on_plane` for the letters and `extrude_sketch` for the depth. Join the raised letters with `union` or cut the recessed letters with `difference`. Extrusion vectors use part coordinates.
 
 Raised text on the top face of a 40 x 20 x 5 mm box:
 
@@ -1218,3 +1218,44 @@ After a board change, export the STEP file to the same location. Call
 `links` to see which files changed. Call `refresh_links` to update their
 saved assets together. Each part keeps its assembly placement. If a
 source file is missing, the project opens with its last saved asset.
+
+## Face operations
+
+Right-click a face in the model view. To act on several faces, select
+**Face** in the inspector. Hold Ctrl to
+select more faces on the same part. Right-click one of the selected
+faces to keep the group.
+
+- **Remove face** extends the adjacent faces to close a hole, fillet or
+  boss. For a boss, select its side and its top. Click **Apply feature**.
+  If the adjacent faces cannot close the solid, the project keeps its
+  previous shape.
+- **Move face** offsets each selected face along its outward normal.
+  Drag the arrow to preview. Release it to save one history feature.
+  You can also type a distance in millimetres and press Enter. Positive
+  values add material. Use Escape or **Cancel** to discard the preview.
+- **Split face** divides one face with a reference plane or a profile
+  sketch from the same part. Select the splitting tool and click
+  **Apply feature**. The two regions can then be selected separately.
+- **Emboss** uses a closed profile or text sketch. Select **Raise** or
+  **Engrave** and set a positive depth in millimetres. For a flat face,
+  the sketch plane must be parallel to the face. The profile projects
+  along the normal. The full profile must fit on the selected face.
+
+On a cylinder, sketch X is arc length and sketch Y is height along the
+axis. **Set cylinder arc and height** places the sketch origin relative
+to the start of the cylinder. Arc length and height use millimetres.
+A label can cross the zero-angle seam. Text uses its actual outlines,
+including the counters in letters such as A and B. A profile wider than
+the circumference is refused.
+
+The [label bottle](../examples/label-bottle/design.jsonnet) has an open
+neck, a hollow body and raised lettering on its outside face. Change
+`relief` or `letter_height` in the source and rebuild to change the
+label. Mesh-only parts must first be converted to solids. Purchased
+parts retain their supplied shape.
+
+To add the first face operation to an imported exact solid through
+`add_feature`, set `body` to `"source"`. The original imported solid
+becomes the first feature in its history. Later operations use the id
+of the previous solid feature.

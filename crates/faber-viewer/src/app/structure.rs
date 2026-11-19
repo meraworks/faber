@@ -290,7 +290,7 @@ impl Shell {
                 self.select_part_joint();
                 self.mesh_dirty = true;
             }
-            row.context_menu(|ui| self.body_menu(ui));
+            row.context_menu(|ui| self.body_menu(ui, false));
         });
     }
 

@@ -599,6 +599,15 @@ pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
 /// Names of the features that a feature reads. The order matches `dependencies`.
 pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
     let names: Vec<&String> = match geometry {
+        Geometry::RemoveFaces { body, .. } | Geometry::MoveFaces { body, .. } => vec![body],
+        Geometry::SplitFace { body, tool, .. } => vec![
+            body,
+            match tool {
+                faber_model::SplitTool::Plane { plane } => plane,
+                faber_model::SplitTool::Sketch { sketch } => sketch,
+            },
+        ],
+        Geometry::Emboss { body, sketch, .. } => vec![body, sketch],
         Geometry::Rib { body, plane, .. }
         | Geometry::Web { body, plane, .. }
         | Geometry::Boss { body, plane, .. }
@@ -658,7 +667,11 @@ pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
 /// The input solid of a feature that changes one solid. Creation features and references have none.
 pub(crate) fn primary_input<N>(geometry: &Geometry<N>) -> Option<&str> {
     match geometry {
-        Geometry::Rib { body, .. }
+        Geometry::RemoveFaces { body, .. }
+        | Geometry::MoveFaces { body, .. }
+        | Geometry::SplitFace { body, .. }
+        | Geometry::Emboss { body, .. }
+        | Geometry::Rib { body, .. }
         | Geometry::Web { body, .. }
         | Geometry::Boss { body, .. }
         | Geometry::SnapHook { body, .. }
@@ -791,7 +804,18 @@ pub(crate) fn build(
             Built::Shape(shape) => Ok(shape),
             _ => Err(format!("Feature {name} is a reference, not a shape")),
         };
-        let dependencies = if let Geometry::SketchOnPlane { plane, .. } = &feature.geometry {
+        let dependencies = if matches!(
+            &feature.geometry,
+            Geometry::RemoveFaces { .. }
+                | Geometry::MoveFaces { .. }
+                | Geometry::SplitFace { .. }
+                | Geometry::Emboss { .. }
+        ) {
+            references(&feature.geometry)
+                .into_iter()
+                .map(|id| previous(id).cloned())
+                .collect::<Result<Vec<_>>>()?
+        } else if let Geometry::SketchOnPlane { plane, .. } = &feature.geometry {
             vec![previous(plane)?.clone()]
         } else if let Geometry::RevolveAround {
             source: name,
@@ -1116,6 +1140,22 @@ pub(crate) fn build(
                     source: name,
                     vector,
                 } => kernel.extrude_shape(source(name)?, *vector),
+                Geometry::Emboss {
+                    body,
+                    face,
+                    sketch,
+                    depth,
+                    mode,
+                    at,
+                } => crate::emboss::build(
+                    kernel,
+                    source(body)?,
+                    face,
+                    source(sketch)?,
+                    *depth,
+                    *mode,
+                    *at,
+                ),
                 Geometry::Draft {
                     source: name,
                     faces,
@@ -1127,6 +1167,41 @@ pub(crate) fn build(
                     let shape = source(name)?;
                     let faces = crate::select::faces(kernel, shape, faces)?;
                     kernel.draft(shape, &faces, *direction, *origin, *normal, *angle)
+                }
+                Geometry::RemoveFaces { body, faces } => {
+                    let shape = source(body)?;
+                    kernel.remove_faces(shape, &crate::face_edit::selected(kernel, shape, faces)?)
+                }
+                Geometry::MoveFaces {
+                    body,
+                    faces,
+                    distance,
+                } => {
+                    let shape = source(body)?;
+                    kernel.move_faces(
+                        shape,
+                        &crate::face_edit::selected(kernel, shape, faces)?,
+                        *distance,
+                    )
+                }
+                Geometry::SplitFace { body, face, tool } => {
+                    let shape = source(body)?;
+                    let ids = crate::select::faces(kernel, shape, face)?;
+                    let [index] = ids.as_slice() else {
+                        return Err("Select one face to split.".into());
+                    };
+                    let tool = match tool {
+                        faber_model::SplitTool::Plane { plane } => {
+                            let Built::Plane(reference) = previous(plane)? else {
+                                return Err(format!("Feature {plane} is not a reference plane."));
+                            };
+                            crate::face_edit::plane_tool(kernel, shape, reference)?
+                        }
+                        faber_model::SplitTool::Sketch { sketch } => {
+                            crate::face_edit::sketch_tool(kernel, shape, source(sketch)?)?
+                        }
+                    };
+                    kernel.split_face(shape, *index, &tool)
                 }
                 Geometry::Thicken {
                     source: name,

@@ -8,8 +8,14 @@ pub struct PressFace {
     pub part: String,
     pub centre: [f64; 3],
     pub normal: [f64; 3],
-    selector: FaceSelector<Scalar>,
+    edit: FaceEdit,
     revision: u64,
+}
+
+#[derive(Clone, Debug)]
+enum FaceEdit {
+    Slab(Box<FaceSelector<Scalar>>),
+    Offset(Vec<FaceSelector<Scalar>>),
 }
 
 fn part_with_features(
@@ -67,6 +73,26 @@ fn feature_scene(project: &Project, part: &str, features: &[Feature<Scalar>]) ->
 
 impl PressFace {
     pub fn new(project: &Project, part: &str, index: u32) -> Result<Self> {
+        Self::from_pick(project, part, &[index], None, false)
+    }
+
+    /// Set up an exact offset. The point is on the last selected face, in world coordinates.
+    pub fn move_faces(
+        project: &Project,
+        part: &str,
+        indices: &[u32],
+        point: Option<[f64; 3]>,
+    ) -> Result<Self> {
+        Self::from_pick(project, part, indices, point, true)
+    }
+
+    fn from_pick(
+        project: &Project,
+        part: &str,
+        indices: &[u32],
+        point: Option<[f64; 3]>,
+        exact: bool,
+    ) -> Result<Self> {
         project.refuse_generated()?;
         let entry = project
             .data
@@ -74,23 +100,75 @@ impl PressFace {
             .get(part)
             .ok_or_else(|| format!("Unknown part: {part}"))?;
         crate::pick_selector::editable_part(part, entry)?;
+        let body = project
+            .bodies
+            .iter()
+            .find(|b| b.id == part)
+            .ok_or("Select a solid.")?;
+        if body.shape.is_none() {
+            return Err(format!(
+                "Part {part} is a mesh. Convert it to a solid first."
+            ));
+        }
+        let &index = indices.last().ok_or("Select one or more faces.")?;
         let local = project.unplaced_topology(part)?.1;
         let world = project.topology(part)?.1;
-        let face = world
+        let f = world
             .iter()
-            .find(|face| face.index == index)
+            .find(|f| f.index == index)
             .ok_or("Select a face of the part.")?;
-        let normal = face.normal.ok_or("Press pull needs a planar face.")?;
+        let centre = point.unwrap_or(f.centre);
+        let normal = if let Some(n) = f.normal {
+            n
+        } else if !exact {
+            return Err("Press pull needs a planar face.".into());
+        } else if let Some(c) = &f.cylinder {
+            let p = glam::DVec3::from(centre) - glam::DVec3::from(c.start);
+            let axis = glam::DVec3::from(c.axis).normalize();
+            let radial = (p - axis * p.dot(axis))
+                .try_normalize()
+                .ok_or("Click the cylindrical face.")?;
+            (if c.internal { -radial } else { radial }).into()
+        } else {
+            // The display normal sets the handle direction. The kernel offsets the exact face.
+            let p = glam::DVec3::from(centre);
+            body.mesh
+                .triangles
+                .iter()
+                .zip(&body.face_of_triangle)
+                .filter(|(_, id)| **id == index)
+                .filter_map(|(tri, _)| {
+                    let [a, b, c] = tri.map(|i| glam::DVec3::from(body.mesh.vertices[i as usize]));
+                    let n = (b - a).cross(c - a).try_normalize()?;
+                    Some((((a + b + c) / 3. - p).length_squared(), n))
+                })
+                .min_by(|(a, _), (b, _)| a.total_cmp(b))
+                .ok_or("Click the curved face.")?
+                .1
+                .into()
+        };
+        let selector = |index| crate::pick_selector::face_selector(&local, &[index]);
+        let edit = if exact {
+            FaceEdit::Offset(
+                indices
+                    .iter()
+                    .copied()
+                    .map(selector)
+                    .collect::<Result<_>>()?,
+            )
+        } else {
+            FaceEdit::Slab(Box::new(selector(index)?))
+        };
         Ok(Self {
             part: part.into(),
-            centre: face.centre,
+            centre,
             normal,
-            selector: crate::pick_selector::face_selector(&local, &[index])?,
+            edit,
             revision: project.data.revision,
         })
     }
 
-    fn features(&self, project: &Project, distance: f64) -> Result<[Feature<Scalar>; 2]> {
+    fn features(&self, project: &Project, distance: f64) -> Result<Vec<Feature<Scalar>>> {
         if self.revision != project.data.revision {
             return Err("Project changed. Pick the face again.".into());
         }
@@ -112,15 +190,29 @@ impl PressFace {
                 .find(|id| !existing.iter().any(|f| f.id == *id))
                 .unwrap()
         };
+        let selector = match &self.edit {
+            FaceEdit::Offset(faces) => {
+                return Ok(vec![Feature {
+                    id: next_id("move_faces"),
+                    suppressed: false,
+                    geometry: Geometry::MoveFaces {
+                        body: source.into(),
+                        faces: faces.clone(),
+                        distance: distance.into(),
+                    },
+                }]);
+            }
+            FaceEdit::Slab(selector) => selector.as_ref(),
+        };
         let slab = next_id("face_offset");
         let result = next_id("press_pull");
-        Ok([
+        Ok(vec![
             Feature {
                 id: slab.clone(),
                 suppressed: false,
                 geometry: Geometry::Thicken {
                     source: source.into(),
-                    face: Some(self.selector.clone()),
+                    face: Some(selector.clone()),
                     thickness: Scalar::Number(distance),
                 },
             },
@@ -149,7 +241,8 @@ impl PressFace {
         distance: f64,
         reason: String,
     ) -> String {
-        if distance < 0.
+        if matches!(&self.edit, FaceEdit::Slab(_))
+            && distance < 0.
             && let Ok(slab) = preview_feature(project, &self.part, &features[..1])
             && let Some(base) = project.bodies.iter().find(|b| b.id == self.part)
             && let (Some(a), Some(b)) = (&base.shape, &slab.shape)

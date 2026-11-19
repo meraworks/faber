@@ -24,6 +24,10 @@ pub trait AssetStore: Send + Sync {
     fn read_mesh(&self, _path: &Path) -> Result<Option<Mesh>> {
         Ok(None)
     }
+    /// Return true when the asset contains only a triangle surface.
+    fn is_mesh(&self, path: &Path) -> Result<bool> {
+        Ok(self.read_mesh(path)?.is_some())
+    }
 }
 
 /// Design checks. Declared contacts give no violation.
@@ -219,8 +223,26 @@ pub trait Kernel: Send + Sync {
     ) -> Result<Shape> {
         Err("Split is not available".into())
     }
+    fn remove_faces(&self, _shape: &Shape, _faces: &[u32]) -> Result<Shape> {
+        Err("Face removal is not available.".into())
+    }
+    fn move_faces(&self, _shape: &Shape, _faces: &[u32], _distance: f64) -> Result<Shape> {
+        Err("Face movement is not available.".into())
+    }
+    fn split_face(&self, _shape: &Shape, _face: u32, _tool: &Shape) -> Result<Shape> {
+        Err("Face splitting is not available.".into())
+    }
     fn face_shape(&self, _shape: &Shape, _index: u32) -> Result<Shape> {
         Err("Face extraction is not available".into())
+    }
+    /// Wrap sketch X as arc length and sketch Y along the cylinder axis.
+    fn wrap_on_cylinder(
+        &self,
+        _flat: &Shape,
+        _cylinder: &CylinderFace,
+        _at: [f64; 2],
+    ) -> Result<Shape> {
+        Err("Cylindrical wrapping is not supported.".into())
     }
     fn thicken(&self, _shape: &Shape, _thickness: f64) -> Result<Shape> {
         Err("Thicken is not available".into())

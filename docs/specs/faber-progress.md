@@ -1564,3 +1564,31 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   all 20 example projects. In the 232-body model, the pixels at a 285 mm cut
   matched after a move to 305 mm and back. The installed CLI exported both
   desk riser sizes and the parts list. The export kept the project files intact.
+
+## Fusion parity 08: Face operations
+
+- Remove, move and split selected faces of an exact solid. Move accepts a
+  drag or a typed distance. A refused edit keeps the part and its revision.
+  A new history on an imported solid keeps the original asset for undo.
+- Moving a split region by 1 mm added 78.54 mm³ to the test block. The
+  adjacent region stayed flat. Moving a face next to a 2 mm fillet kept
+  its radius. An oblique split kept the original 8000 mm³ volume.
+- Raised and engraved profiles follow a flat or cylindrical face. A mark
+  that crosses a cylinder seam stays continuous. A profile across a hole
+  or outside the selected face is refused. The label bottle example has
+  raised letters on a hollow body.
+- A failed move keeps the Cancel button in place. The canvas menu offers
+  face tools in body selection mode. A completed drag records one edit.
+- The profile list includes sketches on a reference plane. On a 1440 by
+  900 display the full Emboss button stays inside the menu and receives
+  the click. Both Split face and Emboss used the same reference sketch.
+- In the 232-body assembly, twelve section drag steps had a median update
+  time of 5.79 ms and a maximum of 12.96 ms on the test PC. Frames at
+  rest matched while the mouse button stayed down.
+- All 1040 workspace tests passed. Workspace Clippy passed with warnings
+  denied. The release build and silent install passed.
+- The installed CLI exported the bottle and reopened its 5880 triangles
+  as one closed shell. The mesh had zero open or non-manifold edges. Its
+  volume was 29290.15 mm³, against 29292.68 mm³ for the exact solid.
+- The installed viewer rendered 21 example projects. Moving the assembly
+  section from 285 to 305 mm and back restored the same viewport pixels.

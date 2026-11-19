@@ -1,4 +1,6 @@
+mod faces;
 mod plastic;
+pub(crate) use faces::{sketch_ids, split_tools};
 pub(crate) use plastic::plane_ids;
 
 use faber_model::{Geometry, ProjectData, Scalar};
@@ -174,6 +176,18 @@ impl FeatureForm {
                 }
                 Geometry::Hole { .. } => {
                     "Translation sets the entry point in part coordinates. The cut follows local +Z after rotation. Set diameter and depth in millimetres; countersink angle is the included angle in degrees."
+                }
+                Geometry::RemoveFaces { .. } => {
+                    "Remove the selected faces. The adjacent faces must close the solid."
+                }
+                Geometry::MoveFaces { .. } => {
+                    "Positive distance adds material. Negative distance removes material."
+                }
+                Geometry::SplitFace { .. } => {
+                    "Choose a reference plane or a profile sketch that crosses the selected face."
+                }
+                Geometry::Emboss { .. } => {
+                    "Choose a closed profile or text sketch. Set the depth in mm. On a cylinder, the sketch X coordinate follows the circumference."
                 }
                 Geometry::Thicken { .. } => {
                     "Build a solid from the selected face. Positive thickness follows its normal; negative thickness uses the opposite direction. This becomes the part output."
@@ -372,6 +386,7 @@ impl FeatureForm {
 
     /// Optional fields. Scale can use one factor per axis. Pipe and path pattern can omit a field.
     pub fn option_fields(&mut self, ui: &mut eframe::egui::Ui) -> Result<(), String> {
+        self.face_options(ui)?;
         self.plastic_options(ui)?;
         match self.value["op"].as_str().unwrap_or_default() {
             "scale" => {
@@ -432,8 +447,10 @@ impl FeatureForm {
     pub(crate) fn pick_field(&self) -> Option<(&'static str, &'static str)> {
         match self.value["op"].as_str()? {
             "fillet" | "chamfer" => Some(("Edges", "edges")),
-            "shell" | "draft" => Some(("Faces", "faces")),
-            "plane_on_face" | "thicken" | "lip" | "groove" => Some(("Faces", "face")),
+            "remove_faces" | "move_faces" | "shell" | "draft" => Some(("Faces", "faces")),
+            "split_face" | "emboss" | "plane_on_face" | "thicken" | "lip" | "groove" => {
+                Some(("Faces", "face"))
+            }
             "hole" => Some(("Face", "placement")),
             _ => None,
         }
@@ -544,6 +561,7 @@ fn collect(
                 if key != "op"
                     && key != "keep"
                     && !plastic::choice_field(op, key)
+                    && !faces::choice_field(op, key)
                     && !(path == "/head" && key == "kind")
                     && !(feature_path && key == "path")
                 {

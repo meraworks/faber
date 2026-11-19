@@ -12,6 +12,8 @@ pub use components::{
 };
 mod construction;
 mod dress_variant;
+mod emboss;
+mod face_edit;
 mod feature_cache;
 mod feature_edit;
 mod feature_info;

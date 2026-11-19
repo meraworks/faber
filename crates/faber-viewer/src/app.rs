@@ -12,6 +12,7 @@ mod drawing;
 mod drawing_tests;
 #[cfg(test)]
 mod edge_pick_tests;
+mod face_operations;
 mod face_pick;
 mod structure;
 #[cfg(test)]
@@ -2076,7 +2077,7 @@ impl Shell {
         }
     }
 
-    fn body_menu(&mut self, ui: &mut egui::Ui) {
+    fn body_menu(&mut self, ui: &mut egui::Ui, face_context: bool) {
         self.mesh_menu(ui);
         // Hide, isolate and delete act on the whole selection.
         let ids = self.selection();
@@ -2090,6 +2091,9 @@ impl Shell {
             {
                 self.run_command(ui.ctx(), keys::Command::Move);
                 ui.close();
+            }
+            if face_context {
+                self.face_menu(ui);
             }
             if ui
                 .add_enabled(

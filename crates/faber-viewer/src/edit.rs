@@ -226,6 +226,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn face_form_commits_on_a_real_import_without_replacing_the_asset() {
+        let root = tempfile::tempdir().unwrap();
+        let mut p = faber_wiring::create(root.path(), "Face editor".into()).unwrap();
+        let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/round-surfaces/out/block.step");
+        p.import_part("plate".into(), "Plate".into(), &file, false)
+            .unwrap();
+        let original = p.data.clone();
+        let height = p.bodies[0].bounds[1][2];
+        drop(p);
+        let operation=serde_json::from_value(serde_json::json!({"op":"move_faces","body":"source","faces":[{"normal":[0.,0.,1.],"tolerance":0.0001,"expect":1}],"distance":2.})).unwrap();
+        let (saved, bodies) =
+            append_feature(root.path(), &original, "plate", "raise", operation, true).unwrap();
+        assert_eq!(saved.revision, original.revision + 1);
+        assert!((bodies[0].bounds[1][2] - height - 2.).abs() < 1e-5);
+        let faber_model::Geometry::History { features, .. } = &saved.parts["plate"].geometry else {
+            panic!()
+        };
+        assert_eq!(features[0].geometry, original.parts["plate"].geometry);
+        assert_eq!(faber_wiring::read(root.path()).unwrap().0, saved);
+    }
+
+    #[test]
     fn new_project_refuses_existing_data_and_open_preserves_it() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("new");

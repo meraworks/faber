@@ -3,6 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 
+extern "C" int faber_wrap_cylinder(const void* flat, const double* start, const double* axis,
+    double radius, double length, int internal, const double* at, void** output,
+    char* error, std::size_t capacity) noexcept;
+
 struct FaberCurve2 {
     int kind, hidden;
     std::size_t offset, count;
@@ -47,4 +51,11 @@ extern "C" void faber_free_edge_lines(void* lines) noexcept;
 extern "C" int faber_linear_form(const void* body, const void* profile, const double* direction,
     double thickness, double offset, void** result, char* error, std::size_t capacity) noexcept;
 extern "C" int faber_inset_face(const void* face, std::uint32_t loop, double distance,
+    void** result, char* error, std::size_t capacity) noexcept;
+
+extern "C" int faber_remove_faces(const void* shape, const std::uint32_t* faces, std::size_t count,
+    void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_move_faces(const void* shape, const std::uint32_t* faces, std::size_t count,
+    double distance, void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_split_face(const void* shape, std::uint32_t face, const void* tool,
     void** result, char* error, std::size_t capacity) noexcept;

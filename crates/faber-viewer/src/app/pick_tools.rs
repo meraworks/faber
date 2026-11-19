@@ -199,7 +199,19 @@ impl Shell {
             {
                 planar_face(topo, &self.picks)?;
             }
-            serde_json::to_value(face_selector(&topo.faces, &ids)?)
+            if self
+                .feature_draft
+                .as_ref()
+                .is_some_and(|f| f.picks_face_list())
+            {
+                serde_json::to_value(
+                    ids.iter()
+                        .map(|id| face_selector(&topo.faces, &[*id]))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            } else {
+                serde_json::to_value(face_selector(&topo.faces, &ids)?)
+            }
         }
         .map_err(|e| e.to_string())?;
         Ok(PickResult::Field(key, value))

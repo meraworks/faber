@@ -18,6 +18,7 @@ pub(super) struct Tool {
     original: ProjectData,
     pub(super) face: Option<PressFace>,
     pub(super) distance: f64,
+    exact: bool,
     pub(super) preview: Option<Arc<Vec<Body>>>,
     latest: Arc<AtomicU64>,
     tx: mpsc::Sender<f64>,
@@ -29,9 +30,34 @@ pub(super) struct Tool {
 
 impl Shell {
     pub(super) fn start_press(&mut self, ctx: &egui::Context) {
+        self.start_face_drag(ctx, false);
+    }
+
+    pub(super) fn start_face_drag(&mut self, ctx: &egui::Context, exact: bool) {
         let Some(Pick::Face { part, face }) = self.picks.last().cloned() else {
             return;
         };
+        let indices = self
+            .picks
+            .iter()
+            .filter_map(|p| match p {
+                Pick::Face { part: id, face } if id == &part => Some(*face),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if exact && indices.len() != self.picks.len() {
+            self.error = Some("Pick faces on one part.".into());
+            return;
+        }
+        let point = self.pick_point.map(|p| {
+            self.motion
+                .poses
+                .get(&part)
+                .map_or(DMat4::IDENTITY, |m| m.as_dmat4())
+                .inverse()
+                .transform_point3(DVec3::from(p))
+                .into()
+        });
         let root = self.root.clone();
         let original = self.data.clone();
         let (tx, requests) = mpsc::channel::<f64>();
@@ -43,6 +69,7 @@ impl Shell {
             original: original.clone(),
             face: None,
             distance: 0.,
+            exact,
             preview: None,
             latest: current,
             tx,
@@ -58,7 +85,11 @@ impl Shell {
                 return;
             }
             let setup = faber_wiring::preview_project(&root, original).and_then(|project| {
-                let target = PressFace::new(&project, &part, face)?;
+                let target = if exact {
+                    PressFace::move_faces(&project, &part, &indices, point)?
+                } else {
+                    PressFace::new(&project, &part, face)?
+                };
                 Ok((project, target))
             });
             drop(setup_guard);
@@ -133,7 +164,13 @@ impl Shell {
                         self.list = None;
                         self.dirty = true;
                     }
-                    Err(reason) => tool.error = Some(reason),
+                    Err(reason) => {
+                        tool.error = Some(reason);
+                        if tool.preview.take().is_some() {
+                            self.list = None;
+                            self.dirty = true;
+                        }
+                    }
                 },
                 _ => (),
             }
@@ -253,33 +290,38 @@ impl Shell {
         let mut open = true;
         let mut apply = false;
         let mut cancel = false;
-        egui::Window::new("Press pull")
-            .id(egui::Id::unique("press-pull-distance"))
-            .anchor(egui::Align2::RIGHT_TOP, [-310., 90.])
-            .open(&mut open)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let label = ui.label("Distance");
-                    ui.add_enabled(
-                        ready,
-                        egui::DragValue::new(&mut value).speed(0.1).suffix(" mm"),
-                    )
-                    .labelled_by(label.id);
-                });
-                if let Some(reason) = &tool.error {
-                    ui.label(reason);
-                }
-                ui.horizontal(|ui| {
-                    apply = ui
-                        .add_enabled(
-                            ready && value != 0. && tool.error.is_none(),
-                            egui::Button::new("Apply"),
-                        )
-                        .clicked();
-                    cancel = ui.button("Cancel").clicked();
-                });
+        egui::Window::new(if tool.exact {
+            "Move face"
+        } else {
+            "Press pull"
+        })
+        .id(egui::Id::unique("press-pull-distance"))
+        .anchor(egui::Align2::RIGHT_TOP, [-310., 90.])
+        .open(&mut open)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.set_width((ctx.content_rect().width() - 28.).clamp(125., 270.));
+            ui.horizontal(|ui| {
+                let label = ui.label("Distance");
+                ui.add_enabled(
+                    ready,
+                    egui::DragValue::new(&mut value).speed(0.1).suffix(" mm"),
+                )
+                .labelled_by(label.id);
             });
+            ui.horizontal(|ui| {
+                apply = ui
+                    .add_enabled(
+                        ready && value != 0. && tool.error.is_none(),
+                        egui::Button::new("Apply"),
+                    )
+                    .clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+            if let Some(reason) = &tool.error {
+                ui.colored_label(ui.visuals().error_fg_color, reason);
+            }
+        });
         self.press_distance(value);
         if submitting {
             return;

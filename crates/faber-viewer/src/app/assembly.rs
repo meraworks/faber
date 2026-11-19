@@ -120,6 +120,15 @@ impl Shell {
         rect: egui::Rect,
         pos: egui::Pos2,
     ) -> Option<(String, DVec3)> {
+        self.pick_surface_face(rect, pos)
+            .map(|(id, point, _)| (id, point))
+    }
+
+    pub(super) fn pick_surface_face(
+        &self,
+        rect: egui::Rect,
+        pos: egui::Pos2,
+    ) -> Option<(String, DVec3, Option<u32>)> {
         let point = [
             2. * (pos.x - rect.left()) / rect.width() - 1.,
             1. - 2. * (pos.y - rect.top()) / rect.height(),
@@ -131,11 +140,11 @@ impl Shell {
             .filter(|b| !self.hidden.contains(&b.id))
             .filter_map(|b| {
                 let pose = poses.get(&b.id).map_or(DMat4::IDENTITY, |m| m.as_dmat4());
-                self.surface_depth(b, pose, eye, ray)
-                    .map(|depth| (depth, &b.id))
+                self.surface_hit(b, pose, eye, ray)
+                    .map(|(depth, face)| (depth, &b.id, face))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(d, id)| (id.clone(), eye + d * ray))
+            .map(|(d, id, face)| (id.clone(), eye + d * ray, face))
     }
 
     pub(super) fn surface_depth(
@@ -145,6 +154,17 @@ impl Shell {
         eye: DVec3,
         ray: DVec3,
     ) -> Option<f64> {
+        self.surface_hit(body, pose, eye, ray)
+            .map(|(depth, _)| depth)
+    }
+
+    fn surface_hit(
+        &self,
+        body: &Body,
+        pose: DMat4,
+        eye: DVec3,
+        ray: DVec3,
+    ) -> Option<(f64, Option<u32>)> {
         let inverse = pose.inverse();
         let origin = inverse.transform_point3(eye);
         let direction = inverse.transform_vector3(ray);
@@ -152,7 +172,7 @@ impl Shell {
             return None;
         }
         let plane = self.section_for_body(&body.id);
-        let surface = faber_scene::pick_visible(
+        let surface = faber_scene::pick_triangle(
             &body.mesh,
             origin,
             direction,
@@ -172,7 +192,11 @@ impl Shell {
             })
             .and_then(|c| c.cap_mesh(&body.id))
             .and_then(|mesh| faber_scene::pick(mesh, eye, ray));
-        surface.into_iter().chain(cap).min_by(f64::total_cmp)
+        surface
+            .map(|(depth, triangle)| (depth, body.face_of_triangle.get(triangle).copied()))
+            .into_iter()
+            .chain(cap.map(|depth| (depth, None)))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
     pub(super) fn select_part_joint(&mut self) {

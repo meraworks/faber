@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "name": "Label bottle",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "section",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "polygon",
+              "points": [
+                [
+                  0.0,
+                  0.0
+                ],
+                [
+                  27.0,
+                  0.0
+                ],
+                [
+                  27.0,
+                  62.0
+                ],
+                [
+                  12.0,
+                  72.0
+                ],
+                [
+                  12.0,
+                  84.0
+                ],
+                [
+                  10.0,
+                  84.0
+                ],
+                [
+                  10.0,
+                  72.0
+                ],
+                [
+                  25.0,
+                  61.0
+                ],
+                [
+                  25.0,
+                  2.0
+                ],
+                [
+                  0.0,
+                  2.0
+                ]
+              ]
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              90.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "bottle_wall",
+        "geometry": {
+          "op": "revolve_sketch",
+          "source": "section",
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "angle": 360.0
+        }
+      },
+      {
+        "id": "lettering",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "text",
+              "text": "FABER",
+              "height": "letter_height",
+              "at": [
+                0.0,
+                0.0
+              ],
+              "align": "centre"
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "raised_label",
+        "geometry": {
+          "op": "emboss",
+          "body": "bottle_wall",
+          "face": {
+            "cylinder_radius": 27.0,
+            "internal": false,
+            "created_by": null,
+            "normal": null,
+            "near_centre": null,
+            "in_box": null,
+            "area": null,
+            "tolerance": 1e-6,
+            "expect": 1
+          },
+          "sketch": "lettering",
+          "depth": "relief",
+          "mode": "raise",
+          "at": [
+            -24.0,
+            29.0
+          ]
+        }
+      }
+    ],
+    "output": "raised_label"
+  },
+  "colour": [
+    207,
+    156,
+    91
+  ],
+  "group": "",
+  "note": ""
+}

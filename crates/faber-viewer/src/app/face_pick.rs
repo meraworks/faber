@@ -179,7 +179,17 @@ impl Shell {
         double: bool,
         secondary: bool,
     ) {
-        let picked = self.pick_entity(rect, pos);
+        let picked = if secondary && self.select_filter == SelectFilter::Body {
+            // Retain the exact face under the cursor from the same ray used to select the body.
+            let hit = self.pick_surface_face(rect, pos);
+            self.marking.face = hit.as_ref().and_then(|(_, _, face)| *face);
+            hit.map(|(part, point, _)| (Pick::Body(part), point.into()))
+        } else {
+            if secondary {
+                self.marking.face = None;
+            }
+            self.pick_entity(rect, pos)
+        };
         if self.select_filter == SelectFilter::Body {
             let body = picked.as_ref().map(|(pick, _)| pick.part().to_owned());
             if secondary {
@@ -294,14 +304,24 @@ impl Shell {
                 ctx.request_repaint();
             }
         }
-        let Some(part) = self.picks.iter().find_map(|p| match p {
-            Pick::Face { part, .. } | Pick::Edge { part, .. }
-                if !self.pick_info.ready.contains_key(part) =>
-            {
-                Some(part.clone())
-            }
-            _ => None,
-        }) else {
+        let Some(part) = self
+            .picks
+            .iter()
+            .find_map(|p| match p {
+                Pick::Face { part, .. } | Pick::Edge { part, .. }
+                    if !self.pick_info.ready.contains_key(part) =>
+                {
+                    Some(part.clone())
+                }
+                _ => None,
+            })
+            .or_else(|| {
+                self.context_face()
+                    .map(|(id, _)| id)
+                    .filter(|id| !self.pick_info.ready.contains_key(*id))
+                    .map(str::to_owned)
+            })
+        else {
             return;
         };
         let bodies = self.bodies.clone();

@@ -274,6 +274,19 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             before,
             make_output,
         } => {
+            if let Some(entry) = data.parts.get_mut(&part)
+                && matches!(entry.geometry, Geometry::Imported { .. })
+            {
+                crate::pick_selector::editable_part(&part, entry)?;
+                entry.geometry = Geometry::History {
+                    features: vec![Feature {
+                        id: "source".into(),
+                        geometry: entry.geometry.clone(),
+                        suppressed: false,
+                    }],
+                    output: "source".into(),
+                };
+            }
             let (features, output) = history(data, &part)?;
             let position = before
                 .as_deref()

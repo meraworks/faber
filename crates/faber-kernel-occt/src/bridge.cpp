@@ -146,6 +146,7 @@ static void publish(const TopoDS_Shape& shape,void** result) {
 }
 
 #include "drawing_bridge.inc"
+#include "emboss_bridge.inc"
 
 template<class Operation> static void publish_tracked(Operation& operation,std::initializer_list<TopoDS_Shape> inputs,void** result,bool retain_generated=false,const TopoDS_Shape* final_shape=nullptr) {
     void* raw=nullptr;
@@ -511,6 +512,7 @@ extern "C" int faber_split(const void* input,const double* origin,const double* 
     });
 }
 
+static bool regional_draft(const TopoDS_Shape&,const TopoDS_Shape&,const uint32_t*,size_t,void**);
 extern "C" int faber_draft(const void* input,const uint32_t* indices,size_t count,const double* direction,const double* origin,const double* normal,double angle,void** result,char* error,size_t capacity) noexcept {
     return protect(error,capacity,[&] {
         const auto& shape=static_cast<const FaberShape*>(input)->value;
@@ -525,6 +527,7 @@ extern "C" int faber_draft(const void* input,const uint32_t* indices,size_t coun
         }
         operation.Build();
         if(!operation.IsDone()) throw std::runtime_error("Draft failed");
+        if(regional_draft(shape,operation.Shape(),indices,count,result)) return;
         publish_tracked(operation,{shape},result,true);
     });
 }
@@ -1333,3 +1336,5 @@ extern "C" int faber_limit_threads(int count,char* error,size_t capacity) noexce
 extern "C" int faber_thread_count() noexcept {
     try {return OSD_ThreadPool::DefaultPool()->NbThreads();} catch(...) {return 0;}
 }
+
+#include "face_edit_bridge.inc"

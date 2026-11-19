@@ -5,6 +5,7 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rerun-if-changed=src/face_edit_bridge.inc");
     println!("cargo:rerun-if-changed=src/bridge.cpp");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src");
@@ -66,6 +67,7 @@ fn main() {
         "TKXSBase",
         "TKDESTEP",
         "TKDE",
+        "TKFeat",
         "TKFillet",
         "TKOffset",
         "TKHLR",

@@ -115,7 +115,7 @@ Status: **have** = Faber has it, **part** = a reduced form, **gap** = absent.
 | Pipe | sweep with a circle | part; gap as one feature |
 | Hole, Thread | hole, thread (modelled) | have |
 | Rib, Web | none | gap |
-| Emboss (text and profiles on faces) | none | gap |
+| Emboss (text and profiles on faces) | raise or engrave a closed sketch on one flat or cylindrical face | part |
 | Rectangular, circular pattern, mirror | linear, circular pattern, mirror | have |
 | Pattern on path | none | gap |
 | Thicken | thicken | have |
@@ -126,13 +126,13 @@ Status: **have** = Faber has it, **part** = a reduced form, **gap** = absent.
 | --- | --- | --- |
 | Move/Copy (free, XYZ, rotate, point to point) | numeric placement form; `Transform` feature | part |
 | Align | none | gap |
-| Press Pull, Offset Faces | planar press pull, offset of a whole solid | part |
+| Press Pull, Offset Faces | planar press pull, signed offsets of selected faces and whole-solid offsets | part |
 | Fillet (constant) | fillet | have |
 | Fillet (variable, chord, rule, full round) | none | gap |
 | Chamfer (equal) | chamfer | have |
 | Chamfer (two distances, distance and angle) | none | gap |
 | Shell, Draft, Combine, Split Body | shell, draft, booleans, split | have |
-| Split Face, Replace Face, Remove Faces | none | gap |
+| Split Face, Replace Face, Remove Faces | split with a plane or sketch, remove selected faces and heal the solid. Replace Face remains open. | part |
 | Scale | none | gap |
 | Delete, Copy, Paste | remove part; no copy | part |
 | Physical material, appearance | colour; density in a query only | part |

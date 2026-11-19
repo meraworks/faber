@@ -436,3 +436,73 @@ fn structured_assembly_example_keeps_the_supports_linked_at_both_sizes() {
         );
     }
 }
+#[test]
+fn face_helpers_keep_selectors_modes_and_split_tool_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"
+local f=import 'faber.libsonnet'; local face={normal:[0,0,1],tolerance:0.000001,expect:1};
+{parts:{demo:f.part('Example',[
+  f.box('base',[10,10,10]), f.remove_faces('remove','base',[face]), f.move_faces('move','base',[face],-2),
+  f.split_face('split','base',face,{kind:'plane',plane:'mid'}),
+  f.emboss('label','base',face,'letters',0.6,'engrave',at=[2,3])],'base')}}"#,
+    );
+    let baseline: faber_model::ProjectData = serde_json::from_value(
+        serde_json::json!({"schema":1,"revision":1,"name":"Example","parts":{}}),
+    )
+    .unwrap();
+    let built = faber_build::evaluate(dir.path(), &baseline).unwrap();
+    let parts = serde_json::to_value(&built.data.parts["demo"].geometry).unwrap();
+    let g = |i: usize| parts["features"][i]["geometry"].clone();
+    assert_eq!(g(1)["faces"][0]["normal"], serde_json::json!([0., 0., 1.]));
+    assert_eq!(g(2)["distance"], -2.);
+    assert_eq!(
+        g(3)["tool"],
+        serde_json::json!({"kind":"plane","plane":"mid"})
+    );
+    assert_eq!(g(4)["mode"], "engrave");
+    assert_eq!(g(4)["at"], serde_json::json!([2., 3.]));
+}
+#[test]
+fn label_bottle_example_wraps_the_lettering_on_one_hollow_solid() {
+    use faber_ports::Kernel;
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        include_str!("../../../examples/label-bottle/design.jsonnet"),
+    );
+    source().build(dir.path()).unwrap();
+    let data = faber_files::read(dir.path()).unwrap();
+    let labelled = faber_core::build(&data, &OcctKernel).unwrap().remove(0);
+    assert_eq!(
+        OcctKernel
+            .properties(labelled.shape.as_ref().unwrap())
+            .unwrap()
+            .solids,
+        1
+    );
+    let mut plain = data.clone();
+    let Geometry::History { features, output } =
+        &mut plain.parts.get_mut("bottle").unwrap().geometry
+    else {
+        panic!("Bottle needs a feature history");
+    };
+    assert!(matches!(
+        features.last().map(|f| &f.geometry),
+        Some(Geometry::Emboss { .. })
+    ));
+    features.pop();
+    *output = "bottle_wall".into();
+    let wall = faber_core::build(&plain, &OcctKernel).unwrap().remove(0);
+    assert!(labelled.volume - wall.volume > 10.);
+    let faces = OcctKernel.faces(labelled.shape.as_ref().unwrap()).unwrap();
+    assert!(
+        faces
+            .iter()
+            .filter_map(|f| f.cylinder.as_ref())
+            .any(|c| c.internal && (c.radius - 25.).abs() < 1e-5)
+    );
+}

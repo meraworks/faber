@@ -1,4 +1,5 @@
 //! Exact solid adapter.
+mod emboss;
 mod projection;
 
 use faber_model::{Geometry, Placement};
@@ -249,6 +250,31 @@ unsafe extern "C" {
         result: *mut *mut c_void,
         error: *mut c_char,
         capacity: usize,
+    ) -> i32;
+    fn faber_remove_faces(
+        shape: *const c_void,
+        faces: *const u32,
+        count: usize,
+        out: *mut *mut c_void,
+        error: *mut c_char,
+        len: usize,
+    ) -> i32;
+    fn faber_move_faces(
+        shape: *const c_void,
+        faces: *const u32,
+        count: usize,
+        distance: f64,
+        out: *mut *mut c_void,
+        error: *mut c_char,
+        len: usize,
+    ) -> i32;
+    fn faber_split_face(
+        shape: *const c_void,
+        face: u32,
+        tool: *const c_void,
+        out: *mut *mut c_void,
+        error: *mut c_char,
+        len: usize,
     ) -> i32;
     fn faber_split(
         input: *const c_void,
@@ -933,6 +959,34 @@ impl Kernel for OcctKernel {
             )
         })
     }
+    fn remove_faces(&self, shape: &Shape, faces: &[u32]) -> Result<Shape> {
+        let input = pointer(shape)?;
+        shape_call(|out, error, len| unsafe {
+            faber_remove_faces(input, faces.as_ptr(), faces.len(), out, error, len)
+        })
+    }
+    fn move_faces(&self, shape: &Shape, faces: &[u32], distance: f64) -> Result<Shape> {
+        positive(distance.abs())?;
+        let input = pointer(shape)?;
+        shape_call(|out, error, len| unsafe {
+            faber_move_faces(
+                input,
+                faces.as_ptr(),
+                faces.len(),
+                distance,
+                out,
+                error,
+                len,
+            )
+        })
+    }
+    fn split_face(&self, shape: &Shape, face: u32, tool: &Shape) -> Result<Shape> {
+        let input = pointer(shape)?;
+        let cutter = pointer(tool)?;
+        shape_call(|out, error, len| unsafe {
+            faber_split_face(input, face, cutter, out, error, len)
+        })
+    }
     fn linear_form(
         &self,
         body: &Shape,
@@ -971,6 +1025,14 @@ impl Kernel for OcctKernel {
     fn face_shape(&self, shape: &Shape, index: u32) -> Result<Shape> {
         let input = pointer(shape)?;
         shape_call(|out, error, len| unsafe { faber_face_shape(input, index, out, error, len) })
+    }
+    fn wrap_on_cylinder(
+        &self,
+        flat: &Shape,
+        cylinder: &faber_ports::CylinderFace,
+        at: [f64; 2],
+    ) -> Result<Shape> {
+        emboss::wrap(flat, cylinder, at)
     }
     fn thicken(&self, shape: &Shape, thickness: f64) -> Result<Shape> {
         positive(thickness.abs())?;

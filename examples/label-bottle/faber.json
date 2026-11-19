@@ -1,0 +1,9 @@
+{
+  "schema": 2,
+  "revision": 1,
+  "name": "Label bottle",
+  "params": {
+    "letter_height": "10",
+    "relief": "1.5"
+  }
+}

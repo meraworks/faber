@@ -44,6 +44,9 @@ impl AssetStore for FileAssets {
     fn read_mesh(&self, path: &Path) -> Result<Option<faber_ports::Mesh>> {
         crate::mesh_input::read(path)
     }
+    fn is_mesh(&self, path: &Path) -> Result<bool> {
+        crate::mesh_input::is_mesh(path).map_err(|error| error.to_string())
+    }
 
     fn put(&self, source: &Path) -> Result<String> {
         let mut input = File::open(source).map_err(|e| e.to_string())?;
