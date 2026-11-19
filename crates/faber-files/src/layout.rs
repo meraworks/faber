@@ -200,6 +200,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
     Ok(ProjectData {
         components,
         drawings,
+        machining: Default::default(),
         printer,
         materials: manifest.materials,
         studies,

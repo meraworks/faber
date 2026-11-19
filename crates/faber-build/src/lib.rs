@@ -495,6 +495,7 @@ fn empty_project(root: &Path) -> ProjectData {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled".into());
     ProjectData {
+        machining: Default::default(),
         printer: None,
         configurations: Default::default(),
         active_configuration: None,

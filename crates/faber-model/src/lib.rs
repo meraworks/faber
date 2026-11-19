@@ -13,6 +13,7 @@ pub use plastic::{BossRibs, LipLoop, LipSide, RibSide};
 pub use printer::{Clearance, Printer};
 pub use solved_sketch::{SketchConstraint, SketchEntity, SolvedSketchData};
 pub mod drawing;
+pub mod machining;
 pub mod motion;
 pub mod study;
 pub use material::{MaterialClass, MaterialData};
@@ -1316,6 +1317,8 @@ pub struct Part<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectData {
+    #[serde(default, skip_serializing_if = "machining::Machining::is_empty")]
+    pub machining: machining::Machining,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub configurations: BTreeMap<String, Configuration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
