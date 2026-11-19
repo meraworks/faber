@@ -5,6 +5,23 @@ pub mod bvh;
 use faber_model::{Geometry, Profile};
 use faber_ports::{Kernel, Mesh, Result};
 
+/// Measure a closed, consistently wound mesh with valid vertex indices. Units are cubic millimetres.
+pub fn signed_volume(mesh: &Mesh) -> f64 {
+    use glam::DVec3;
+    let Some(first) = mesh.triangles.first() else {
+        return 0.;
+    };
+    let origin = mesh.vertices[first[0] as usize];
+    mesh.triangles
+        .iter()
+        .map(|tri| {
+            let [a, b, c] =
+                tri.map(|i| DVec3::from(mesh.vertices[i as usize]) - DVec3::from(origin));
+            a.dot(b.cross(c)) / 6.
+        })
+        .sum()
+}
+
 pub struct NativeKernel;
 
 impl Kernel for NativeKernel {

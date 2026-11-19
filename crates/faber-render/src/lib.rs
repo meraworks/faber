@@ -88,6 +88,7 @@ pub struct Target {
 }
 
 pub struct DrawList {
+    field: Option<SurfacePaint>,
     marks: FaceMarks,
     buffer: wgpu::Buffer,
     count: u32,
@@ -163,6 +164,63 @@ struct SectionBindings<'a> {
 }
 
 impl DrawList {
+    /// Replace the field of one body and retain the buffers of the other bodies.
+    pub fn update_field(
+        &mut self,
+        gpu: &Gpu,
+        part: &str,
+        mesh: &Mesh,
+        ratios: &[f32],
+    ) -> Result<()> {
+        if ratios.len() != mesh.vertices.len() || ratios.iter().any(|r| !(0. ..=1.).contains(r)) {
+            return Err("Each mesh vertex needs a field value between zero and one.".into());
+        }
+        if !self.ranges.contains_key(part) {
+            return Err(format!("Unknown field part: {part}"));
+        }
+        let count = mesh
+            .triangles
+            .len()
+            .checked_mul(3)
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|&n| n > 0)
+            .ok_or("The field mesh has no triangles or exceeds the vertex limit.")?;
+        let mut vertices = Vec::with_capacity(count as usize);
+        for &i in mesh.triangles.iter().flatten() {
+            let point = mesh
+                .vertices
+                .get(i as usize)
+                .ok_or("Invalid field mesh vertex.")?;
+            vertices.push(Vertex {
+                position: point.map(|v| v as f32),
+                normal: [0.; 3],
+                colour: [ratios[i as usize], 0., 0.],
+                kind: -1.,
+            });
+        }
+        let bytes = bytemuck::cast_slice(&vertices);
+        if let Some(old) = &self.field
+            && old.part == part
+            && old.count == count
+        {
+            gpu.queue.write_buffer(&old.vertices, 0, bytes);
+        } else {
+            self.field = Some(SurfacePaint {
+                part: part.to_owned(),
+                count,
+                marks: FaceMarks::new(&gpu.device, vertices.len(), Default::default()),
+                vertices: gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Study field"),
+                        contents: bytes,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    }),
+            });
+        }
+        Ok(())
+    }
+
     fn draw_visible(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -171,6 +229,7 @@ impl DrawList {
         section: Option<SectionBindings<'_>>,
         surface: Option<&SurfacePaint>,
     ) {
+        let surface = self.field.as_ref().or(surface);
         pass.set_vertex_buffer(0, self.buffer.slice(..));
         pass.set_vertex_buffer(2, self.marks.buffer.slice(..));
         if !posed && hidden.is_empty() && section.is_none() {
@@ -597,6 +656,7 @@ impl Gpu {
                 usage: wgpu::BufferUsages::VERTEX,
             });
         Ok(DrawList {
+            field: None,
             marks: FaceMarks::new(&self.device, vertices.len(), face_ranges),
             cap_meshes: Default::default(),
             buffer,
@@ -677,6 +737,7 @@ impl Gpu {
             usage: wgpu::BufferUsages::VERTEX,
         });
         Ok(Some(DrawList {
+            field: None,
             marks: FaceMarks::new(device, vertices.len(), Default::default()),
             cap_meshes,
             buffer,

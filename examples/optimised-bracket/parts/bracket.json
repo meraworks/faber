@@ -1,0 +1,29 @@
+{
+  "material": "steel-s235",
+  "schema": 1,
+  "name": "Bracket stock",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "stock",
+        "geometry": {
+          "op": "box",
+          "size": [
+            48.0,
+            16.0,
+            12.0
+          ]
+        }
+      }
+    ],
+    "output": "stock"
+  },
+  "colour": [
+    72,
+    132,
+    156
+  ],
+  "group": "",
+  "note": ""
+}

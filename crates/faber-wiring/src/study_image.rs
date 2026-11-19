@@ -12,12 +12,41 @@ pub fn display(
     scale: f64,
     max_mpa: f32,
 ) -> Result<(Body, Vec<f32>)> {
-    let n = body.mesh.vertices.len();
-    if n == 0 || field.vertex_displacement.len() != n || field.vertex_von_mises.len() != n {
+    if field.vertex_von_mises.len() != body.mesh.vertices.len()
+        || field.vertex_displacement.len() != body.mesh.vertices.len()
+    {
         return Err("Study values do not match the part mesh.".into());
     }
     if !scale.is_finite() || scale < 0. || !max_mpa.is_finite() || max_mpa < 0. {
         return Err("Display scale and maximum stress must be finite and non-negative.".into());
+    }
+    if field.vertex_von_mises.iter().any(|&v| v < 0.)
+        || field
+            .surface
+            .as_ref()
+            .is_some_and(|s| s.vertex_von_mises.iter().any(|&v| v < 0.))
+    {
+        return Err("Stress values must be finite and non-negative.".into());
+    }
+    display_range(body, field, scale, [0., max_mpa])
+}
+
+/// Map a scalar field to its legend. A signed scale shows both halves of a vibration.
+pub fn display_range(
+    body: &Body,
+    field: &StudyField,
+    scale: f64,
+    range: [f32; 2],
+) -> Result<(Body, Vec<f32>)> {
+    let n = body.mesh.vertices.len();
+    if n == 0
+        || (field.surface.is_none()
+            && (field.vertex_displacement.len() != n || field.vertex_von_mises.len() != n))
+    {
+        return Err("Study values do not match the part mesh.".into());
+    }
+    if !scale.is_finite() || !range.iter().all(|v| v.is_finite()) || range[0] > range[1] {
+        return Err("The display scale or range is invalid.".into());
     }
     let mut shown = body.clone();
     let (stresses, displacement) = if let Some(surface) = &field.surface {
@@ -42,8 +71,8 @@ pub fn display(
     } else {
         (&field.vertex_von_mises, &field.vertex_displacement)
     };
-    if stresses.iter().any(|v| !v.is_finite() || *v < 0.) {
-        return Err("Stress values must be finite and non-negative.".into());
+    if stresses.iter().any(|v| !v.is_finite()) {
+        return Err("Study values must be finite.".into());
     }
     if scale != 0. {
         let mut bounds = [[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]];
@@ -67,8 +96,8 @@ pub fn display(
         stresses
             .iter()
             .map(|v| {
-                if max_mpa > 0. {
-                    (*v / max_mpa).clamp(0., 1.)
+                if range[1] > range[0] {
+                    ((*v - range[0]) / (range[1] - range[0])).clamp(0., 1.)
                 } else {
                     0.
                 }
@@ -96,7 +125,68 @@ pub fn save(
     let (shown, ratios) = display(body, field, scale, max)?;
     let mut image =
         faber_render::stress_image(&shown, &ratios, width, height, faber_scene::View::Iso)?;
-    legend(&mut image, max);
+    legend(&mut image, [0., max], "MPa");
+    save_png(&image, path)
+}
+
+/// Save the selected study field with its unit and range.
+pub fn save_analysis(
+    body: &Body,
+    analysis: &crate::study::Analysis,
+    path: &Path,
+    dimensions: [u32; 2],
+    mode: Option<usize>,
+    scale: f64,
+) -> Result<()> {
+    if !path
+        .extension()
+        .is_some_and(|s| s.eq_ignore_ascii_case("png"))
+    {
+        return Err("Choose a PNG file for the study map.".into());
+    }
+    let report = &analysis.report;
+    let kind = report["kind"].as_str().unwrap_or("static");
+    if mode.is_some() && kind != "modal" {
+        return Err("Choose a mode only for a frequency study.".into());
+    }
+    let index = mode
+        .unwrap_or(1)
+        .checked_sub(1)
+        .ok_or("Mode numbers start at one.")?;
+    let field = analysis
+        .fields
+        .get(index)
+        .ok_or("The selected mode is outside the study range.")?;
+    let (range, unit) = match kind {
+        "thermal" => (
+            [
+                report["min_c"].as_f64().unwrap_or(0.) as f32,
+                report["max_c"].as_f64().unwrap_or(0.) as f32,
+            ],
+            "C",
+        ),
+        "shape" => ([0., 1.], "rho"),
+        "modal" => ([0., 1.], "rel"),
+        _ => (
+            [
+                0.,
+                report["max_von_mises_mpa"].as_f64().unwrap_or(0.) as f32,
+            ],
+            "MPa",
+        ),
+    };
+    if kind != "modal" && scale < 0. {
+        return Err("The displacement scale must be non-negative.".into());
+    }
+    let (shown, ratios) = display_range(body, field, scale, range)?;
+    let mut image = faber_render::stress_image(
+        &shown,
+        &ratios,
+        dimensions[0],
+        dimensions[1],
+        faber_scene::View::Iso,
+    )?;
+    legend(&mut image, range, unit);
     save_png(&image, path)
 }
 
@@ -115,7 +205,7 @@ pub(crate) fn save_png(image: &RgbaImage, path: &Path) -> Result<()> {
 }
 
 // Five equal steps. The key stays readable at the minimum image size.
-fn legend(image: &mut RgbaImage, max: f32) {
+fn legend(image: &mut RgbaImage, range: [f32; 2], unit: &str) {
     let scale = if image.height() >= 280 && image.width() >= 400 {
         2
     } else {
@@ -130,17 +220,18 @@ fn legend(image: &mut RgbaImage, max: f32) {
             image.put_pixel(x, y, Rgba([248, 249, 249, 255]));
         }
     }
-    label(image, left, top + scale, scale, "MPa");
+    label(image, left, top + scale, scale, unit);
     for i in 0..5 {
-        let value = max * (4 - i) as f32 / 4.;
-        let rgb = colour(value, max);
+        let ratio = (4 - i) as f32 / 4.;
+        let value = range[0] + (range[1] - range[0]) * ratio;
+        let rgb = colour(if range[0] == range[1] { 0. } else { ratio }, 1.);
         let y = top + (i + 1) * pitch;
         for row in y..y + 6 * scale {
             for x in left..left + 4 * scale {
                 image.put_pixel(x, row, Rgba([rgb[0], rgb[1], rgb[2], 255]));
             }
         }
-        let text = if value != 0. && !(0.01..1000.).contains(&value) {
+        let text = if value != 0. && !(0.01..1000.).contains(&value.abs()) {
             format!("{value:.1e}")
         } else {
             format!("{value:.2}")
@@ -169,6 +260,11 @@ fn label(image: &mut RgbaImage, mut x: u32, y: u32, scale: u32, text: &str) {
             b'M' => [5, 7, 7, 5, 5],
             b'P' => [7, 5, 7, 4, 4],
             b'a' => [0, 6, 3, 5, 7],
+            b'C' => [7, 4, 4, 4, 7],
+            b'r' => [0, 0, 6, 4, 4],
+            b'h' => [4, 4, 6, 5, 5],
+            b'o' => [0, 0, 7, 5, 7],
+            b'l' => [4, 4, 4, 4, 3],
             _ => [0; 5],
         };
         for (row, bits) in rows.into_iter().enumerate() {
@@ -193,6 +289,19 @@ fn label(image: &mut RgbaImage, mut x: u32, y: u32, scale: u32, text: &str) {
 mod tests {
     use super::*;
     use faber_ports::Mesh;
+
+    #[test]
+    fn cold_temperature_uses_the_same_decimal_format_as_warm_temperature() {
+        let mut actual = RgbaImage::new(64, 64);
+        legend(&mut actual, [-15., 65.], "C");
+        let mut expected = RgbaImage::from_pixel(64, 64, Rgba([248, 249, 249, 255]));
+        label(&mut expected, 10, 54, 1, "-15.00");
+        for y in 54..59 {
+            for x in 10..38 {
+                assert_eq!(actual.get_pixel(x, y), expected.get_pixel(x, y));
+            }
+        }
+    }
 
     #[test]
     fn png_interpolates_stress_before_applying_the_legend_colours() {
@@ -269,5 +378,34 @@ mod tests {
             .filter(|p| p[0] > 80 && p[2] > 80 && p[1].saturating_add(24) < p[0].min(p[2]))
             .count();
         assert_eq!(violet, 0, "The stress legend contains no violet.");
+    }
+
+    #[test]
+    fn temperature_maps_below_zero_and_a_mode_moves_in_both_directions() {
+        let body = Body {
+            id: "beam".into(),
+            name: "Beam".into(),
+            colour: [100; 3],
+            group: String::new(),
+            mesh: Mesh {
+                vertices: vec![[0., 0., 0.], [2., 0., 0.], [0., 3., 0.]],
+                triangles: vec![[0, 1, 2]],
+                normals: vec![],
+            },
+            volume: 0.,
+            bounds: [[0., 0., 0.], [2., 3., 0.]],
+            shape: None,
+            face_of_triangle: vec![],
+            edge_lines: Default::default(),
+        };
+        let field = StudyField {
+            vertex_von_mises: vec![-20., 0., 20.],
+            vertex_displacement: vec![[0., 0., 1.]; 3],
+            surface: None,
+        };
+        let (shown, values) = display_range(&body, &field, -2., [-20., 20.]).unwrap();
+        assert_eq!(values, [0., 0.5, 1.]);
+        assert_eq!(shown.mesh.vertices[0], [0., 0., -2.]);
+        assert_eq!(body.mesh.vertices[0], [0.; 3]);
     }
 }

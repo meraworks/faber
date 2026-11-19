@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "studies": {
+    "reduce_stock": {
+      "kind": "shape",
+      "target_volume": 0.55,
+      "keep": [],
+      "min_member_mm": 4.0,
+      "symmetry": [],
+      "part": "bracket",
+      "fixtures": [
+        {
+          "face": {
+            "created_by": null,
+            "normal": [
+              -1.0,
+              0.0,
+              0.0
+            ],
+            "near_centre": null,
+            "in_box": null,
+            "area": null,
+            "tolerance": 0.001,
+            "expect": 1
+          },
+          "kind": "fixed"
+        }
+      ],
+      "loads": [
+        {
+          "kind": "force",
+          "face": {
+            "created_by": null,
+            "normal": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "near_centre": null,
+            "in_box": null,
+            "area": null,
+            "tolerance": 0.001,
+            "expect": 1
+          },
+          "newtons": [
+            0.0,
+            0.0,
+            -40.0
+          ]
+        }
+      ],
+      "resolution_mm": 2.0
+    }
+  }
+}

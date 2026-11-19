@@ -550,3 +550,29 @@ fn the_constrained_plate_rebuilds_its_step_when_its_width_changes() {
     assert!((wider.bounds[1][0] - wider.bounds[0][0] - 70.).abs() < 1e-5);
     assert!((wider.volume - original.volume - (36. * 4. + 32. * 2.) * 10.).abs() < 1e-4);
 }
+
+#[test]
+fn source_study_helpers_write_frequency_heat_and_shape_cases() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"local f=import 'faber.libsonnet';
+local face={normal:[1,0,0],tolerance:0.001,expect:1};
+{parts:{bar:f.part('Beam',[f.box('beam',[20,4,4])],'beam',material='steel-s235')},studies:{
+ modes:f.modal_study('bar',[],modes=3),
+ heat:f.thermal_study('bar',[f.temperature(face,-5),f.power(face,3),f.convection(face,25,20)]),
+ shape:f.shape_study('bar',[f.fixed(face)],[f.force(face,[0,0,-10])],0.55,keep=[face])
+}}"#,
+    );
+    source().ensure_built(dir.path()).unwrap();
+    let data: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("analysis.json")).unwrap()).unwrap();
+    let rows = &data["studies"];
+    assert_eq!(rows["modes"]["kind"], "modal");
+    assert_eq!(rows["modes"]["modes"], 3);
+    assert_eq!(rows["heat"]["conditions"][0]["celsius"], -5.0);
+    assert_eq!(rows["heat"]["conditions"][2]["w_m2k"], 25.0);
+    assert_eq!(rows["shape"]["target_volume"], 0.55);
+    assert_eq!(rows["shape"]["keep"][0]["expect"], 1);
+}

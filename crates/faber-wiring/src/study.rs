@@ -8,14 +8,18 @@ use faber_model::{
 use faber_ports::{Body, Mesh, Result};
 use faber_sim::{
     Elastic, Grid, Load, StaticCase, StaticResult, Support, default_h, solve_static_with_progress,
-    voxelise,
+    voxelise_with_progress,
 };
 use glam::DVec3;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+mod analysis;
 mod surface;
+pub use analysis::{
+    Analysis, check_shape_destination, quick_analysis_with_progress, run_analysis, save_shape,
+};
 #[cfg(test)]
 mod surface_tests;
 
@@ -55,8 +59,8 @@ pub struct StudyField {
 
 #[derive(Clone, Debug)]
 pub struct StudySurface {
-    pub mesh: Mesh,
-    pub face_of_triangle: Vec<u32>,
+    pub mesh: Arc<Mesh>,
+    pub face_of_triangle: Arc<Vec<u32>>,
     pub vertex_von_mises: Vec<f32>,
     pub vertex_displacement: Vec<[f32; 3]>,
 }
@@ -117,7 +121,41 @@ fn analyse(
     resolution_mm: Option<f64>,
     mut progress: impl FnMut(usize, f64) -> bool,
 ) -> Result<Answer> {
-    check_progress(&mut progress)?;
+    let Prepared {
+        study,
+        body,
+        material_id,
+        material,
+        case,
+    } = prepare(project, recipe, resolution_mm, &mut progress)?;
+    if !matches!(study.kind, faber_model::study::StudyKind::Static) {
+        return Err("Choose a static study.".into());
+    }
+    let result = solve_static_with_progress(&case, &mut progress)?;
+    if !progress(result.iterations, result.residual) {
+        return Err("Study stopped.".into());
+    }
+    Ok((
+        report(id, &material_id, &study, &material, &case.grid, &result)?,
+        field(body, &case.grid, &result)?,
+    ))
+}
+
+struct Prepared<'a> {
+    study: Study,
+    body: &'a Body,
+    material_id: String,
+    material: MaterialData,
+    case: StaticCase,
+}
+fn prepare<'a>(
+    project: &'a Project,
+    recipe: &Study<Scalar>,
+    resolution_mm: Option<f64>,
+    progress: &mut impl FnMut(usize, f64) -> bool,
+) -> Result<Prepared<'a>> {
+    use faber_model::study::StudyKind;
+    check_progress(progress)?;
     let study = project.resolve_study(recipe)?;
     if !project.data.parts.contains_key(&study.part) {
         return Err(format!("Unknown part: {}", study.part));
@@ -131,8 +169,9 @@ fn analyse(
                 "Part {} has no material. Set a material or give one in the study.",
                 study.part
             )
-        })?;
-    let material = faber_core::materials::get(&project.data, material_id)?;
+        })?
+        .to_owned();
+    let material = faber_core::materials::get(&project.data, &material_id)?;
     let body = project
         .bodies
         .iter()
@@ -144,16 +183,23 @@ fn analyse(
     if !h.is_finite() || h <= 0. {
         return Err("The resolution must be finite and greater than zero.".into());
     }
-    if study.fixtures.is_empty() {
+    if study.fixtures.is_empty()
+        && matches!(
+            study.kind,
+            StudyKind::Static | StudyKind::Shape { .. } | StudyKind::Thermal { stress: true, .. }
+        )
+    {
         return Err("The study has no fixture. Add a fixed face.".into());
     }
-    if study.loads.is_empty() {
+    if study.loads.is_empty() && matches!(study.kind, StudyKind::Static | StudyKind::Shape { .. }) {
         return Err("Add a load to the study.".into());
     }
     let (supports, loads) = boundary(project, body, &study, &material)?;
-    check_progress(&mut progress)?;
-    let grid = voxelise(&body.mesh, &Bvh::new(&body.mesh)?, h)?;
-    check_progress(&mut progress)?;
+    check_progress(progress)?;
+    let grid = voxelise_with_progress(&body.mesh, &Bvh::new(&body.mesh)?, h, |_, _| {
+        progress(0, 1.)
+    })?;
+    check_progress(progress)?;
     let case = StaticCase {
         grid,
         material: Elastic {
@@ -165,13 +211,13 @@ fn analyse(
         tolerance: 1e-6,
         max_iterations: 20_000,
     };
-    let result = solve_static_with_progress(&case, &mut progress)?;
-    if !progress(result.iterations, result.residual) {
-        return Err("Study stopped.".into());
-    }
-    let report = report(id, material_id, &study, &material, &case.grid, &result)?;
-    let field = field(body, &case.grid, &result)?;
-    Ok((report, field))
+    Ok(Prepared {
+        study,
+        body,
+        material_id,
+        material,
+        case,
+    })
 }
 
 type Triangles = Vec<[[f64; 3]; 3]>;
@@ -182,10 +228,15 @@ fn triangles(body: &Body, ids: &[u32]) -> Result<Triangles> {
         .mesh
         .triangles
         .iter()
-        .zip(&body.face_of_triangle)
-        .filter_map(|(tri, face)| {
-            if ids.contains(face) {
-                found.insert(*face);
+        .enumerate()
+        .filter_map(|(i, tri)| {
+            let face = if body.shape.is_none() {
+                i as u32 + 1
+            } else {
+                *body.face_of_triangle.get(i)?
+            };
+            if ids.contains(&face) {
+                found.insert(face);
                 Some(tri.map(|i| body.mesh.vertices[i as usize]))
             } else {
                 None
@@ -206,6 +257,12 @@ fn boundary(
     let mut fixed = BTreeSet::<u32>::new();
     let mut supports = Vec::new();
     let mut loads = Vec::new();
+    if matches!(
+        study.kind,
+        faber_model::study::StudyKind::Thermal { stress: false, .. }
+    ) {
+        return Ok((supports, loads));
+    }
     for fixture in &study.fixtures {
         let ids = project.unplaced_faces_matching(&study.part, &fixture.face)?;
         fixed.extend(ids.iter().copied());
@@ -214,23 +271,30 @@ fn boundary(
                 triangles: triangles(body, &ids)?,
             }),
             FixtureKind::Slide => {
-                let faces = project
-                    .selected_topology_kind(&study.part, None, TopologyKind::Faces, None, None)?
-                    .1
-                    .unwrap_or_default();
+                let faces = if body.shape.is_some() {
+                    project
+                        .selected_topology_kind(&study.part, None, TopologyKind::Faces, None, None)?
+                        .1
+                        .unwrap_or_default()
+                } else {
+                    vec![]
+                };
                 for id in ids {
-                    let normal = faces
-                        .iter()
-                        .find(|f| f.index == id)
-                        .and_then(|f| f.normal)
-                        .ok_or("A slide fixture needs a planar face.")?;
-                    supports.push(Support::SlideFace {
-                        triangles: triangles(body, &[id])?,
-                        normal,
-                    });
+                    let triangles = triangles(body, &[id])?;
+                    let normal = if body.shape.is_some() {
+                        faces.iter().find(|f| f.index == id).and_then(|f| f.normal)
+                    } else {
+                        let [a, b, c] = triangles[0].map(DVec3::from);
+                        (b - a).cross(c - a).try_normalize().map(|v| v.to_array())
+                    }
+                    .ok_or("A slide fixture needs a planar face.")?;
+                    supports.push(Support::SlideFace { triangles, normal });
                 }
             }
         }
+    }
+    if matches!(study.kind, faber_model::study::StudyKind::Modal { .. }) {
+        return Ok((supports, loads));
     }
     for load in &study.loads {
         let face = match load {
@@ -439,51 +503,199 @@ fn nearest_cell(grid: &Grid, point: DVec3) -> Option<usize> {
 }
 
 fn field(body: &Body, grid: &Grid, result: &StaticResult) -> Result<StudyField> {
-    let detail = surface::refine(&body.mesh, &body.face_of_triangle, grid.h, 150_000);
-    let vertices = detail
-        .as_ref()
-        .map_or(&body.mesh.vertices, |(mesh, _)| &mesh.vertices);
-    let mut vertex_von_mises = Vec::with_capacity(vertices.len());
-    let mut vertex_displacement = Vec::with_capacity(vertices.len());
-    for vertex in vertices {
-        let point = DVec3::from(*vertex);
-        let cell = nearest_cell(grid, point).ok_or("The part has no active cells.")?;
-        vertex_von_mises.push(result.von_mises[cell]);
-        let ijk = coordinates(grid, cell);
-        let t = ((point - DVec3::from(grid.origin)) / grid.h - DVec3::from(ijk.map(|v| v as f64)))
-            .clamp(DVec3::ZERO, DVec3::ONE)
-            .to_array();
+    sample_field(body, grid, |cell, nodes| {
         let mut displacement = DVec3::ZERO;
-        for k in 0..8 {
-            let ij = std::array::from_fn::<_, 3, _>(|i| (k >> i) & 1);
-            let weight = (0..3)
-                .map(|i| if ij[i] == 0 { 1. - t[i] } else { t[i] })
-                .product::<f64>();
-            let node = grid.node(ijk[0] + ij[0], ijk[1] + ij[1], ijk[2] + ij[2]);
-            displacement += DVec3::from(result.displacement[node]) * weight;
+        for (i, w) in nodes {
+            displacement += DVec3::from(result.displacement[i]) * w;
         }
-        let value = displacement.as_vec3();
-        if !value.is_finite() {
-            return Err("The displacement exceeds the display range.".into());
-        }
-        vertex_displacement.push(value.to_array());
-    }
-    if let Some((mesh, face_of_triangle)) = detail {
-        let count = body.mesh.vertices.len();
-        return Ok(StudyField {
-            vertex_von_mises: vertex_von_mises[..count].to_vec(),
-            vertex_displacement: vertex_displacement[..count].to_vec(),
-            surface: Some(Arc::new(StudySurface {
-                mesh,
-                face_of_triangle,
-                vertex_von_mises,
-                vertex_displacement,
-            })),
-        });
-    }
-    Ok(StudyField {
-        vertex_von_mises,
-        vertex_displacement,
-        surface: None,
+        (result.von_mises[cell], displacement)
     })
+}
+
+struct FieldGeometry {
+    source_count: usize,
+    detail: Option<(Arc<Mesh>, Arc<Vec<u32>>)>,
+}
+
+impl FieldGeometry {
+    fn new(body: &Body, grid: &Grid) -> Self {
+        Self {
+            source_count: body.mesh.vertices.len(),
+            detail: surface::refine(&body.mesh, &body.face_of_triangle, grid.h, 150_000)
+                .map(|(mesh, faces)| (Arc::new(mesh), Arc::new(faces))),
+        }
+    }
+
+    fn vertices<'a>(&'a self, body: &'a Body) -> &'a [[f64; 3]] {
+        self.detail
+            .as_ref()
+            .map_or(&body.mesh.vertices, |(mesh, _)| &mesh.vertices)
+    }
+
+    fn field(
+        &self,
+        samples: impl ExactSizeIterator<Item = Result<(f32, DVec3)>>,
+    ) -> Result<StudyField> {
+        let mut vertex_von_mises = Vec::with_capacity(samples.len());
+        let mut vertex_displacement = Vec::with_capacity(samples.len());
+        for sample in samples {
+            let (scalar, displacement) = sample?;
+            let value = displacement.as_vec3();
+            if !value.is_finite() {
+                return Err("The displacement exceeds the display range.".into());
+            }
+            if !scalar.is_finite() {
+                return Err("The field value exceeds the display range.".into());
+            }
+            vertex_von_mises.push(scalar);
+            vertex_displacement.push(value.to_array());
+        }
+        if let Some((mesh, face_of_triangle)) = &self.detail {
+            return Ok(StudyField {
+                vertex_von_mises: vertex_von_mises[..self.source_count].to_vec(),
+                vertex_displacement: vertex_displacement[..self.source_count].to_vec(),
+                surface: Some(Arc::new(StudySurface {
+                    mesh: mesh.clone(),
+                    face_of_triangle: face_of_triangle.clone(),
+                    vertex_von_mises,
+                    vertex_displacement,
+                })),
+            });
+        }
+        Ok(StudyField {
+            vertex_von_mises,
+            vertex_displacement,
+            surface: None,
+        })
+    }
+}
+
+struct SampleLocation {
+    cell: usize,
+    first_node: usize,
+    fraction: [f64; 3],
+}
+
+impl SampleLocation {
+    fn at(grid: &Grid, vertex: [f64; 3]) -> Result<Self> {
+        let point = DVec3::from(vertex);
+        let cell = nearest_cell(grid, point).ok_or("The part has no active cells.")?;
+        let ijk = coordinates(grid, cell);
+        let fraction = ((point - DVec3::from(grid.origin)) / grid.h
+            - DVec3::from(ijk.map(|v| v as f64)))
+        .clamp(DVec3::ZERO, DVec3::ONE)
+        .to_array();
+        Ok(Self {
+            cell,
+            first_node: grid.node(ijk[0], ijk[1], ijk[2]),
+            fraction,
+        })
+    }
+
+    fn nodes(&self, offsets: &[usize; 8]) -> [(usize, f64); 8] {
+        std::array::from_fn(|k| {
+            let weight = self
+                .fraction
+                .iter()
+                .enumerate()
+                .map(|(axis, &t)| if k & (1 << axis) == 0 { 1. - t } else { t })
+                .product();
+            (self.first_node + offsets[k], weight)
+        })
+    }
+}
+
+fn corner_offsets(grid: &Grid) -> [usize; 8] {
+    std::array::from_fn(|k| grid.node(k & 1, (k >> 1) & 1, (k >> 2) & 1))
+}
+
+fn sample_field(
+    body: &Body,
+    grid: &Grid,
+    mut sample: impl FnMut(usize, [(usize, f64); 8]) -> (f32, DVec3),
+) -> Result<StudyField> {
+    let geometry = FieldGeometry::new(body, grid);
+    let offsets = corner_offsets(grid);
+    geometry.field(geometry.vertices(body).iter().map(|&p| {
+        let at = SampleLocation::at(grid, p)?;
+        Ok(sample(at.cell, at.nodes(&offsets)))
+    }))
+}
+
+const DISPLAY_BYTES: usize = 512 * 1024 * 1024;
+
+fn check_modal_display(
+    source: usize,
+    detail: usize,
+    geometry_bytes: usize,
+    modes: usize,
+) -> Result<()> {
+    // Cached reads can hold two copies of the original vertex field.
+    let values = source
+        .saturating_mul(2)
+        .saturating_add(detail)
+        .saturating_mul(16)
+        .saturating_mul(modes);
+    let samples = source
+        .max(detail)
+        .saturating_mul(std::mem::size_of::<SampleLocation>());
+    let bytes = geometry_bytes
+        .saturating_add(values)
+        .saturating_add(samples);
+    if bytes > DISPLAY_BYTES {
+        return Err(format!(
+            "The mode display needs {} MiB. The limit is 512 MiB. Request fewer modes or use a smaller display mesh.",
+            bytes.div_ceil(1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+
+struct ModeDisplay {
+    geometry: FieldGeometry,
+    offsets: [usize; 8],
+    locations: Vec<SampleLocation>,
+}
+
+impl ModeDisplay {
+    fn new(body: &Body, grid: &Grid, modes: usize, mut poll: impl FnMut() -> bool) -> Result<Self> {
+        let source = body.mesh.vertices.len();
+        check_modal_display(source, 0, 0, modes)?;
+        let geometry = FieldGeometry::new(body, grid);
+        if let Some((mesh, faces)) = &geometry.detail {
+            let bytes = std::mem::size_of_val(mesh.vertices.as_slice())
+                + std::mem::size_of_val(mesh.normals.as_slice())
+                + std::mem::size_of_val(mesh.triangles.as_slice())
+                + std::mem::size_of_val(faces.as_slice());
+            check_modal_display(source, mesh.vertices.len(), bytes, modes)?;
+        }
+        let vertices = geometry.vertices(body);
+        let mut locations = Vec::with_capacity(vertices.len());
+        for (index, &p) in vertices.iter().enumerate() {
+            if index.is_multiple_of(2048) && !poll() {
+                return Err("Study stopped.".into());
+            }
+            locations.push(SampleLocation::at(grid, p)?);
+        }
+        Ok(Self {
+            geometry,
+            locations,
+            offsets: corner_offsets(grid),
+        })
+    }
+
+    fn field(&self, shape: &[[f32; 3]], mut poll: impl FnMut() -> bool) -> Result<StudyField> {
+        self.geometry
+            .field(self.locations.iter().enumerate().map(|(index, at)| {
+                if index.is_multiple_of(8192) && !poll() {
+                    return Err("Study stopped.".into());
+                }
+                let value = at
+                    .nodes(&self.offsets)
+                    .into_iter()
+                    .map(|(i, w)| DVec3::from(shape[i].map(f64::from)) * w)
+                    .sum::<DVec3>();
+                Ok((value.length() as f32, value))
+            }))
+    }
 }

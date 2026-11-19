@@ -1349,3 +1349,63 @@ corner `c` with a radius taken from a project parameter.
 Other edits include `chamfer`, `trim`, `extend`, `mirror` and `pattern`.
 The status report lists the degrees of freedom of each under-constrained
 sketch in `sketch_warnings`. Conflict indices start at zero.
+
+## Frequency study
+
+Open **Stress study**, select **Frequency** in **Study kind**, choose the part
+and set the number of modes. Set its material and fix the faces that meet a
+support. Run the study. Select a frequency in hertz, then select **Animate
+mode** to see its direction. The animation scale makes movement visible.
+It does not give an operating displacement. An unrestrained part has six rigid
+motions before its elastic modes. This is a small-displacement, linear study.
+It does not calculate buckling, contact or the response to a changing load.
+
+## Thermal study
+
+Select **Thermal** and use **Add heat condition** to pick faces. A temperature
+holds a face at a value in degrees Celsius. Power supplies a total heat flow
+in watts to the selected faces. Convection transfers heat to air at the given
+temperature and film coefficient in W/(m² K). Heat input needs a fixed
+temperature or convection to reach a steady state.
+
+Run the study to see the surface temperature and its Celsius legend. To
+calculate stress from expansion, select **Thermal stress**, enter the
+stress-free reference temperature and add the mechanical fixtures. The
+material needs thermal conductivity and, for stress, an expansion
+coefficient. The calculation assumes steady heat flow and linear material
+behaviour. It does not calculate heating time or contact between parts.
+
+## Shape optimisation
+
+The mass and volume in the study report come from the cell densities.
+Use the closed mesh to measure the final surface after smoothing.
+
+Open the **optimised-bracket** example and select its **reduce_stock** study.
+The 48 × 16 × 12 mm steel block has a fixed end and a 40 N downward force at
+the opposite end. Its target is 55% of the stock volume. The solver keeps
+the material at fixtures, loads and any faces you mark with **Add kept face**.
+Set the minimum member size and cell size in millimetres. A smaller cell size
+takes longer and resolves more detail.
+
+Select **Run study** to see the density change. **Stop** keeps the last
+preview on the screen. After a complete run, **Save as part** adds the result
+as a separate mesh. The volume fraction and estimated mass saving come from
+the cell densities. The mesh mass and volume describe the saved surface.
+In this example the solver kept 55% of the stock and estimated a saving of
+32.56 g. The saved mesh has one connected piece and a volume of 4,685.9 mm³.
+Model the final part over the mesh or convert it
+to a solid, then check it with a static study. The optimisation does not
+check buckling, contact, fatigue or a non-linear material response.
+
+A saved shape keeps the position and rotation of the stock. In a project
+with a design source, build the current source before saving. Faber adds
+the mesh in one revision and keeps its stock and asset hash in
+`study-results/`. Keep this folder with the project. A later build keeps
+the saved mesh. For a mesh supplied by the source, put the mesh file in
+`assets/` under its content hash and declare the part with
+`f.saved_mesh('Result', asset_hash, material='steel-s235')`.
+
+A 50 × 40 × 25 cell beam study with a 2 mm cell size and a 6 mm filter
+reached 50% volume in 12 iterations. On the test PC the optimised solver
+took 17.6 s with four worker threads. Compliance fell from 2.016 to
+0.376 N·mm. The result had one connected piece.

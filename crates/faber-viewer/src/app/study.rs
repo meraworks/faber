@@ -1,29 +1,40 @@
 //! Set up a stress study and show its result in the model view.
 
+mod kinds;
 use super::*;
 use faber_model::{
     FaceSelector, Scalar,
-    study::{Fixture, FixtureKind, Study, StudyLoad},
+    study::{Fixture, FixtureKind, Study, StudyKind, StudyLoad},
 };
-use faber_wiring::study::{StressReport, StudyField, quick_stress_with_progress};
+use faber_wiring::study::{
+    Analysis, StressReport, StudyField, quick_analysis_with_progress, quick_stress_with_progress,
+};
+use kinds::{Heat, Kind};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 type StudyResult = (StressReport, StudyField);
+enum Outcome {
+    Static(Box<StudyResult>),
+    Other(Analysis, Option<String>),
+}
 
 #[derive(Clone, Copy)]
 enum Target {
     Fixture(usize),
     Force(usize),
     Pressure(usize),
+    Heat(usize, Heat),
+    Keep(usize),
 }
 
 struct Worker {
     stop: Arc<AtomicBool>,
     iteration: Arc<AtomicUsize>,
-    result: mpsc::Receiver<Result<StudyResult, String>>,
+    latest: Arc<std::sync::Mutex<Option<(usize, StudyField)>>>,
+    result: mpsc::Receiver<Result<Outcome, String>>,
 }
 
 impl Drop for Worker {
@@ -44,9 +55,18 @@ pub(super) struct StudyPanel {
     form: Option<Study<Scalar>>,
     name: String,
     source: Option<(PathBuf, u64)>,
+    stamp: Option<(SystemTime, u64)>,
     picking: Option<(Target, SelectFilter)>,
     worker: Option<Worker>,
     result: Option<StudyResult>,
+    other: Option<Arc<Analysis>>,
+    save_error: Option<String>,
+    preview_iteration: Option<usize>,
+    stopped: bool,
+    mode: usize,
+    animate: bool,
+    animation_time: f64,
+    thermal_stress: bool,
     error: Option<String>,
     pub(super) paint: Option<Paint>,
     deformed: bool,
@@ -98,6 +118,13 @@ fn vector(ui: &mut egui::Ui, name: &str, values: &mut [Scalar; 3]) {
 impl Shell {
     fn clear_study_result(&mut self) {
         self.study.result = None;
+        self.study.other = None;
+        self.study.save_error = None;
+        self.study.preview_iteration = None;
+        self.study.stopped = false;
+        self.study.animate = false;
+        self.study.mode = 0;
+        self.study.thermal_stress = false;
         if self.study.paint.take().is_some() {
             self.list = None;
             self.mesh_dirty = true;
@@ -148,6 +175,24 @@ impl Shell {
             Ok(selector) => {
                 let form = self.study.form.as_mut().unwrap();
                 match target {
+                    Target::Heat(i, kind) => {
+                        if let StudyKind::Thermal { conditions, .. } = &mut form.kind {
+                            if let Some(row) = conditions.get_mut(i) {
+                                *kinds::condition_face(row) = selector;
+                            } else {
+                                conditions.push(kind.condition(selector));
+                            }
+                        }
+                    }
+                    Target::Keep(i) => {
+                        if let StudyKind::Shape { keep, .. } = &mut form.kind {
+                            if let Some(row) = keep.get_mut(i) {
+                                *row = selector;
+                            } else {
+                                keep.push(selector);
+                            }
+                        }
+                    }
                     Target::Fixture(i) => {
                         if let Some(row) = form.fixtures.get_mut(i) {
                             row.face = selector;
@@ -192,26 +237,49 @@ impl Shell {
         let revision = self.data.revision;
         let stop = Arc::new(AtomicBool::new(false));
         let iteration = Arc::new(AtomicUsize::new(0));
+        let latest = Arc::new(std::sync::Mutex::new(None));
         let (tx, rx) = mpsc::channel();
         self.study.worker = Some(Worker {
             stop: stop.clone(),
             iteration: iteration.clone(),
+            latest: latest.clone(),
             result: rx,
         });
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
-                let project = faber_wiring::open(&root, false, None)?;
+                let project = faber_wiring::read_snapshot(&root)?;
                 if project.data.revision != revision {
                     return Err("The project changed. Run the study again.".into());
                 }
                 if stop.load(Ordering::Relaxed) {
                     return Err("The study stopped.".into());
                 }
-                quick_stress_with_progress(&project, &form, None, |i, _| {
-                    iteration.store(i, Ordering::Relaxed);
-                    !stop.load(Ordering::Relaxed)
-                })
+                if matches!(form.kind, StudyKind::Static) {
+                    quick_stress_with_progress(&project, &form, None, |i, _| {
+                        iteration.store(i, Ordering::Relaxed);
+                        !stop.load(Ordering::Relaxed)
+                    })
+                    .map(|s| Outcome::Static(Box::new(s)))
+                } else {
+                    let save_error = matches!(form.kind, StudyKind::Shape { .. })
+                        .then(|| {
+                            faber_wiring::study::check_shape_destination(&project, &form.part).err()
+                        })
+                        .flatten();
+                    quick_analysis_with_progress(&project, &form, None, |i, _, field| {
+                        iteration.store(i, Ordering::Relaxed);
+                        if stop.load(Ordering::Relaxed) {
+                            return false;
+                        }
+                        if let Some(value) = field {
+                            *latest.lock().unwrap() = Some((i, value.clone()));
+                            ctx.request_repaint();
+                        }
+                        true
+                    })
+                    .map(|result| Outcome::Other(result, save_error))
+                }
             })();
             let _ = tx.send(result);
             ctx.request_repaint();
@@ -260,38 +328,64 @@ impl Shell {
                         })
                     })
                     .collect();
-                let mut bodies = Vec::with_capacity(self.bodies.len());
-                bodies.extend_from_slice(&self.bodies[..index]);
-                bodies.push(body);
-                bodies.extend_from_slice(&self.bodies[index + 1..]);
-                self.study.paint = Some(Paint {
-                    bodies,
-                    ratios,
-                    part: report.part.clone(),
-                    points,
-                });
-                self.list = None;
-                self.mesh_dirty = true;
+                self.show_study_body(index, body, ratios, points);
             }
             Err(e) => self.study.error = Some(e),
         }
+    }
+
+    fn show_study_body(
+        &mut self,
+        index: usize,
+        body: Body,
+        ratios: Vec<f32>,
+        points: Vec<glam::DVec3>,
+    ) {
+        let updated = if self.press.is_none()
+            && let Some(list) = &mut self.list
+            && let Some(indices) = Arc::get_mut(&mut self.cut_indices)
+            && let Some(entry) = indices.get_mut(index)
+        {
+            match list.update_field(&self.gpu, &body.id, &body.mesh, &ratios) {
+                Ok(()) => {
+                    *entry = faber_scene::SectionIndex::new(&body.mesh);
+                    true
+                }
+                Err(e) => {
+                    self.study.error = Some(e);
+                    return;
+                }
+            }
+        } else {
+            false
+        };
+        let p = self.study.paint.get_or_insert_with(|| Paint {
+            part: body.id.clone(),
+            bodies: self.bodies.to_vec(),
+            ratios: vec![],
+            points: vec![],
+        });
+        p.bodies[index] = body;
+        p.ratios = ratios;
+        p.points = points;
+        if !updated {
+            self.list = None;
+        }
+        self.caps = None;
+        self.cap_plane = None;
+        self.mesh_dirty = true;
     }
 
     pub(super) fn poll_study(&mut self, ctx: &egui::Context) {
         if self.study.form.is_none() {
             return;
         }
-        if self
-            .study
-            .source
-            .as_ref()
-            .is_some_and(|(p, r)| p != &self.root || *r != self.data.revision)
-        {
+        if self.study.source.as_ref().is_some_and(|(p, r)| {
+            p != &self.root || *r != self.data.revision || self.study.stamp != self.modified
+        }) {
             self.clear_study_result();
             self.end_study_pick();
-            if let Some(w) = &self.study.worker {
-                w.stop.store(true, Ordering::Relaxed);
-            }
+            self.study.worker.take();
             if self
                 .study
                 .source
@@ -307,8 +401,19 @@ impl Shell {
                 return;
             }
             self.study.source = Some((self.root.clone(), self.data.revision));
+            self.study.stamp = self.modified;
         }
         self.use_study_face();
+        self.animate_study(ctx);
+        let event = self
+            .study
+            .worker
+            .as_ref()
+            .and_then(|w| w.latest.lock().unwrap().take());
+        if let Some((i, field)) = event {
+            self.paint_other_field(&field, 0., [0., 1.]);
+            self.study.preview_iteration = Some(i);
+        }
         let Some(worker) = &self.study.worker else {
             return;
         };
@@ -316,12 +421,19 @@ impl Shell {
             Ok(done) => {
                 if !worker.stop.load(Ordering::Relaxed) {
                     match done {
-                        Ok(result) => {
-                            self.study.result = Some(result);
+                        Ok(Outcome::Static(result)) => {
+                            self.study.result = Some(*result);
                             self.paint_study();
+                        }
+                        Ok(Outcome::Other(result, save_error)) => {
+                            self.study.save_error = save_error;
+                            self.study.other = Some(Arc::new(result));
+                            self.paint_analysis_field();
                         }
                         Err(e) => self.study.error = Some(e),
                     }
+                } else {
+                    self.study.stopped = self.study.preview_iteration.is_some();
                 }
                 self.study.worker = None;
             }
@@ -483,6 +595,19 @@ fn study_controls(
     data: &ProjectData,
     pick: &mut Option<Target>,
 ) {
+    let mut chosen = Kind::of(&form.kind);
+    let old_kind = chosen;
+    egui::ComboBox::from_label("Study kind")
+        .selected_text(chosen.name())
+        .truncate()
+        .show_ui(ui, |ui| {
+            for kind in [Kind::Static, Kind::Modal, Kind::Thermal, Kind::Shape] {
+                ui.selectable_value(&mut chosen, kind, kind.name());
+            }
+        });
+    if chosen != old_kind {
+        form.kind = chosen.defaults();
+    }
     let old_part = form.part.clone();
     egui::ComboBox::from_label("Part")
         .selected_text(&form.part)
@@ -495,6 +620,14 @@ fn study_controls(
     if form.part != old_part {
         form.fixtures.clear();
         form.loads.clear();
+        match &mut form.kind {
+            StudyKind::Thermal { conditions, .. } => conditions.clear(),
+            StudyKind::Shape { keep, symmetry, .. } => {
+                keep.clear();
+                symmetry.clear();
+            }
+            _ => {}
+        }
     }
     let part_material = data
         .parts
@@ -515,12 +648,17 @@ fn study_controls(
                 }
             }
         });
-    ui.separator();
-    ui.strong("Fixtures");
-    fixture_rows(ui, form, pick);
-    ui.separator();
-    ui.strong("Loads");
-    load_rows(ui, form, pick);
+    kinds::setup(ui, form, data, pick);
+    if !matches!(form.kind, StudyKind::Thermal { stress: false, .. }) {
+        ui.separator();
+        ui.strong("Fixtures");
+        fixture_rows(ui, form, pick);
+    }
+    if matches!(form.kind, StudyKind::Static | StudyKind::Shape { .. }) {
+        ui.separator();
+        ui.strong("Loads");
+        load_rows(ui, form, pick);
+    }
     ui.separator();
     let mut automatic = form.resolution_mm.is_none();
     if ui
@@ -531,6 +669,9 @@ fn study_controls(
     }
     if let Some(size) = &mut form.resolution_mm {
         ui.horizontal(|ui| scalar(ui, "Cell size (mm)", size));
+    }
+    if !matches!(form.kind, StudyKind::Static) {
+        return;
     }
     let mut layers = form.print_direction.is_some();
     if ui.checkbox(&mut layers, "Use print direction").changed() {
@@ -566,13 +707,14 @@ impl Shell {
                 self.study.name = name;
                 self.study.form = Some(form);
                 self.study.source = Some((self.root.clone(), self.data.revision));
+                self.study.stamp = self.modified;
                 self.study.scale = 1.;
             }
             return false;
         }
         let close = ui
             .horizontal(|ui| {
-                ui.heading("Stress study");
+                ui.heading("Simulation study");
                 ui.button("Close").clicked()
             })
             .inner;
@@ -615,10 +757,11 @@ impl Shell {
             }
         }
         if let Some((target, _)) = self.study.picking {
-            let what = if matches!(target, Target::Fixture(_)) {
-                "the fixture"
-            } else {
-                "the load"
+            let what = match target {
+                Target::Fixture(_) => "the fixture",
+                Target::Heat(..) => "the heat condition",
+                Target::Keep(_) => "the kept region",
+                _ => "the load",
             };
             ui.label(format!("Pick a model face for {what}."));
             if ui.button("Cancel face pick").clicked() {
@@ -656,10 +799,32 @@ impl Shell {
             });
         } else {
             let form = self.study.form.as_ref().unwrap();
-            let ready = self.study.picking.is_none()
-                && !form.fixtures.is_empty()
-                && !form.loads.is_empty()
-                && self.pending.is_none();
+            let missing = match &form.kind {
+                StudyKind::Thermal { conditions, .. } if conditions.is_empty() => {
+                    Some("Add a heat condition.")
+                }
+                StudyKind::Thermal { conditions, .. }
+                    if conditions.iter().all(|c| {
+                        matches!(c, faber_model::study::ThermalCondition::Power { .. })
+                    }) =>
+                {
+                    Some("Add a fixed temperature or convection.")
+                }
+                StudyKind::Thermal { stress: true, .. } if form.fixtures.is_empty() => {
+                    Some("Add a fixture to calculate thermal stress.")
+                }
+                StudyKind::Static | StudyKind::Shape { .. } if form.fixtures.is_empty() => {
+                    Some("Add a fixture.")
+                }
+                StudyKind::Static | StudyKind::Shape { .. } if form.loads.is_empty() => {
+                    Some("Add a load.")
+                }
+                _ => None,
+            };
+            if let Some(reason) = missing {
+                ui.small(reason);
+            }
+            let ready = self.study.picking.is_none() && self.pending.is_none() && missing.is_none();
             if ui
                 .add_enabled(ready, egui::Button::new("Run study"))
                 .clicked()
@@ -757,6 +922,7 @@ impl Shell {
                 self.paint_study();
             }
         }
+        self.study_kind_result(ui);
         true
     }
 }
@@ -930,5 +1096,247 @@ mod tests {
         h.step();
         assert!(h.state().study.result.is_none());
         assert!(h.query_by_label("Deformed shape").is_none());
+    }
+}
+
+#[cfg(test)]
+mod study_kind_tests {
+    use super::*;
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT, Queryable},
+    };
+
+    fn click(h: &mut Harness<'_, Shell>, name: &str) {
+        h.get_by_label(name).scroll_to_me();
+        for _ in 0..6 {
+            h.step();
+        }
+        h.get_by_label(name).click();
+        h.step();
+        h.step();
+    }
+
+    fn beam() -> (tempfile::TempDir, Harness<'static, Shell>) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = faber_wiring::open(dir.path(), true, None).unwrap();
+        let part: faber_model::Part<Scalar> = serde_json::from_value(serde_json::json!({
+            "name":"Test beam","colour":[90,100,150],"material":"steel-s235",
+            "geometry":{"op":"history","output":"stock","features":[
+                {"id":"stock","geometry":{"op":"box","size":[28,8,8]}},
+                {"id":"middle","geometry":{"op":"plane_on_face","source":"stock","offset":-4,
+                    "face":{"normal":[0,1,0],"expect":1,"tolerance":0.001}}}
+            ]}
+        }))
+        .unwrap();
+        project.put_part("beam".into(), part).unwrap();
+        let study = serde_json::from_value(serde_json::json!({"part":"beam","resolution_mm":2,
+            "fixtures":[{"kind":"fixed","face":{"normal":[-1,0,0],"tolerance":0.001,"expect":1}}],
+            "loads":[{"kind":"force","face":{"normal":[1,0,0],"tolerance":0.001,"expect":1},"newtons":[0,0,-10]}]}))
+        .unwrap();
+        project
+            .batch(vec![faber_model::Edit::SetStudy {
+                id: "beam_test".into(),
+                study,
+            }])
+            .unwrap();
+        let cold: faber_model::study::Study<faber_model::Scalar> = serde_json::from_value(serde_json::json!({
+            "part":"beam","resolution_mm":2,"kind":"thermal","conditions":[
+                {"kind":"temperature","face":{"normal":[-1,0,0],"tolerance":0.001,"expect":1},"celsius":-10},
+                {"kind":"temperature","face":{"normal":[1,0,0],"tolerance":0.001,"expect":1},"celsius":30}
+            ],"stress":false,"reference_c":20,"fixtures":[],"loads":[]
+        })).unwrap();
+        project
+            .batch(vec![faber_model::Edit::SetStudy {
+                id: "cold_beam".into(),
+                study: cold,
+            }])
+            .unwrap();
+        let root = dir.path().to_owned();
+        let (data, bodies) = (project.data, project.bodies);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1150., 950.))
+            .with_step_dt(1. / 30.)
+            .wgpu_setup(crate::gpu_setup())
+            .build_eframe(move |cc| Shell::new(cc, root, data, bodies, None));
+        h.step();
+        h.step();
+        click(&mut h, "Stress study");
+        (dir, h)
+    }
+
+    fn choose(h: &mut Harness<'_, Shell>, kind: &str) {
+        click(h, "Study kind");
+        click(h, kind);
+    }
+    fn wait(h: &mut Harness<'_, Shell>, mut condition: impl FnMut(&Harness<'_, Shell>) -> bool) {
+        let start = Instant::now();
+        while !condition(h) {
+            assert!(
+                start.elapsed() < Duration::from_secs(45),
+                "{:?}",
+                h.state().study.error
+            );
+            h.step();
+            std::thread::sleep(Duration::from_millis(4));
+        }
+    }
+
+    #[test]
+    fn kind_selector_changes_the_form() {
+        let (_d, mut h) = beam();
+        choose(&mut h, "Frequency");
+        h.get_by_label("Number of modes");
+        assert!(h.query_by_label("Add load").is_none());
+        choose(&mut h, "Thermal");
+        h.get_by_label("Add heat condition");
+        h.get_by_label("Thermal stress");
+        choose(&mut h, "Shape optimisation");
+        h.get_by_label("Target volume fraction");
+        h.get_by_label("Add kept face");
+        click(&mut h, "Symmetry · middle");
+        assert!(
+            matches!(&h.state().study.form.as_ref().unwrap().kind, StudyKind::Shape{symmetry,..} if symmetry==&["middle"])
+        );
+        choose(&mut h, "Static stress");
+        h.get_by_label("Add load");
+    }
+
+    #[test]
+    fn mode_list_shows_frequencies() {
+        let (_d, mut h) = beam();
+        choose(&mut h, "Frequency");
+        click(&mut h, "Run study");
+        wait(&mut h, |h| h.query_by_label("Animate mode").is_some());
+        assert!(h.query_by_label_contains("Mode 2 ·").is_some());
+        let camera = h.state().camera.matrix(1.);
+        let original = h.state().bodies[0].mesh.vertices.clone();
+        let frame = super::super::controls_fixture::canvas(&h);
+        h.get_by_label_contains("Mode 2 ·").scroll_to_me();
+        for _ in 0..6 {
+            h.step();
+        }
+        h.get_by_label_contains("Mode 2 ·").click();
+        h.step();
+        click(&mut h, "Animate mode");
+        let first = h.state().study.paint.as_ref().unwrap().bodies[0]
+            .mesh
+            .vertices
+            .clone();
+        let index = Arc::as_ptr(&h.state().cut_indices);
+        let mode_row = h.get_by_label_contains("Mode 2 ·").rect();
+        for _ in 0..8 {
+            h.step();
+            assert_eq!(
+                Arc::as_ptr(&h.state().cut_indices),
+                index,
+                "Animating one part rebuilt the entire scene index."
+            );
+            assert_eq!(super::super::controls_fixture::canvas(&h), frame);
+            assert_eq!(h.get_by_label_contains("Mode 2 ·").rect(), mode_row);
+        }
+        assert_ne!(
+            h.state().study.paint.as_ref().unwrap().bodies[0]
+                .mesh
+                .vertices,
+            first
+        );
+        assert_eq!(h.state().camera.matrix(1.), camera);
+        assert_eq!(h.state().bodies[0].mesh.vertices, original);
+    }
+
+    #[test]
+    fn thermal_study_paints_a_signed_temperature_range() {
+        let (_d, mut h) = beam();
+        click(&mut h, "Study");
+        click(&mut h, "cold_beam");
+        click(&mut h, "Run study");
+        wait(&mut h, |h| {
+            h.query_by_label("Surface temperature (°C)").is_some()
+        });
+        let p = h.state().study.paint.as_ref().unwrap();
+        assert!(p.ratios.iter().any(|&v| v < 0.02));
+        assert!(p.ratios.iter().any(|&v| v > 0.98));
+        h.get_by_label_contains("-10.0");
+        h.get_by_label_contains("30.0");
+        click(&mut h, "Thermal stress");
+        h.get_by_label("Add a fixture to calculate thermal stress.");
+        assert!(h.get_by_label("Run study").accesskit_node().is_disabled());
+    }
+
+    #[test]
+    fn shape_preview_updates_and_stop_keeps_the_last_result() {
+        let (_d, mut h) = beam();
+        choose(&mut h, "Shape optimisation");
+        click(&mut h, "Run study");
+        let initial_camera = h.state().camera.matrix(1.);
+        let canvas = super::super::controls_fixture::canvas(&h);
+        let from = canvas.center();
+        let to = from + egui::vec2(45., -12.);
+        h.hover_at(from);
+        h.step();
+        h.event(egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        h.hover_at(to);
+        h.step();
+        h.event(egui::Event::PointerButton {
+            pos: to,
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        assert_ne!(h.state().camera.matrix(1.), initial_camera);
+        wait(&mut h, |h| {
+            h.state().study.paint.is_some() && h.state().study.worker.is_some()
+        });
+        let camera = h.state().camera.matrix(1.);
+        h.get_by_label("Stop").click();
+        h.step();
+        wait(&mut h, |h| h.state().study.worker.is_none());
+        let shown = h.state().study.paint.as_ref().unwrap().bodies[0]
+            .mesh
+            .vertices
+            .clone();
+        h.get_by_label("Stopped at the last preview");
+        assert!(
+            h.get_by_label("Save as part")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(!h.state().data.parts.contains_key("beam-shape"));
+        let stopped_pixels = h
+            .state()
+            .gpu
+            .read(h.state().target.as_ref().unwrap())
+            .unwrap();
+        for _ in 0..5 {
+            h.step();
+        }
+        let after_idle = h
+            .state()
+            .gpu
+            .read(h.state().target.as_ref().unwrap())
+            .unwrap();
+        assert!(
+            stopped_pixels == after_idle,
+            "The stopped preview pixels changed while the camera was idle."
+        );
+        assert_eq!(
+            h.state().study.paint.as_ref().unwrap().bodies[0]
+                .mesh
+                .vertices,
+            shown
+        );
+        assert_eq!(h.state().camera.matrix(1.), camera);
+        click(&mut h, "Run study");
+        wait(&mut h, |h| h.state().study.worker.is_none());
+        click(&mut h, "Save as part");
+        wait(&mut h, |h| h.state().data.parts.contains_key("beam-shape"));
     }
 }

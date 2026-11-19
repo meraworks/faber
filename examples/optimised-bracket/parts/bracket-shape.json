@@ -1,0 +1,16 @@
+{
+  "material": "steel-s235",
+  "schema": 1,
+  "name": "Optimised bracket",
+  "geometry": {
+    "op": "imported",
+    "asset": "04ef4e4e08f8c8fe8f3329f068d49629ff07561f2778c753cfefc826ccfac469"
+  },
+  "colour": [
+    214,
+    152,
+    67
+  ],
+  "group": "",
+  "note": ""
+}

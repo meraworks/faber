@@ -609,6 +609,13 @@ pub struct MassProperties {
 }
 
 pub trait ProjectStore: Send + Sync {
+    /// The project folder for disk-backed operations.
+    fn folder(&self) -> Option<&Path> {
+        None
+    }
+    fn record_shape_result(&self, _stock: &str, _asset: &str) -> Result<()> {
+        Err("The project cannot record a saved shape.".into())
+    }
     fn checkpoint(&self, _name: &str, _expected: &ProjectData) -> Result<()> {
         Err("Checkpoints are not available".into())
     }

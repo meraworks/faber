@@ -17,6 +17,61 @@ pub fn refuse_link_edit(id: &str, part: &faber_model::Part<Scalar>) -> Result<()
 }
 
 impl crate::Project {
+    pub fn folder(&self) -> Option<&std::path::Path> {
+        self.store.folder()
+    }
+
+    pub fn shape_result_id(&self, stock: &str) -> Result<String> {
+        let owner = crate::instances::owner(&self.data, stock)?;
+        if matches!(
+            self.data.parts[owner].geometry,
+            Geometry::Imported {
+                purchased: Some(_),
+                ..
+            }
+        ) {
+            return Err("A purchased part cannot be optimised.".into());
+        }
+        let id = format!("{stock}-shape");
+        if !crate::valid_id(&id) || self.data.parts.keys().any(|k| k.eq_ignore_ascii_case(&id)) {
+            return Err(format!("The result needs a new valid part id: {id}."));
+        }
+        Ok(id)
+    }
+
+    /// Store one new result on the frame of its stock. The stock recipe stays intact.
+    pub fn add_shape_result(
+        &mut self,
+        revision: u64,
+        stock: &str,
+        path: &std::path::Path,
+        key: &str,
+    ) -> Result<String> {
+        self.check_edit_revision(revision)?;
+        self.refuse_broken_source()?;
+        let id = self.shape_result_id(stock)?;
+        let store = self
+            .assets
+            .as_deref()
+            .ok_or("Asset storage is not available")?;
+        if !store.is_mesh(path)? || store.key(path)? != key {
+            return Err("The shape result needs a mesh with its asset hash.".into());
+        }
+        let mut part = self.data.parts[stock].clone();
+        part.name = format!("{} shape", part.name);
+        part.material = crate::part_material(&self.data, stock).map(str::to_owned);
+        part.geometry = Geometry::Imported {
+            asset: key.to_owned(),
+            purchased: None,
+            link: None,
+        };
+        let mut candidate = self.data.clone();
+        candidate.parts.insert(id.clone(), part);
+        self.store.record_shape_result(stock, key)?;
+        self.save_with_assets(candidate, [(key.to_owned(), path.to_owned())].into(), false)?;
+        Ok(id)
+    }
+
     /// Replace only the cached asset and hash of the listed file links.
     pub fn refresh_link_assets(
         &mut self,

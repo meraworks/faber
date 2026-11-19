@@ -18,6 +18,12 @@
     } + (if material == null then {} else { material: material })
       + (if component == null then {} else { component: component }),
 
+  // A saved result uses the content hash of the mesh in the project assets.
+  saved_mesh(name, asset, colour=[150,150,150], material=null, component=null)::
+    {name: name, colour: colour, geometry: {op: 'imported', asset: asset}}
+    + (if material == null then {} else {material: material})
+    + (if component == null then {} else {component: component}),
+
   component(name, parent=null, translation=[0,0,0], rotation=[0,0,0], note='')::
     { name: name, placement: {translation: translation, rotation: rotation}, note: note }
     + (if parent == null then {} else {parent: parent}),
@@ -45,6 +51,25 @@
 
   fixed(face):: { kind: 'fixed', face: face },
   force(face, newtons):: { kind: 'force', face: face, newtons: newtons },
+
+  modal_study(part, fixtures=[], modes=3, material=null, resolution_mm=null)::
+    faber.study(part, fixtures, [], material, resolution_mm) + {kind: 'modal', modes: modes},
+
+  temperature(face, celsius):: {kind: 'temperature', face: face, celsius: celsius},
+  power(face, watts):: {kind: 'power', face: face, watts: watts},
+  convection(face, w_m2k, ambient_c)::
+    {kind: 'convection', face: face, w_m2k: w_m2k, ambient_c: ambient_c},
+
+  thermal_study(part, conditions, fixtures=[], stress=false, reference_c=20,
+                material=null, resolution_mm=null)::
+    faber.study(part, fixtures, [], material, resolution_mm)
+    + {kind: 'thermal', conditions: conditions, stress: stress, reference_c: reference_c},
+
+  shape_study(part, fixtures, loads, target_volume, keep=[], min_member_mm=null,
+              symmetry=[], material=null, resolution_mm=null)::
+    faber.study(part, fixtures, loads, material, resolution_mm)
+    + {kind: 'shape', target_volume: target_volume, keep: keep, symmetry: symmetry}
+    + (if min_member_mm == null then {} else {min_member_mm: min_member_mm}),
 
   // A feature with an id, an operation and its fields.
   feature(id, op, fields)::

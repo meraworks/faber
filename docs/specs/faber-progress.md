@@ -1654,3 +1654,37 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   and 15011.65 mm³.
 - The installed viewer rendered all 23 examples. Returning the section
   to its previous offset in the 232-body assembly gave identical pixels.
+
+## Chunk 11. Frequency, heat and shape studies
+
+- Faber reads old static studies and stores new study kinds in the same
+  file. The viewer and MCP use the same voxel grid and material data.
+- The first two bending modes of a 10 by 10 by 100 mm steel cantilever
+  were both 816.72 Hz at a cell size of 1.25 mm. The reference is
+  815.4 Hz. With zero Poisson ratio, the first axial mode was 12618.66 Hz.
+  A free connected solid gave six rigid modes.
+- The heat tests cover conduction, convection, disconnected solids,
+  free expansion and fixed-end thermal stress. A 51200-cell heat
+  study took 0.125 s on this PC. A stop request at iteration 3 took
+  0.010 s from the start of the solve.
+- A shape study with 50000 cells and four worker threads took 17.62 s
+  for 12 iterations. The final volume fraction was 0.50000. Compliance
+  fell from 2.015884 to 0.376426 N mm. The surface had one piece.
+- The reference for the study types and mode animation was the installed
+  simulation API and the
+  [Fusion simulation guide](https://help.autodesk.com/cloudhelp/ENU/Fusion-Simulate/files/GUID-8CC26683-A6DD-4FDC-80BD-0DC40D7ACAF2.htm).
+  REA identified the local simulation module as
+  `9f3f9fa24b278c6c18c651ed0f0dd0674c92c113d9f305d624e703fa78e4322d`.
+- In the bracket example the saved surface has 4160 triangles, one shell
+  and no open edge. Its measured volume is 4685.86 mm³. The density
+  estimate is 5068.8 mm³. The report gives the two values separately.
+  A new static check of the saved surface gave a reaction of 40.00 N
+  for a load of 40 N at a cell size of 2 mm.
+- The viewer pointer tests cover mode selection, camera position during
+  animation, movement during a shape solve, and the last preview after
+  a stop. Only the moving body needs a new display mesh for a mode frame.
+- All 1212 workspace tests passed, including 221 viewer tests. Clippy
+  passed with warnings denied. The installed viewer opened all 24 examples.
+  In the 232-body assembly, section drag frames took 5.44 ms at the median
+  and 13.28 ms at the maximum. A return to the same offset gave identical
+  pixels. A repeat of the first mode gave identical pixels as well.

@@ -24,6 +24,14 @@ gives displacement, von Mises stress, fixture reactions and a safety factor.
 The cell size controls the approximation at curved surfaces. Contact between
 parts, large displacement and plastic deformation are outside this study.
 
+## Other simulation studies
+
+Chunk 11 adds natural frequencies, steady heat flow, thermal stress and
+single-load-case shape optimisation. A mode can animate about the rest
+shape. A temperature map shows the cold and hot limits in degrees Celsius.
+The shape study can save a separate mesh for further checks. Buckling,
+contact, transient heat flow and nonlinear materials remain outside scope.
+
 ## Print preparation
 
 Faber checks bed fit, wall thickness, support and build orientation against a

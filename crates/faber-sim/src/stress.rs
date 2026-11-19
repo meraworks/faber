@@ -13,7 +13,12 @@ fn mises([x, y, z, xy, yz, zx]: [f64; 6]) -> f64 {
 }
 
 /// Recover cell-centre stresses, average at each node and map them to the cells.
-pub(crate) fn recover(g: &Grid, m: &Elastic, u: &[[f64; 3]]) -> Result<(Vec<f32>, Vec<[f64; 6]>)> {
+pub(crate) fn recover(
+    g: &Grid,
+    m: &Elastic,
+    u: &[[f64; 3]],
+    loads: &[crate::Load],
+) -> Result<(Vec<f32>, Vec<[f64; 6]>)> {
     if !g.fill.iter().any(|&f| f >= 0.5) {
         return Err("No cell is half full. Use a smaller resolution.".into());
     }
@@ -27,6 +32,25 @@ pub(crate) fn recover(g: &Grid, m: &Elastic, u: &[[f64; 3]]) -> Result<(Vec<f32>
         for (node, gradient) in nodes.iter().zip(grad) {
             for a in 0..3 {
                 du[a] += u[*node][a] * gradient
+            }
+        }
+        for load in loads {
+            if let crate::Load::Temperature {
+                field,
+                reference_c,
+                expansion_um_mk,
+            } = load
+            {
+                let strain = crate::thermal_strain::strain(
+                    field,
+                    nodes,
+                    *reference_c,
+                    *expansion_um_mk,
+                    [0.; 3],
+                );
+                for (axis, row) in du.iter_mut().enumerate() {
+                    row[axis] -= strain;
+                }
             }
         }
         let trace = lambda * (du[0].x + du[1].y + du[2].z);
@@ -234,7 +258,7 @@ mod tests {
                 }
             }
         }
-        let (equivalent, stress) = recover(&g, &m, &u).unwrap();
+        let (equivalent, stress) = recover(&g, &m, &u, &[]).unwrap();
         // The shared node has (10 + 0.5 * 30) / 1.5 MPa.
         let expected = (10. + 25. / 1.5) * 0.5;
         assert!((stress[0][0] - expected).abs() < 1e-10, "{}", stress[0][0]);

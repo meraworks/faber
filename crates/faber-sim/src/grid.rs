@@ -32,12 +32,25 @@ pub fn default_h(bounds: [[f64; 3]; 2]) -> f64 {
 }
 
 pub fn voxelise(mesh: &Mesh, bvh: &Bvh, h: f64) -> Result<Grid> {
+    voxelise_with_progress(mesh, bvh, h, |_, _| true)
+}
+
+/// Report the number of finished cells on the calling thread. False stops the scan.
+pub fn voxelise_with_progress(
+    mesh: &Mesh,
+    bvh: &Bvh,
+    h: f64,
+    mut progress: impl FnMut(usize, usize) -> bool,
+) -> Result<Grid> {
     if !h.is_finite() || h <= 0. {
         return Err("The resolution must be finite and greater than zero.".into());
     }
     let mut low = DVec3::splat(f64::INFINITY);
     let mut high = DVec3::splat(f64::NEG_INFINITY);
-    for &v in mesh.triangles.iter().flatten() {
+    for (index, &v) in mesh.triangles.iter().flatten().enumerate() {
+        if index.is_multiple_of(65_536) && !progress(0, 0) {
+            return Err("Study stopped.".into());
+        }
         let point = mesh
             .vertices
             .get(v as usize)
@@ -67,13 +80,23 @@ pub fn voxelise(mesh: &Mesh, bvh: &Bvh, h: f64) -> Result<Grid> {
     let origin = (low - h).to_array();
     let mut fill = vec![0.; n.iter().product()];
     let [nx, ny, nz] = n;
-    fill.par_chunks_mut(nx * ny)
-        .enumerate()
-        .for_each(|(k, slice)| {
-            if k == 0 || k + 1 == nz {
-                return;
-            }
-            for (j, row) in slice.chunks_exact_mut(nx).enumerate().take(ny - 1).skip(1) {
+    let total = fill.len();
+    let rows_per_batch = (16_384 / nx).max(1);
+    if !progress(0, total) {
+        return Err("Study stopped.".into());
+    }
+    let mut completed = 0;
+    for batch in fill.chunks_mut(rows_per_batch * nx) {
+        let first_row = completed / nx;
+        batch
+            .par_chunks_exact_mut(nx)
+            .enumerate()
+            .for_each(|(row_index, row)| {
+                let index = first_row + row_index;
+                let (j, k) = (index % ny, index / ny);
+                if j == 0 || j + 1 == ny || k == 0 || k + 1 == nz {
+                    return;
+                }
                 for sz in [1. / 6., 0.5, 5. / 6.] {
                     for sy in [1. / 6., 0.5, 5. / 6.] {
                         // Move the ray a small amount to avoid mesh edges at sample points.
@@ -107,8 +130,12 @@ pub fn voxelise(mesh: &Mesh, bvh: &Bvh, h: f64) -> Result<Grid> {
                     // The smallest positive fraction is 1/27, above the 0.02 limit.
                     *f /= 27.;
                 }
-            }
-        });
+            });
+        completed += batch.len();
+        if !progress(completed, total) {
+            return Err("Study stopped.".into());
+        }
+    }
     Ok(Grid { origin, h, n, fill })
 }
 
@@ -232,6 +259,38 @@ mod tests {
 
     fn grid(mesh: &Mesh) -> Grid {
         voxelise(mesh, &Bvh::new(mesh).unwrap(), 1.).unwrap()
+    }
+
+    #[test]
+    fn cancel_after_the_first_partial_grid_batch() {
+        let mesh = cuboid([64.; 3]);
+        let bvh = Bvh::new(&mesh).unwrap();
+        let mut completed = 0;
+        let result = voxelise_with_progress(&mesh, &bvh, 1., |count, total| {
+            completed = count;
+            assert!(count <= total);
+            count == 0
+        });
+        assert_eq!(result.unwrap_err(), "Study stopped.");
+        assert!(completed > 0 && completed < 66_usize.pow(3));
+    }
+
+    #[test]
+    fn progress_ends_at_the_full_grid_and_preserves_cell_fractions() {
+        let mesh = sphere();
+        let bvh = Bvh::new(&mesh).unwrap();
+        let mut last = 0;
+        let g = voxelise_with_progress(&mesh, &bvh, 1., |count, total| {
+            assert!(count >= last && count <= total);
+            last = count;
+            true
+        })
+        .unwrap();
+        let digest = g.fill.iter().fold(0xcbf29ce484222325u64, |hash, f| {
+            (hash ^ u64::from(f.to_bits())).wrapping_mul(0x100000001b3)
+        });
+        assert_eq!(last, g.fill.len());
+        assert_eq!(digest, 0xd962_358f_ada3_608d);
     }
 
     #[test]

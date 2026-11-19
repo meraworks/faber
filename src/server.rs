@@ -541,6 +541,7 @@ pub struct RemoveStudy {
 #[serde(deny_unknown_fields)]
 pub struct StudyImage {
     path: String,
+    mode: Option<usize>,
     width: Option<u32>,
     height: Option<u32>,
     deform_scale: Option<f64>,
@@ -552,6 +553,9 @@ pub struct RunStudy {
     id: String,
     resolution_mm: Option<f64>,
     render: Option<StudyImage>,
+    #[serde(default)]
+    save: bool,
+    expected_revision: Option<u64>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -1763,9 +1767,7 @@ impl Faber {
         })
     }
 
-    #[tool(
-        description = "Store a static stress study for one part. Fixtures and loads refer to faces."
-    )]
+    #[tool(description = "Store a static, modal, thermal or shape study for one part.")]
     fn set_study(&self, Parameters(Checked(a)): Parameters<Checked<SetStudy>>) -> CallToolResult {
         self.with(|p| {
             check_revision(p, a.expected_revision)?;
@@ -1774,7 +1776,7 @@ impl Faber {
         })
     }
 
-    #[tool(description = "Remove one saved stress study.")]
+    #[tool(description = "Remove a saved study.")]
     fn remove_study(
         &self,
         Parameters(Checked(a)): Parameters<Checked<RemoveStudy>>,
@@ -1787,28 +1789,50 @@ impl Faber {
     }
 
     #[tool(
-        description = "Solve a saved stress study. Set render.path for a stress map with a legend in MPa."
+        description = "Solve a saved study. Set render.path for a map, render.mode for a vibration mode or save for a new shape part."
     )]
     fn run_study(&self, Parameters(Checked(a)): Parameters<Checked<RunStudy>>) -> CallToolResult {
         self.with(|p| {
-            let (report, field) = faber_wiring::study::run_stress(p, &a.id, a.resolution_mm)?;
+            check_revision(p, a.expected_revision)?;
+            let rev = p.data.revision;
+            if a.save {
+                let recipe = p
+                    .data
+                    .studies
+                    .get(&a.id)
+                    .ok_or_else(|| format!("Unknown study: {}", a.id))?;
+                if !matches!(recipe.kind, faber_model::study::StudyKind::Shape { .. }) {
+                    return Err("Only a shape study can save a mesh part.".into());
+                }
+                faber_wiring::study::check_shape_destination(p, &recipe.part)?;
+            }
+            let mut output = faber_wiring::study::run_analysis(p, &a.id, a.resolution_mm)?;
+            let part = p.data.studies[&a.id].part.clone();
             if let Some(r) = a.render {
                 let b = p
                     .bodies
                     .iter()
-                    .find(|b| b.id == report.part)
+                    .find(|b| b.id == part)
                     .ok_or("Study part is missing.")?;
-                faber_wiring::study_image::save(
+                faber_wiring::study_image::save_analysis(
                     b,
-                    &report,
-                    &field,
+                    &output,
                     std::path::Path::new(&r.path),
-                    r.width.unwrap_or(800),
-                    r.height.unwrap_or(600),
+                    [r.width.unwrap_or(800), r.height.unwrap_or(600)],
+                    r.mode,
                     r.deform_scale.unwrap_or(0.),
                 )?;
             }
-            Ok(json!(report))
+            if a.save {
+                let mesh = output
+                    .shape_mesh
+                    .as_ref()
+                    .ok_or("The study has no shape result.")?;
+                let new = faber_wiring::study::save_shape(p, &part, mesh, rev)?;
+                output.report["new_part"] = json!(new);
+                output.report["revision"] = json!(p.data.revision);
+            }
+            Ok(output.report)
         })
     }
 

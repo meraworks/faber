@@ -54,6 +54,8 @@ struct BuildRecord {
 
 #[derive(Default, Serialize, Deserialize)]
 struct Authored {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parts: Option<BTreeSet<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     drawings: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -230,7 +232,48 @@ fn evaluate_with(
         }
         let part: Part<Scalar> =
             serde_json::from_value(value).map_err(|e| format!("parts.{id}: {e}"))?;
+        if let faber_model::Geometry::Imported {
+            asset,
+            purchased: None,
+            link: None,
+        } = &part.geometry
+            && faber_files::study_result::owns(root, &id, asset)?
+            && !previous
+                .parts
+                .as_ref()
+                .is_some_and(|owned| owned.contains(&id))
+        {
+            return Err(format!(
+                "Source part {id} uses the id and asset of a saved shape. Use a different id in the source."
+            ));
+        }
         parts.insert(id, part);
+    }
+    let source_parts: BTreeSet<String> = parts.keys().cloned().collect();
+    for (id, part) in &current.parts {
+        if previous
+            .parts
+            .as_ref()
+            .is_some_and(|owned| owned.contains(id))
+        {
+            continue;
+        }
+        let faber_model::Geometry::Imported {
+            asset,
+            purchased: None,
+            link: None,
+        } = &part.geometry
+        else {
+            continue;
+        };
+        if faber_files::study_result::owns(root, id, asset)? {
+            if parts.keys().any(|k| k.eq_ignore_ascii_case(id)) {
+                return Err(format!(
+                    "The source part id {id} conflicts with a saved shape. Use a different id in the source."
+                ));
+            }
+            parts.insert(id.clone(), part.clone());
+        }
     }
     let name = design.name.unwrap_or_else(|| current.name.clone());
     let mut data = faber_core::regenerate(current, name, design.params, parts)?;
@@ -240,6 +283,7 @@ fn evaluate_with(
         data.studies = studies;
     }
     let authored = Authored {
+        parts: Some(source_parts),
         drawings: replace_authored(&mut data.drawings, previous.drawings, design.drawings),
         components: replace_authored(&mut data.components, previous.components, design.components),
         configurations: replace_authored(

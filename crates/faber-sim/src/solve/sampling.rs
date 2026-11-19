@@ -13,7 +13,7 @@ fn budget_error(used: usize, needed: u128) -> String {
     )
 }
 
-pub(super) struct Sampler<'a> {
+pub(crate) struct Sampler<'a> {
     grid: &'a Grid,
     remaining: usize,
     samples: usize,
@@ -21,7 +21,7 @@ pub(super) struct Sampler<'a> {
 }
 
 impl<'a> Sampler<'a> {
-    pub(super) fn new(grid: &'a Grid, progress: &'a mut dyn FnMut(usize, f64) -> bool) -> Self {
+    pub(crate) fn new(grid: &'a Grid, progress: &'a mut dyn FnMut(usize, f64) -> bool) -> Self {
         Self {
             grid,
             remaining: LIMIT,
@@ -30,7 +30,7 @@ impl<'a> Sampler<'a> {
         }
     }
 
-    pub(super) fn face(
+    pub(crate) fn face(
         &mut self,
         triangles: &[Tri],
         mut visit: impl FnMut(usize, f64, DVec3),

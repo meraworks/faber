@@ -9,6 +9,7 @@ mod indexed_mesh;
 pub use indexed_mesh::write_indexed_mesh;
 pub mod layout;
 mod mesh_input;
+pub mod study_result;
 mod threemf;
 pub use threemf::ThreeMf;
 mod vector;
@@ -65,6 +66,12 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 impl ProjectStore for FileStore {
+    fn folder(&self) -> Option<&Path> {
+        Some(&self.root)
+    }
+    fn record_shape_result(&self, stock: &str, asset: &str) -> Result<()> {
+        study_result::record(&self.root, stock, asset)
+    }
     fn checkpoint(&self, name: &str, expected: &ProjectData) -> Result<()> {
         let path = self.checkpoint_path(name)?;
         if self.load()? != *expected {

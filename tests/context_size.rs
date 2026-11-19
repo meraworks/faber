@@ -98,6 +98,61 @@ fn open_project(session: &mut Session, dir: &Path) {
     );
 }
 
+#[test]
+fn each_study_kind_replies_below_2500_characters() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start();
+    open_project(&mut s, dir.path());
+    s.ok("put_part",json!({"id":"bar","part":{"name":"Bar","material":"steel-s235","colour":[50,100,150],"geometry":{"op":"box","size":[20,8,8]}}}));
+    let left = json!({"normal":[-1,0,0],"expect":1,"tolerance":0.001});
+    let right = json!({"normal":[1,0,0],"expect":1,"tolerance":0.001});
+    for (index, kind) in [
+        json!({"kind":"modal","modes":3}),
+        json!({"kind":"thermal","stress":true,"reference_c":20,"conditions":[
+        {"kind":"temperature","celsius":-15,"face":left},{"kind":"power","watts":3,"face":right}]}),
+        json!({"kind":"shape","target_volume":0.65}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut study = json!({"part":"bar","resolution_mm":2,"fixtures":[{"kind":"fixed","face":left}],"loads":[{"kind":"force","face":right,"newtons":[0,0,-15]}]});
+        study
+            .as_object_mut()
+            .unwrap()
+            .extend(kind.as_object().unwrap().clone());
+        s.ok("set_study", json!({"id":"test","study":study}));
+        let path = dir.path().join(format!("{index}.png"));
+        let mut args = json!({"id":"test","render":{"path":path,"width":320,"height":240}});
+        if index == 0 {
+            args["render"]["mode"] = json!(2);
+            args["render"]["deform_scale"] = json!(2);
+        }
+        let report = s.ok("run_study", args);
+        assert_eq!(report["kind"], kind["kind"]);
+        assert!(report.to_string().len() < 2500);
+        assert_eq!(
+            image::open(path).unwrap().into_rgb8().dimensions(),
+            (320, 240)
+        );
+        if index == 2 {
+            assert!(
+                s.refused(
+                    "run_study",
+                    json!({"id":"test","save":true,"expected_revision":1})
+                )
+                .contains("revision")
+            );
+            assert_eq!(
+                s.ok(
+                    "run_study",
+                    json!({"id":"test","save":true,"expected_revision":4})
+                )["new_part"],
+                "bar-shape"
+            );
+        }
+    }
+}
+
 /// Operation names of the Geometry schema, read from the schemars schema.
 fn schema_op_names() -> Vec<String> {
     let schema = serde_json::to_value(schemars::schema_for!(

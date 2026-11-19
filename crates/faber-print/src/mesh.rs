@@ -1,3 +1,4 @@
+pub(crate) use faber_geometry::signed_volume;
 use faber_ports::{Mesh, Result};
 use glam::{DQuat, DVec3};
 use std::collections::HashMap;
@@ -57,21 +58,6 @@ pub(crate) fn ray_offset(mesh: &Mesh) -> f64 {
     let (lo, hi) = extent(&mesh.vertices, DQuat::IDENTITY);
     ((hi - lo).max_element() * 1e-10).max(lo.abs().max(hi.abs()).max_element() * 16. * f64::EPSILON)
 }
-pub(crate) fn signed_volume(mesh: &Mesh) -> f64 {
-    let Some(first) = mesh.triangles.first() else {
-        return 0.;
-    };
-    let origin = mesh.vertices[first[0] as usize];
-    mesh.triangles
-        .iter()
-        .map(|tri| {
-            let [a, b, c] =
-                tri.map(|i| DVec3::from(mesh.vertices[i as usize]) - DVec3::from(origin));
-            a.dot(b.cross(c)) / 6.
-        })
-        .sum()
-}
-
 impl Surface {
     pub fn new(meshes: &[&Mesh]) -> Result<Self> {
         let count = meshes

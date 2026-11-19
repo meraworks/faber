@@ -420,8 +420,11 @@ fn preview_with_cache(
     data: ProjectData,
     cache: Option<Arc<dyn faber_ports::FeatureCache>>,
 ) -> Result<Project> {
-    struct Snapshot(ProjectData);
+    struct Snapshot(ProjectData, std::path::PathBuf);
     impl ProjectStore for Snapshot {
+        fn folder(&self) -> Option<&Path> {
+            Some(&self.1)
+        }
         fn load(&self) -> Result<ProjectData> {
             Ok(self.0.clone())
         }
@@ -431,7 +434,7 @@ fn preview_with_cache(
     }
     let source = design_source();
     let mut project = Project::open_with_cache(
-        Arc::new(Snapshot(data)),
+        Arc::new(Snapshot(data, path.to_owned())),
         Arc::new(OcctKernel),
         Some(Arc::new(faber_files::FileAssets::new(path))),
         cache,

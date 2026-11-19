@@ -53,7 +53,12 @@ fn interior_peak_on_wide_planar_face() {
     assert_eq!(body.mesh.triangles.len(), 2);
     assert_eq!(surface.face_of_triangle.len(), surface.mesh.triangles.len());
     assert_eq!(surface.mesh.normals.len(), surface.mesh.vertices.len());
-    for (triangle, &id) in surface.mesh.triangles.iter().zip(&surface.face_of_triangle) {
+    for (triangle, &id) in surface
+        .mesh
+        .triangles
+        .iter()
+        .zip(surface.face_of_triangle.iter())
+    {
         let [a, b, c] = triangle.map(|ix| DVec3::from(surface.mesh.vertices[ix as usize]));
         assert!((b - a).cross(c - a).z > 0.);
         let centre = (a + b + c) / 3.;
@@ -83,4 +88,15 @@ fn triangle_budget_keeps_shared_edges_closed() {
     for tri in &detail.triangles {
         assert!(tri.contains(&4));
     }
+}
+
+#[test]
+fn modal_display_budget_accounts_for_fields_and_cached_reads() {
+    assert!(
+        check_modal_display(2_000_000, 0, 0, 32)
+            .unwrap_err()
+            .contains("512 MiB")
+    );
+    assert!(check_modal_display(200_000, 0, 0, 32).is_ok());
+    assert!(check_modal_display(200_000, 400_000, 120 * 1024 * 1024, 32).is_err());
 }

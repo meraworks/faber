@@ -9,7 +9,7 @@ use std::collections::{HashMap, VecDeque};
 type Tri = [[f64; 3]; 3];
 type Matrix = [[f64; 24]; 24];
 const LOCAL_CACHE_LIMIT: usize = 1024;
-const VOID: f32 = 0.02;
+pub(crate) const VOID: f32 = 0.02;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Elastic {
@@ -35,6 +35,11 @@ pub enum Support {
 }
 #[derive(Clone, Debug)]
 pub enum Load {
+    Temperature {
+        field: Vec<f32>,
+        reference_c: f64,
+        expansion_um_mk: f64,
+    },
     Force {
         cells: Vec<usize>,
         newtons: [f64; 3],
@@ -93,7 +98,16 @@ fn shift(p: [usize; 3], axis: usize, d: isize, n: [usize; 3]) -> Option<usize> {
     (q[axis] < n[axis]).then(|| index(q, n))
 }
 fn validate(c: &StaticCase) -> Result<()> {
-    let g = &c.grid;
+    validate_elastic_grid(&c.grid, c.material)?;
+    if !(c.tolerance.is_finite() && c.tolerance > 0. && c.tolerance < 1.) {
+        return Err("The solver tolerance must be between zero and one.".into());
+    }
+    if c.supports.is_empty() {
+        return Err("The study has no fixture. Add a fixed face.".into());
+    }
+    Ok(())
+}
+pub(crate) fn validate_elastic_grid(g: &Grid, m: Elastic) -> Result<()> {
     if !(g.h > 0. && g.h.is_finite() && g.origin.iter().all(|v| v.is_finite()))
         || g.n.contains(&0)
         || g.n.iter().try_fold(1usize, |a, &n| a.checked_mul(n)) != Some(g.fill.len())
@@ -102,15 +116,8 @@ fn validate(c: &StaticCase) -> Result<()> {
     {
         return Err("Invalid stress grid.".into());
     }
-    let m = c.material;
     if !(m.youngs_mpa.is_finite() && m.youngs_mpa > 0. && m.poisson > -1. && m.poisson < 0.5) {
         return Err("Invalid elastic material.".into());
-    }
-    if !(c.tolerance.is_finite() && c.tolerance > 0. && c.tolerance < 1.) {
-        return Err("The solver tolerance must be between zero and one.".into());
-    }
-    if c.supports.is_empty() {
-        return Err("The study has no fixture. Add a fixed face.".into());
     }
     if !g.fill.iter().any(|&f| f >= VOID) {
         return Err("The grid has no solid cells.".into());
@@ -119,9 +126,9 @@ fn validate(c: &StaticCase) -> Result<()> {
 }
 
 #[derive(Clone, Copy, Default)]
-struct Constraint {
+pub(crate) struct Constraint {
     axis: [DVec3; 3],
-    rank: usize,
+    pub(crate) rank: usize,
 }
 impl Constraint {
     fn add(&mut self, normal: Option<DVec3>) {
@@ -139,7 +146,7 @@ impl Constraint {
             self.rank += 1;
         }
     }
-    fn project(&self, mut v: DVec3) -> DVec3 {
+    pub(crate) fn project(&self, mut v: DVec3) -> DVec3 {
         if self.rank == 3 {
             return DVec3::ZERO;
         }
@@ -158,7 +165,7 @@ fn unit(v: [f64; 3]) -> Result<DVec3> {
 }
 
 /// Use the largest exposed side of a selected cell layer.
-fn face_weights(g: &Grid, cells: &[usize]) -> Result<Vec<(usize, f64)>> {
+pub(crate) fn face_weights(g: &Grid, cells: &[usize]) -> Result<Vec<(usize, f64)>> {
     if cells.is_empty() || cells.iter().any(|&c| c >= g.fill.len() || g.fill[c] < VOID) {
         return Err("The face has no active cell at this resolution.".into());
     }
@@ -209,9 +216,9 @@ fn face_weights(g: &Grid, cells: &[usize]) -> Result<Vec<(usize, f64)>> {
     Ok(weights)
 }
 
-mod sampling;
+pub(crate) mod sampling;
 
-fn boundary(
+pub(crate) fn boundary(
     case: &StaticCase,
     nodes: usize,
     progress: &mut dyn FnMut(usize, f64) -> bool,
@@ -240,6 +247,20 @@ fn boundary(
     }
     for load in &case.loads {
         match load {
+            Load::Temperature {
+                field,
+                reference_c,
+                expansion_um_mk,
+            } => {
+                crate::thermal_strain::add_forces(
+                    g,
+                    &case.material,
+                    field,
+                    *reference_c,
+                    *expansion_um_mk,
+                    &mut force,
+                )?;
+            }
             Load::Force { cells, newtons } => {
                 for (node, w) in face_weights(g, cells)? {
                     force[node] += DVec3::from(*newtons) * w;
@@ -367,28 +388,33 @@ struct Stencil {
     terms: Vec<Term>,
     inv_diag: DVec3,
 }
-struct Row {
-    node: usize,
+pub(crate) struct Row {
+    pub(crate) node: usize,
     padded: usize,
     stencil: u16,
 }
-struct Operator<'a> {
+pub(crate) struct Operator<'a> {
     grid: &'a Grid,
+    stiffness_fill: &'a [f32],
     element: Matrix,
     strides: [usize; 3],
-    rows: Vec<Row>,
+    pub(crate) rows: Vec<Row>,
     stencils: Vec<Stencil>,
     padded: Vec<DVec3>,
 }
 
-fn neighbourhood(g: &Grid, p: [usize; 3]) -> [u32; 8] {
+fn neighbourhood(g: &Grid, stiffness_fill: &[f32], p: [usize; 3]) -> [u32; 8] {
     std::array::from_fn(|corner| {
         let d = bit(corner);
         if (0..3).any(|a| p[a] < d[a] || p[a] - d[a] >= g.n[a]) {
             return 0;
         }
-        let f = g.fill[index(std::array::from_fn(|a| p[a] - d[a]), g.n)];
-        if f >= VOID { f.to_bits() } else { 0 }
+        let i = index(std::array::from_fn(|a| p[a] - d[a]), g.n);
+        if g.fill[i] >= VOID {
+            stiffness_fill[i].to_bits()
+        } else {
+            0
+        }
     })
 }
 fn local_offset(i: usize, j: usize, strides: [usize; 3]) -> isize {
@@ -431,7 +457,10 @@ fn stencil(k: &Matrix, fill: [u32; 8], strides: [usize; 3]) -> Stencil {
 }
 
 impl<'a> Operator<'a> {
-    fn new(g: &'a Grid, k: Matrix) -> Self {
+    pub(crate) fn new(g: &'a Grid, k: Matrix) -> Self {
+        Self::weighted(g, k, &g.fill, LOCAL_CACHE_LIMIT)
+    }
+    fn weighted(g: &'a Grid, k: Matrix, stiffness_fill: &'a [f32], cache_limit: usize) -> Self {
         let n = g.n.map(|n| n + 1);
         let pad = n.map(|n| n + 2);
         let strides = [1, pad[0], pad[0] * pad[1]];
@@ -455,10 +484,10 @@ impl<'a> Operator<'a> {
                                 continue;
                             }
                             let p = xyz(node, n);
-                            let fill = neighbourhood(g, p);
+                            let fill = neighbourhood(g, stiffness_fill, p);
                             let key = if let Some(&i) = patterns.get(&fill) {
                                 i
-                            } else if stencils.len() < LOCAL_CACHE_LIMIT {
+                            } else if stencils.len() < cache_limit {
                                 let i = stencils.len() as u16;
                                 stencils.push(stencil(&k, fill, strides));
                                 patterns.insert(fill, i);
@@ -478,6 +507,7 @@ impl<'a> Operator<'a> {
         }
         Self {
             grid: g,
+            stiffness_fill,
             element: k,
             strides,
             rows,
@@ -485,11 +515,15 @@ impl<'a> Operator<'a> {
             padded: vec![DVec3::ZERO; pad.iter().product()],
         }
     }
-    fn inverse_diag(&self, row: &Row) -> DVec3 {
+    pub(crate) fn inverse_diag(&self, row: &Row) -> DVec3 {
         if let Some(s) = self.stencils.get(usize::from(row.stencil)) {
             return s.inv_diag;
         }
-        let fill = neighbourhood(self.grid, xyz(row.node, self.grid.n.map(|n| n + 1)));
+        let fill = neighbourhood(
+            self.grid,
+            self.stiffness_fill,
+            xyz(row.node, self.grid.n.map(|n| n + 1)),
+        );
         let mut diag = DVec3::ZERO;
         for (i, f) in fill.into_iter().enumerate() {
             for a in 0..3 {
@@ -498,7 +532,7 @@ impl<'a> Operator<'a> {
         }
         diag.recip()
     }
-    fn apply(&mut self, x: &[DVec3], out: &mut [DVec3]) {
+    pub(crate) fn apply(&mut self, x: &[DVec3], out: &mut [DVec3]) {
         for (row, v) in self.rows.iter().zip(x) {
             self.padded[row.padded] = *v;
         }
@@ -510,7 +544,11 @@ impl<'a> Operator<'a> {
                     value += t.columns[0] * v.x + t.columns[1] * v.y + t.columns[2] * v.z;
                 }
             } else {
-                let fill = neighbourhood(self.grid, xyz(row.node, self.grid.n.map(|n| n + 1)));
+                let fill = neighbourhood(
+                    self.grid,
+                    self.stiffness_fill,
+                    xyz(row.node, self.grid.n.map(|n| n + 1)),
+                );
                 for (i, f) in fill.into_iter().enumerate().filter(|(_, f)| *f != 0) {
                     let mut cell = DVec3::ZERO;
                     for j in 0..8 {
@@ -542,7 +580,7 @@ impl<'a> Operator<'a> {
     }
 }
 
-fn dot(x: &[DVec3], y: &[DVec3]) -> f64 {
+pub(crate) fn dot(x: &[DVec3], y: &[DVec3]) -> f64 {
     x.iter().zip(y).map(|(a, b)| a.dot(*b)).sum()
 }
 
@@ -555,15 +593,44 @@ pub fn solve_static_with_progress(
     case: &StaticCase,
     mut progress: impl FnMut(usize, f64) -> bool,
 ) -> Result<StaticResult> {
+    let field = displacements(case, None, None, &mut progress)?;
+    let (von_mises, stress_mpa) =
+        stress::recover(&case.grid, &case.material, &field.displacement, &case.loads)?;
+    Ok(StaticResult {
+        displacement: field.displacement,
+        von_mises,
+        stress_mpa,
+        reaction: field.reaction,
+        iterations: field.iterations,
+        residual: field.residual,
+    })
+}
+
+pub(crate) struct ElasticField {
+    pub displacement: Vec<[f64; 3]>,
+    iterations: usize,
+    residual: f64,
+    reaction: [f64; 3],
+}
+pub(crate) fn displacements(
+    case: &StaticCase,
+    stiffness_fill: Option<&[f32]>,
+    start: Option<&[[f64; 3]]>,
+    progress: &mut dyn FnMut(usize, f64) -> bool,
+) -> Result<ElasticField> {
     validate(case)?;
     if !progress(0, 1.) {
         return Err("Study stopped.".into());
     }
     let g = &case.grid;
     let count = g.n.iter().map(|v| v + 1).product();
-    let (constraints, loads) = boundary(case, count, &mut progress)?;
+    let (constraints, loads) = boundary(case, count, progress)?;
     check_fixtures(g, &constraints)?;
-    let mut op = Operator::new(g, element_matrix(&case.material, g.h));
+    let k = element_matrix(&case.material, g.h);
+    let mut op = match stiffness_fill {
+        Some(weights) => Operator::weighted(g, k, weights, u16::MAX as usize),
+        None => Operator::new(g, k),
+    };
     let n = op.rows.len();
     let bc: Vec<_> = op.rows.iter().map(|r| constraints[r.node]).collect();
     drop(constraints);
@@ -576,11 +643,25 @@ pub fn solve_static_with_progress(
     let inv: Vec<_> = op.rows.iter().map(|r| op.inverse_diag(r)).collect();
     let mut u = vec![DVec3::ZERO; n];
     let mut r = rhs.clone();
+    if let Some(start) = start {
+        for (i, row) in op.rows.iter().enumerate() {
+            u[i] = bc[i].project(DVec3::from(start[row.node]));
+        }
+        let mut product = vec![DVec3::ZERO; n];
+        op.apply(&u, &mut product);
+        for (i, v) in r.iter_mut().enumerate() {
+            *v -= bc[i].project(product[i]);
+        }
+    }
     let mut z: Vec<_> = (0..n).map(|i| bc[i].project(r[i] * inv[i])).collect();
     let mut dir = z.clone();
     let mut q = vec![DVec3::ZERO; n];
     let rhs_norm = dot(&rhs, &rhs).sqrt();
-    let mut residual = if rhs_norm == 0. { 0. } else { 1. };
+    let mut residual = if rhs_norm == 0. {
+        0.
+    } else {
+        dot(&r, &r).sqrt() / rhs_norm
+    };
     let mut rz = dot(&r, &z);
     let mut iterations = 0;
     while residual > case.tolerance && iterations < case.max_iterations {
@@ -635,11 +716,8 @@ pub fn solve_static_with_progress(
         reaction += imbalance - bc[i].project(imbalance);
         displacement[row.node] = u[i].into();
     }
-    let (von_mises, stress_mpa) = stress::recover(g, &case.material, &displacement)?;
-    Ok(StaticResult {
+    Ok(ElasticField {
         displacement,
-        von_mises,
-        stress_mpa,
         iterations,
         residual,
         reaction: reaction.into(),
