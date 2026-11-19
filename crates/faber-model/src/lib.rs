@@ -4,7 +4,9 @@ mod material;
 mod plastic;
 mod printer;
 mod sheet;
+mod surface_recipe;
 pub use sheet::{Flange, Relief, SheetRule};
+pub use surface_recipe::{EdgeRef, TrimKeep};
 mod solved_sketch;
 use plastic::map_lines;
 pub use plastic::{BossRibs, LipLoop, LipSide, RibSide};
@@ -379,6 +381,59 @@ pub enum Geometry<N = f64> {
     PlaceAtPoint {
         source: String,
         point: String,
+    },
+    SurfaceExtrude {
+        profile: String,
+        distance: N,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        direction: Option<[N; 3]>,
+    },
+    SurfaceRevolve {
+        profile: String,
+        axis: String,
+        angle_deg: N,
+    },
+    SurfaceLoft {
+        sections: Vec<String>,
+        #[serde(default)]
+        ruled: bool,
+    },
+    SurfaceSweep {
+        profile: String,
+        path: PathInput<N>,
+    },
+    Patch {
+        boundary: Vec<EdgeRef<N>>,
+        #[serde(default)]
+        tangent_to: Vec<String>,
+    },
+    Trim {
+        surface: String,
+        tool: String,
+        keep: TrimKeep<N>,
+    },
+    Extend {
+        surface: String,
+        edge: EdgeSelector<N>,
+        distance: N,
+    },
+    Stitch {
+        surfaces: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tolerance: Option<N>,
+        #[serde(default)]
+        as_solid: bool,
+    },
+    SplitBody {
+        body: String,
+        tool: String,
+        #[serde(default)]
+        keep: SplitKeep,
+    },
+    ReplaceFace {
+        body: String,
+        face: FaceSelector<N>,
+        surface: String,
     },
     SheetMetal {
         rule: SheetRule<N>,
@@ -1496,6 +1551,86 @@ impl<N> Geometry<N> {
         map: &mut impl FnMut(&N) -> Result<T, String>,
     ) -> Result<Geometry<T>, String> {
         Ok(match self {
+            Geometry::SurfaceExtrude {
+                profile,
+                distance,
+                direction,
+            } => Geometry::SurfaceExtrude {
+                profile: profile.clone(),
+                distance: map(distance)?,
+                direction: direction
+                    .as_ref()
+                    .map(|[x, y, z]| Ok::<_, String>([map(x)?, map(y)?, map(z)?]))
+                    .transpose()?,
+            },
+            Geometry::SurfaceRevolve {
+                profile,
+                axis,
+                angle_deg,
+            } => Geometry::SurfaceRevolve {
+                profile: profile.clone(),
+                axis: axis.clone(),
+                angle_deg: map(angle_deg)?,
+            },
+            Geometry::SurfaceLoft { sections, ruled } => Geometry::SurfaceLoft {
+                sections: sections.clone(),
+                ruled: *ruled,
+            },
+            Geometry::SurfaceSweep { profile, path } => Geometry::SurfaceSweep {
+                profile: profile.clone(),
+                path: path.map_numbers(map)?,
+            },
+            Geometry::Patch {
+                boundary,
+                tangent_to,
+            } => Geometry::Patch {
+                boundary: boundary
+                    .iter()
+                    .map(|r| r.map_numbers(map))
+                    .collect::<Result<_, _>>()?,
+                tangent_to: tangent_to.clone(),
+            },
+            Geometry::Trim {
+                surface,
+                tool,
+                keep,
+            } => Geometry::Trim {
+                surface: surface.clone(),
+                tool: tool.clone(),
+                keep: keep.map_numbers(map)?,
+            },
+            Geometry::Extend {
+                surface,
+                edge,
+                distance,
+            } => Geometry::Extend {
+                surface: surface.clone(),
+                edge: edge.map_numbers(map)?,
+                distance: map(distance)?,
+            },
+            Geometry::Stitch {
+                surfaces,
+                tolerance,
+                as_solid,
+            } => Geometry::Stitch {
+                surfaces: surfaces.clone(),
+                tolerance: tolerance.as_ref().map(&mut *map).transpose()?,
+                as_solid: *as_solid,
+            },
+            Geometry::SplitBody { body, tool, keep } => Geometry::SplitBody {
+                body: body.clone(),
+                tool: tool.clone(),
+                keep: *keep,
+            },
+            Geometry::ReplaceFace {
+                body,
+                face,
+                surface,
+            } => Geometry::ReplaceFace {
+                body: body.clone(),
+                face: face.map_numbers(map)?,
+                surface: surface.clone(),
+            },
             Geometry::SheetMetal {
                 rule,
                 base,

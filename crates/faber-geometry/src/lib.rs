@@ -50,6 +50,16 @@ impl Kernel for NativeKernel {
             | Geometry::PointAtCentre { .. }
             | Geometry::RevolveAround { .. }
             | Geometry::PlaceAtPoint { .. }
+            | Geometry::SurfaceExtrude { .. }
+            | Geometry::SurfaceRevolve { .. }
+            | Geometry::SurfaceLoft { .. }
+            | Geometry::SurfaceSweep { .. }
+            | Geometry::Patch { .. }
+            | Geometry::Trim { .. }
+            | Geometry::Extend { .. }
+            | Geometry::Stitch { .. }
+            | Geometry::SplitBody { .. }
+            | Geometry::ReplaceFace { .. }
             | Geometry::SheetMetal { .. }
             | Geometry::SolvedSketch { .. }
             | Geometry::OffsetSketch { .. }
