@@ -19,7 +19,10 @@ jobs:
         run: |
           curl.exe -fL https://github.com/Open-Cascade-SAS/OCCT/releases/download/V7_9_3/opencascade-7.9.3-vc14-64-combined.zip -o sdk.zip
           if ((Get-FileHash sdk.zip).Hash -ne "afbef3457fbc4a2bdca0608e0fe284392f51e4c2c42ccbfb9df7168d8e4eb9b3") { throw "Incorrect SDK checksum" }
-          7z x sdk.zip -o.deps/occt-sdk
+          7z x sdk.zip "-o.deps/occt-sdk"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:FABER_OCCT_SDK = "$PWD/.deps/occt-sdk/opencascade-7.9.3-vc14-64"
+          if (!(Get-Command iscc.exe -ErrorAction SilentlyContinue) -and !(Test-Path "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe")) { choco install innosetup -y --no-progress }
           cargo build -j 4 --locked --release -p faber -p faber-viewer
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./packaging/windows.ps1
