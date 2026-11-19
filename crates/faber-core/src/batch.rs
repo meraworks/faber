@@ -9,6 +9,7 @@ use serde::Deserialize;
 /// One batch operation: a model edit, a metadata change or a placement.
 #[derive(Clone, Debug)]
 pub enum Operation {
+    Machining(Box<crate::machining::Edit>),
     SetPartInfo(PartInfoOperation),
     Edit(Box<Edit>),
     MoveLinked {
@@ -531,6 +532,7 @@ impl Boxes<'_> {
 
 fn operation(data: &mut ProjectData, boxes: &Boxes<'_>, operation: Operation) -> Result<()> {
     match operation {
+        Operation::Machining(edit) => edit.apply(data),
         Operation::Edit(edit_operation) => edit(data, *edit_operation),
         Operation::SetPartInfo(PartInfoOperation::SetPartInfo(info)) => part_info(data, info),
         Operation::MakeIndependent { id } => crate::instances::detach(data, &id),

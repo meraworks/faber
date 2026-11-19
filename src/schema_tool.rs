@@ -21,6 +21,7 @@ pub enum Kind {
     Drawing,
     Study,
     Printer,
+    Machining,
     Edit,
 }
 
@@ -36,6 +37,7 @@ impl Kind {
             Kind::Drawing => "drawing",
             Kind::Study => "study",
             Kind::Printer => "printer",
+            Kind::Machining => "machining",
             Kind::Edit => "edit",
         }
     }
@@ -78,6 +80,7 @@ fn definition(kind: Kind) -> Value {
         Kind::Drawing => schema_json::<faber_model::drawing::Drawing>(),
         Kind::Study => schema_json::<faber_model::study::Study<Scalar>>(),
         Kind::Printer => schema_json::<faber_model::Printer>(),
+        Kind::Machining => schema_json::<faber_model::machining::Machining>(),
         Kind::Edit => edit_schema(),
     }
 }
@@ -86,11 +89,13 @@ fn edit_schema() -> Value {
     // Generate both sets of variants with the same definitions and reference names.
     let mut generator = schemars::SchemaGenerator::default();
     let metadata = json!(faber_core::PartInfoOperation::json_schema(&mut generator));
+    let machining = json!(faber_core::machining::Edit::json_schema(&mut generator));
     let mut root = json!(generator.into_root_schema_for::<Edit>());
     let edits = root["oneOf"]
         .as_array_mut()
         .expect("The edit schema has variants");
     let extra = variants(&metadata);
+    edits.extend_from_slice(variants(&machining));
     if extra.is_empty() {
         edits.push(metadata);
     } else {

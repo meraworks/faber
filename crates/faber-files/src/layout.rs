@@ -46,7 +46,13 @@ struct DrawingFile {
 #[serde(deny_unknown_fields)]
 struct ManufactureFile {
     schema: u32,
-    printer: faber_model::Printer,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    printer: Option<faber_model::Printer>,
+    #[serde(
+        default,
+        skip_serializing_if = "faber_model::machining::Machining::is_empty"
+    )]
+    machining: faber_model::machining::Machining,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -111,6 +117,20 @@ struct AnalysisFile {
     studies: BTreeMap<String, faber_model::study::Study<Scalar>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     sections: BTreeMap<String, SectionAnalysis<Scalar>>,
+}
+
+/// Read the saved printer and machining definitions before first project creation.
+pub fn read_manufacture(
+    root: &Path,
+) -> Result<(
+    Option<faber_model::Printer>,
+    faber_model::machining::Machining,
+)> {
+    let Some(file) = read_optional::<ManufactureFile>(root, "manufacture.json")? else {
+        return Ok(Default::default());
+    };
+    check_schema(&file.schema, "manufacture.json")?;
+    Ok((file.printer, file.machining))
 }
 
 /// Reads a project folder. Accepts schema 1 (one file) and schema 2 (split).
@@ -182,13 +202,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         }
         None => Default::default(),
     };
-    let printer = match read_optional::<ManufactureFile>(root, "manufacture.json")? {
-        Some(file) => {
-            check_schema(&file.schema, "manufacture.json")?;
-            Some(file.printer)
-        }
-        None => None,
-    };
+    let (printer, machining) = read_manufacture(root)?;
     let mut drawings = BTreeMap::new();
     for id in file_ids(root, "drawings")? {
         let name = format!("drawings/{id}.json");
@@ -200,7 +214,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
     Ok(ProjectData {
         components,
         drawings,
-        machining: Default::default(),
+        machining,
         printer,
         materials: manifest.materials,
         studies,
@@ -292,10 +306,11 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
         };
         put(root, "analysis.json", &file, &mut changed)?;
     }
-    if let Some(printer) = &data.printer {
+    if data.printer.is_some() || !data.machining.is_empty() {
         let file = ManufactureFile {
             schema: FILE_SCHEMA,
-            printer: printer.clone(),
+            printer: data.printer.clone(),
+            machining: data.machining.clone(),
         };
         put(root, "manufacture.json", &file, &mut changed)?;
     } else {

@@ -36,6 +36,26 @@
   configuration(params={}, suppressed=[], note='')::
     { params: params, suppressed: suppressed, note: note },
 
+  // Initial machining definitions. Each saved project can then edit its own setup.
+  machining(tools, setups, operations):: {tools: tools, setups: setups, operations: operations},
+
+  cutting_tool(kind, number, diameter, flute_length, flutes, feed_mm_min, plunge_mm_min,
+               spindle_rpm, corner_radius=0)::
+    {kind: kind, number: number, diameter: diameter, flute_length: flute_length, flutes: flutes,
+     feed_mm_min: feed_mm_min, plunge_mm_min: plunge_mm_min, spindle_rpm: spindle_rpm,
+     corner_radius: corner_radius},
+
+  machining_setup(part, stock, origin='stock_top_centre', up=[0,0,1])::
+    {part: part, stock: stock, origin: origin, up: up},
+
+  machining_heights(top, bottom=null, retract=2, clearance=5)::
+    {top: top, retract: retract, clearance: clearance}
+    + (if bottom == null then {} else {bottom: bottom}),
+
+  machining_operation(id, setup, tool, kind, heights, settings, stepdown=null)::
+    settings + {id: id, setup: setup, tool: tool, kind: kind, heights: heights}
+    + (if stepdown == null then {} else {stepdown: stepdown}),
+
   // A sheet with model references. Positions and offsets are in millimetres.
   drawing(title, views={}, dimensions={}, sheet={size:'a4',orientation:'landscape'},
           projection='third', scale=1, notes=[], title_block={}, parts_list=null)::

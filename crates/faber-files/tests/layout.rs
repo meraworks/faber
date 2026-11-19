@@ -34,6 +34,22 @@ fn fixture() -> ProjectData {
 }
 
 #[test]
+fn machining_round_trips_in_manufacture_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut data = fixture();
+    data.machining=serde_json::from_value(serde_json::json!({"setups":{"bench":{
+        "part":"base","up":[0,0,1],"origin":"stock_top_centre","stock":{"kind":"offset","top":1,"bottom":0,"sides":3}
+    }}})).unwrap();
+    layout::write(dir.path(), &data).unwrap();
+    let file = fs::read(dir.path().join("manufacture.json")).unwrap();
+    let file: serde_json::Value = serde_json::from_slice(&file).unwrap();
+    assert_eq!(file["schema"], 1);
+    assert_eq!(file["machining"]["setups"]["bench"]["stock"]["top"], 1.);
+    assert!(file.get("printer").is_none());
+    assert_eq!(layout::read(dir.path()).unwrap(), data);
+}
+
+#[test]
 fn manufacture_file_round_trips() {
     let dir = tempfile::tempdir().unwrap();
     let mut data = fixture();

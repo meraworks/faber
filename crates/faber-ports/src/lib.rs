@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 pub mod bom;
 pub mod drawing;
+pub mod program;
 pub mod source;
 pub mod vector;
 

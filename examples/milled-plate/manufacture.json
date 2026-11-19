@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "machining": {
+    "tools": {
+      "end_mill": {
+        "kind": "flat",
+        "diameter": 6,
+        "flute_length": 18,
+        "flutes": 2,
+        "feed_mm_min": 400,
+        "plunge_mm_min": 100,
+        "spindle_rpm": 6000,
+        "number": 1
+      },
+      "drill": {
+        "kind": "drill",
+        "diameter": 5,
+        "flute_length": 18,
+        "flutes": 2,
+        "feed_mm_min": 250,
+        "plunge_mm_min": 90,
+        "spindle_rpm": 6000,
+        "number": 2
+      }
+    },
+    "setups": {
+      "top": {
+        "part": "plate",
+        "up": [
+          0,
+          0,
+          1
+        ],
+        "origin": "stock_top_corner",
+        "stock": {
+          "kind": "offset",
+          "sides": 3,
+          "top": 1,
+          "bottom": 0
+        }
+      }
+    },
+    "operations": [
+      {
+        "id": "face",
+        "setup": "top",
+        "tool": "end_mill",
+        "kind": "face",
+        "heights": {
+          "top": 0,
+          "bottom": -1,
+          "retract": 2,
+          "clearance": 5
+        },
+        "stepdown": 1,
+        "stepover": 3
+      },
+      {
+        "id": "pocket",
+        "setup": "top",
+        "tool": "end_mill",
+        "kind": "pocket",
+        "heights": {
+          "top": -1,
+          "bottom": -4,
+          "retract": 2,
+          "clearance": 5
+        },
+        "stepdown": 1.5,
+        "floor": {
+          "z": -4
+        },
+        "stepover": 2.5,
+        "stock_to_leave": 0
+      },
+      {
+        "id": "holes",
+        "setup": "top",
+        "tool": "drill",
+        "kind": "drill",
+        "heights": {
+          "top": -1,
+          "bottom": -9,
+          "retract": 2,
+          "clearance": 5
+        },
+        "stepdown": 2,
+        "holes": "auto",
+        "peck": 2
+      },
+      {
+        "id": "outside",
+        "setup": "top",
+        "tool": "end_mill",
+        "kind": "contour",
+        "heights": {
+          "top": -1,
+          "bottom": -9,
+          "retract": 2,
+          "clearance": 5
+        },
+        "stepdown": 2,
+        "z": {
+          "z": -6
+        },
+        "side": "outside",
+        "stock_to_leave": 0
+      }
+    ]
+  }
+}

@@ -26,6 +26,9 @@ mod forms_tests;
 mod keys;
 #[cfg(test)]
 mod keys_tests;
+mod machining;
+#[cfg(test)]
+mod machining_tests;
 mod marking_menu;
 mod material;
 #[cfg(test)]
@@ -265,6 +268,7 @@ pub struct Shell {
     printing: print_check::PrintPanel,
     study: study::StudyPanel,
     sheet_metal: Option<sheet::Panel>,
+    machining: Option<machining::Panel>,
     intermediate: Option<surface_feature::Preview>,
     design_source_name: Option<String>,
     surface: surface::SurfacePanel,
@@ -420,6 +424,7 @@ impl Shell {
             printing: Default::default(),
             study: Default::default(),
             sheet_metal: None,
+            machining: None,
             intermediate: None,
             design_source_name: sheet::source_name(&root),
             surface: Default::default(),
@@ -507,7 +512,9 @@ impl Shell {
     }
 
     fn fit(&mut self) {
-        let fitted = Camera::fit(&self.bodies);
+        let fitted = self
+            .machining_camera()
+            .unwrap_or_else(|| Camera::fit(&self.bodies));
         self.camera.target = fitted.target;
         self.camera.distance = fitted.distance;
         self.dirty = true;
@@ -1937,6 +1944,7 @@ impl Shell {
                     }
                     let changing_project = self.pending_project.is_some();
                     if let Some(root) = self.pending_project.take() {
+                        self.machining = None;
                         self.close_sheet();
                         self.close_surface_feature();
                         self.marking = Default::default();
@@ -2686,6 +2694,9 @@ impl Shell {
         }
     }
     fn inspector(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
+        if self.machining_panel(ui) {
+            return;
+        }
         if self.surface_feature_panel(ui) {
             return;
         }
@@ -2880,8 +2891,41 @@ impl Shell {
         );
     }
 
+    fn ensure_target(&mut self, ui: &egui::Ui, rs: &egui_wgpu::RenderState, rect: egui::Rect) {
+        let width = (rect.width() * ui.ctx().pixels_per_point())
+            .round()
+            .clamp(1., 4096.) as u32;
+        let height = (rect.height() * ui.ctx().pixels_per_point())
+            .round()
+            .clamp(1., 4096.) as u32;
+        if self
+            .target
+            .as_ref()
+            .is_none_or(|t| t.width != width || t.height != height)
+        {
+            let target = self.gpu.target(width, height);
+            let mut renderer = rs.renderer.write();
+            match self.texture {
+                None => {
+                    self.texture = Some(renderer.register_native_texture(
+                        &rs.device,
+                        &target.display_view,
+                        egui_wgpu::wgpu::FilterMode::Linear,
+                    ))
+                }
+                Some(id) => renderer.update_egui_texture_from_wgpu_texture(
+                    &rs.device,
+                    &target.display_view,
+                    egui_wgpu::wgpu::FilterMode::Linear,
+                    id,
+                ),
+            }
+            self.target = Some(target);
+            self.dirty = true;
+        }
+    }
     fn canvas(&mut self, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
-        if self.sheet_canvas(ui) {
+        if self.machining_canvas(ui, rs) || self.sheet_canvas(ui) {
             return;
         }
         let (id, rect) = ui.allocate_space(ui.available_size());
@@ -3288,37 +3332,7 @@ impl Shell {
             self.hover_entity(rect, hover);
         }
         self.marking_menu(ui.ctx());
-        let width = (rect.width() * ui.ctx().pixels_per_point())
-            .round()
-            .clamp(1., 4096.) as u32;
-        let height = (rect.height() * ui.ctx().pixels_per_point())
-            .round()
-            .clamp(1., 4096.) as u32;
-        if self
-            .target
-            .as_ref()
-            .is_none_or(|t| t.width != width || t.height != height)
-        {
-            let target = self.gpu.target(width, height);
-            let mut renderer = rs.renderer.write();
-            match self.texture {
-                None => {
-                    self.texture = Some(renderer.register_native_texture(
-                        &rs.device,
-                        &target.display_view,
-                        egui_wgpu::wgpu::FilterMode::Linear,
-                    ))
-                }
-                Some(id) => renderer.update_egui_texture_from_wgpu_texture(
-                    &rs.device,
-                    &target.display_view,
-                    egui_wgpu::wgpu::FilterMode::Linear,
-                    id,
-                ),
-            }
-            self.target = Some(target);
-            self.dirty = true;
-        }
+        self.ensure_target(ui, rs, rect);
         self.sync_surface_source();
         let study_paint = self.study.paint.as_ref().filter(|_| self.press.is_none());
         let wall_paint = self.printing.wall_paint().filter(|_| self.press.is_none());

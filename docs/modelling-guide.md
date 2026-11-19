@@ -1489,3 +1489,61 @@ must cover the outline of that face.
 The [surfaced handle](../examples/surfaced-handle/design.jsonnet) uses
 two lofted skins and two end patches. The stitch makes a closed solid.
 A shell feature opens the bottom and sets the wall thickness.
+
+## Machining
+
+Open **Manufacture** in the inspector. Choose a setup to see its part,
+stock, tools and operation times. A setup follows the saved placement of
+its part or instance. Yellow lines show rapid travel. Blue lines show
+feed moves. Click an operation to isolate its path. Click it again to
+show all paths. Drag to orbit, drag with the middle button to pan, and
+scroll to zoom. **Back to model** restores the design camera.
+
+The transparent box shows the initial stock. Select **Simulate** to
+show the stock left by the full setup. Red areas show cuts into the
+target beyond 0.02 mm. Read the deepest gouge, maximum excess,
+removed volume and rapid collisions below the operation list.
+The verification samples the stock on a height grid. Its cell size is
+the smaller of 0.25 mm and one tenth of the tool diameter. The display
+can combine cells to draw large setups. The report uses the full grid.
+Set `resolution_mm` in `toolpaths` to check a finer grid. Select a face to
+limit a pocket to that floor. Select a numeric height to include all
+pocket floors at that height.
+
+A ball tool can leave material where a curved surface meets its base.
+On a 20 mm radius dome, a 6 mm ball tool at 0.5 mm stepover left
+0.024 mm or less on the crown and 3.11 mm near the foot in the
+0.25 mm grid check. The maximum excess includes this material.
+
+A new project can take its initial machining settings from
+`machining: f.machining(tools, setups, operations)` in `design.jsonnet`.
+Use `f.cutting_tool`, `f.machining_setup`, `f.machining_heights` and
+`f.machining_operation` as in the milled plate example. The first build
+writes these settings to `manufacture.json`. If this file already exists,
+the first build checks its settings against the parts and uses them. Later builds keep the saved
+settings, including edited feeds, additional setups and removed operations. Use
+`set_tool`, `set_setup` and `set_operation` to define them. A setup
+selects a part, stock, origin and up direction. Heights use the setup
+coordinate system in millimetres. Feed and plunge rates use millimetres
+per minute. Operations run in list order. Face and pocket passes use
+the specified stepover. A contour follows an inside or outside edge.
+Drilling accepts hole positions or axial cylindrical holes from the
+part. Roughing and parallel finishing use the reachable upper surface
+from the setup direction. A 2D cut uses the kerf and cuts inner loops
+before outer loops.
+Drill and chamfer tools have a flat end in the stock check. The check
+does not calculate the conical tip. A drill can only make axial cuts.
+
+Use `toolpaths` to calculate and verify a setup. Its optional render
+shows the paths over the cut stock. To save a program, run
+`faber gcode PROJECT SETUP FILE`. For GRBL, fit the tool number in
+the first operation report. The program pauses for later tool changes.
+The writer refuses a gouge or rapid
+travel through material. An explicit forced export records these
+problems in comments. Verification excludes fixtures, tool holders and
+rotary axes. Turning, four- and five-axis machining, adaptive clearing,
+rest machining and tabs are outside its scope.
+
+The [milled plate](../examples/milled-plate/) has a 60 × 40 × 8 mm
+body, a 24 × 14 mm pocket and four 5 mm holes. The top setup faces
+the stock, clears the pocket, drills the holes and cuts the outer contour.

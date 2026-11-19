@@ -6,6 +6,8 @@ pub use configurations::use_configuration;
 pub mod archive;
 pub mod drawing;
 pub mod links;
+pub mod machining;
+pub mod machining_image;
 pub mod mesh_edit;
 pub mod sheet;
 pub mod study;
@@ -363,10 +365,14 @@ fn open_with_store(
         return Err("Project does not exist".into());
     }
     let store = Arc::new(FileStore::open(path)?);
-    if (create || generated) && !path.join("faber.json").exists() {
+    let initialise = (create || generated) && !path.join("faber.json").exists();
+    if initialise && generated && path.join("manufacture.json").is_file() {
+        faber_build::open_saved_manufacture(path, &store, &OcctKernel)?;
+    } else if initialise {
+        let (printer, machining) = faber_files::layout::read_manufacture(path)?;
         let data = ProjectData {
-            machining: Default::default(),
-            printer: None,
+            machining,
+            printer,
             configurations: Default::default(),
             active_configuration: None,
             configuration_suppressions: Vec::new(),

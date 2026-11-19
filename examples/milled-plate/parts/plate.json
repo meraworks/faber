@@ -1,0 +1,182 @@
+{
+  "schema": 1,
+  "name": "Milled plate",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "blank",
+        "geometry": {
+          "op": "box",
+          "size": [
+            60.0,
+            40.0,
+            "thickness"
+          ]
+        }
+      },
+      {
+        "id": "pocket_tool",
+        "geometry": {
+          "op": "box",
+          "size": [
+            24.0,
+            14.0,
+            5.0
+          ]
+        }
+      },
+      {
+        "id": "pocket_position",
+        "geometry": {
+          "op": "transform",
+          "source": "pocket_tool",
+          "placement": {
+            "translation": [
+              18.0,
+              13.0,
+              "thickness - 3"
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "pocket",
+        "geometry": {
+          "op": "difference",
+          "left": "blank",
+          "right": "pocket_position"
+        }
+      },
+      {
+        "id": "hole_tool",
+        "geometry": {
+          "op": "cylinder",
+          "radius": 2.5,
+          "height": "thickness + 2"
+        }
+      },
+      {
+        "id": "position_1",
+        "geometry": {
+          "op": "transform",
+          "source": "hole_tool",
+          "placement": {
+            "translation": [
+              7.0,
+              7.0,
+              -1.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "drilled_1",
+        "geometry": {
+          "op": "difference",
+          "left": "pocket",
+          "right": "position_1"
+        }
+      },
+      {
+        "id": "position_2",
+        "geometry": {
+          "op": "transform",
+          "source": "hole_tool",
+          "placement": {
+            "translation": [
+              53.0,
+              7.0,
+              -1.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "drilled_2",
+        "geometry": {
+          "op": "difference",
+          "left": "drilled_1",
+          "right": "position_2"
+        }
+      },
+      {
+        "id": "position_3",
+        "geometry": {
+          "op": "transform",
+          "source": "hole_tool",
+          "placement": {
+            "translation": [
+              53.0,
+              33.0,
+              -1.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "drilled_3",
+        "geometry": {
+          "op": "difference",
+          "left": "drilled_2",
+          "right": "position_3"
+        }
+      },
+      {
+        "id": "position_4",
+        "geometry": {
+          "op": "transform",
+          "source": "hole_tool",
+          "placement": {
+            "translation": [
+              7.0,
+              33.0,
+              -1.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "drilled_4",
+        "geometry": {
+          "op": "difference",
+          "left": "drilled_3",
+          "right": "position_4"
+        }
+      }
+    ],
+    "output": "drilled_4"
+  },
+  "colour": [
+    147,
+    164,
+    168
+  ],
+  "group": "",
+  "note": ""
+}

@@ -21,6 +21,7 @@ mod generated;
 mod history;
 mod hole;
 mod instances;
+pub mod machining;
 pub mod surface_feature;
 pub use instances::{
     independent_part, instance_part, part_material, refuse_edit as refuse_instance_edit,
@@ -810,6 +811,7 @@ pub fn valid_id(id: &str) -> bool {
 }
 
 fn validate_data(data: &ProjectData) -> Result<()> {
+    machining::validate(data)?;
     configurations::validate(data)?;
     if data.schema != 1 {
         return Err(format!("Unsupported schema: {}", data.schema));
@@ -894,18 +896,46 @@ pub(crate) fn candidate_local(
     kernel: &dyn Kernel,
     assets: Option<&dyn faber_ports::AssetStore>,
 ) -> Result<body_cache::LocalBody> {
-    let paths = assets::resolve(data, assets)?;
+    cached_local(data, id, kernel, assets, None)
+}
+
+/// Build one part in its local coordinates, including the source of an instance.
+pub fn local_surface(
+    data: &ProjectData,
+    id: &str,
+    kernel: &dyn Kernel,
+    assets: Option<&dyn faber_ports::AssetStore>,
+    cache: Option<&dyn faber_ports::FeatureCache>,
+) -> Result<(faber_ports::FaceMesh, Option<Shape>)> {
+    let body = cached_local(data, id, kernel, assets, cache)?;
+    Ok((
+        faber_ports::FaceMesh {
+            mesh: body.mesh,
+            face_of_triangle: body.face_of_triangle,
+        },
+        body.shape,
+    ))
+}
+
+fn cached_local(
+    data: &ProjectData,
+    id: &str,
+    kernel: &dyn Kernel,
+    assets: Option<&dyn faber_ports::AssetStore>,
+    cache: Option<&dyn faber_ports::FeatureCache>,
+) -> Result<body_cache::LocalBody> {
     let values = faber_expr::resolve(&data.params)?;
     let id = instances::owner(data, id)?;
-    let part = data
+    let (key, part) = data
         .parts
-        .get(id)
+        .get_key_value(id)
         .ok_or_else(|| format!("Unknown part: {id}"))?;
+    let paths = assets::resolve_parts([(key, part)], assets, Default::default())?;
     let resolved = resolve_part(part, &values)?;
     let builder = Builder {
         kernel,
         paths: &paths,
-        persist: None,
+        persist: cache,
     };
     let mut timing = body_cache::Timing::default();
     builder.local(

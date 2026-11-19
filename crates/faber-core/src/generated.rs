@@ -281,6 +281,7 @@ impl Project {
 
     fn changes_generated(&self, operation: &Operation) -> bool {
         match operation {
+            Operation::Machining(_) => false,
             Operation::Edit(edit) => match &**edit {
                 Edit::SetConfiguration { name, .. } => {
                     self.data.active_configuration.as_ref() == Some(name)

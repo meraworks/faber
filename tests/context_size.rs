@@ -99,6 +99,115 @@ fn open_project(session: &mut Session, dir: &Path) {
 }
 
 #[test]
+fn set_operation_then_machining_lists_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start();
+    open_project(&mut s, dir.path());
+    s.ok("put_part",json!({"id":"plate","part":{"name":"Plate","colour":[80,140,160],"geometry":{"op":"box","size":[40,20,5]}}}));
+    let tool = json!({"kind":"flat","diameter":4,"flute_length":16,"flutes":2,"feed_mm_min":240,"plunge_mm_min":60,"spindle_rpm":8000,"number":1});
+    let setup = json!({"part":"plate","up":[0,0,1],"stock":{"kind":"offset","sides":0,"top":1,"bottom":0},"origin":"stock_top_corner"});
+    let op = json!({"id":"face_top","kind":"face","tool":"t1","setup":"mill","stepover":2,"stepdown":1,"heights":{"clearance":5,"retract":3,"top":0,"bottom":-1}});
+    let batch = json!({"operations":[{"tool":"set_tool","id":"t1","definition":tool},{"tool":"set_setup","id":"mill","setup":setup},{"tool":"set_operation","operation":op}]});
+    let mut bad = batch.clone();
+    bad["operations"][2]["operation"]["tool"] = json!("absent");
+    assert!(s.refused("batch", bad).contains("absent"));
+    assert!(!dir.path().join("manufacture.json").exists());
+    s.ok("batch", batch);
+    let mut wider = tool.clone();
+    wider["diameter"] = json!(8);
+    let revision = s.ok("set_tool", json!({"id":"wider","definition":wider}))["revision"]
+        .as_u64()
+        .unwrap();
+    let mut second = op.clone();
+    second["id"] = json!("second");
+    second["tool"] = json!("wider");
+    let duplicate = s.refused("set_operation", json!({"operation":second}));
+    assert!(duplicate.contains("number 1"), "{duplicate}");
+    let mut twist_drill = tool.clone();
+    twist_drill["kind"] = json!("drill");
+    assert!(
+        s.refused("set_tool", json!({"id":"t1","definition":twist_drill}))
+            .contains("drill")
+    );
+    let mut unknown = op.clone();
+    unknown["setup"] = json!("missing_setup");
+    assert!(
+        s.refused("set_operation", json!({"operation":unknown}))
+            .contains("missing_setup")
+    );
+    s.refused(
+        "remove_operation",
+        json!({"id":"face_top","expected_revision":revision-1}),
+    );
+    let list = s.ok("machining", json!({}));
+    assert_eq!(list["operations"][0]["id"], "face_top");
+    s.ok(
+        "remove_operation",
+        json!({"id":"face_top","expected_revision":revision}),
+    );
+    assert_eq!(s.ok("machining", json!({}))["operations"], json!([]));
+    s.ok("undo", json!({}));
+    let report = s.ok("toolpaths", json!({"setup":"mill"}));
+    assert!(report.to_string().len() < 3500, "{report}");
+    assert_eq!(report["operations"][0]["gouge_mm"], 0.);
+    drop(s);
+    let mut reopened = Session::start();
+    reopened.ok("open", json!({"path":dir.path()}));
+    assert_eq!(
+        reopened.ok("machining", json!({}))["operations"],
+        list["operations"]
+    );
+    let mcp_file = dir.path().join("from-mcp.nc");
+    reopened.ok(
+        "write_gcode",
+        json!({"setup":"mill","dialect":"grbl","path":mcp_file}),
+    );
+    let cli_file = dir.path().join("from-cli.nc");
+    let output = Command::new(env!("CARGO_BIN_EXE_faber"))
+        .arg("gcode")
+        .arg(dir.path())
+        .arg("mill")
+        .arg(&cli_file)
+        .args(["--dialect", "grbl"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read(cli_file).unwrap(),
+        std::fs::read(&mcp_file).unwrap()
+    );
+    let before = std::fs::read(&mcp_file).unwrap();
+    std::fs::write(
+        dir.path().join("design.jsonnet"),
+        "error 'invalid new plate'",
+    )
+    .unwrap();
+    assert!(
+        reopened
+            .refused(
+                "write_gcode",
+                json!({"setup":"mill","path":mcp_file,"force":true})
+            )
+            .contains("invalid new plate")
+    );
+    let error = Command::new(env!("CARGO_BIN_EXE_faber"))
+        .arg("gcode")
+        .arg(dir.path())
+        .arg("mill")
+        .arg(&mcp_file)
+        .arg("--force")
+        .output()
+        .unwrap();
+    assert!(!error.status.success());
+    assert!(String::from_utf8_lossy(&error.stderr).contains("invalid new plate"));
+    assert_eq!(std::fs::read(mcp_file).unwrap(), before);
+}
+
+#[test]
 fn feature_info_of_a_surface_has_no_volume_and_retains_the_stitch_gap_on_open() {
     let dir = tempfile::tempdir().unwrap();
     let mut session = Session::start();

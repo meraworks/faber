@@ -1,6 +1,7 @@
 //! Shared GPU renderer for the viewer and image files.
 
 mod face_marks;
+pub mod machining;
 use bytemuck::{Pod, Zeroable};
 use faber_ports::{Body, Mesh, Result};
 use faber_scene::{Camera, Section, section};
@@ -121,26 +122,7 @@ impl SurfacePaint {
                 .get(range.start as usize..range.end as usize)
                 .ok_or("Invalid boundary range.")?;
             for pair in line.windows(2) {
-                let a = pair[0].map(|v| v as f32);
-                let b = pair[1].map(|v| v as f32);
-                if a == b {
-                    continue;
-                }
-                // The shader expands each segment in screen pixels at its own depth.
-                let v = |position, normal, kind| Vertex {
-                    position,
-                    normal,
-                    colour: [1., 0.23, 0.015],
-                    kind,
-                };
-                vertices.extend([
-                    v(a, b, -6.),
-                    v(a, b, -7.),
-                    v(b, a, -6.),
-                    v(b, a, -6.),
-                    v(b, a, -7.),
-                    v(a, b, -6.),
-                ]);
+                machining::strip(&mut vertices, pair[0], pair[1], [1., 0.23, 0.015]);
             }
         }
         Ok(Self {
@@ -476,7 +458,7 @@ impl Gpu {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: FORMAT,
-                    blend: None,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),

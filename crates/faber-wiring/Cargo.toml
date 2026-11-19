@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+faber-cam = { path = "../faber-cam" }
 faber-sheet = { path = "../faber-sheet" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 glam.workspace = true

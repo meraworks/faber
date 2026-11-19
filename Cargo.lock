@@ -1346,6 +1346,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "faber-cam"
+version = "0.1.0"
+dependencies = [
+ "faber-geometry",
+ "faber-meshtools",
+ "faber-model",
+ "faber-ports",
+ "glam",
+ "i_overlay",
+ "rayon",
+ "serde",
+]
+
+[[package]]
 name = "faber-clash"
 version = "0.1.0"
 dependencies = [
@@ -1575,6 +1589,7 @@ name = "faber-wiring"
 version = "0.1.0"
 dependencies = [
  "faber-build",
+ "faber-cam",
  "faber-clash",
  "faber-core",
  "faber-drawing",

@@ -142,6 +142,14 @@ pub(crate) fn resolve(data: &ProjectData, store: Option<&dyn AssetStore>) -> Res
 pub(crate) fn resolve_with(
     data: &ProjectData,
     store: Option<&dyn AssetStore>,
+    paths: Paths,
+) -> Result<Paths> {
+    resolve_parts(&data.parts, store, paths)
+}
+
+pub(crate) fn resolve_parts<'a>(
+    parts: impl IntoIterator<Item = (&'a String, &'a faber_model::Part<Scalar>)>,
+    store: Option<&dyn AssetStore>,
     mut paths: Paths,
 ) -> Result<Paths> {
     fn visit(
@@ -186,7 +194,7 @@ pub(crate) fn resolve_with(
         Ok(())
     }
     let mut checked = std::collections::BTreeSet::new();
-    for (id, part) in &data.parts {
+    for (id, part) in parts {
         visit(&part.geometry, store, &mut paths, true)?;
         let Geometry::History { features, .. } = &part.geometry else {
             continue;

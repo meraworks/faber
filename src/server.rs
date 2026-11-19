@@ -1,6 +1,8 @@
 //! Stdio tools call the same project operations as the CLI.
 
 mod drawing_tools;
+mod machining_tools;
+use machining_tools::{Paths, ProgramFile, RemoveOperation, SetOperation, SetSetup, SetTool};
 mod mesh_tools;
 mod surface_tools;
 use crate::input::Checked;
@@ -680,7 +682,11 @@ pub struct PreviewBatch {
 }
 
 /// Batch tool names, in the order shown to clients.
-const BATCH_TOOLS: [&str; 17] = [
+const BATCH_TOOLS: [&str; 21] = [
+    "set_tool",
+    "set_setup",
+    "set_operation",
+    "remove_operation",
     "set_component",
     "remove_component",
     "set_motion",
@@ -851,6 +857,11 @@ fn batch_operations(items: Vec<Value>) -> Result<Vec<faber_core::Operation>, Str
                 ));
             }
             let path = format!("operations[{index}]");
+            if matches!(tool.as_str(),"set_tool"|"set_setup"|"set_operation"|"remove_operation"){
+                let edit=crate::input::read::<faber_core::machining::Edit>(&Value::Object(fields),&path)
+                    .map_err(|e|format!("Batch operation {number} (tool {tool}): {e}"))?;
+                return Ok(faber_core::Operation::Machining(Box::new(edit)));
+            }
             if tool == "move_part" {
                 fields.remove("tool");
                 let item = crate::input::read::<MoveItem>(&Value::Object(fields), &path)
@@ -1322,6 +1333,14 @@ impl Faber {
             {
                 Arc::make_mut(schema).remove("$schema");
             }
+            // The integer type and minimum describe a revision to JSON clients.
+            if let Some(revision) = Arc::make_mut(schema)
+                .get_mut("properties")
+                .and_then(|fields| fields.get_mut("expected_revision"))
+                .and_then(Value::as_object_mut)
+            {
+                revision.remove("format");
+            }
         }
         Self {
             project: Arc::new(Mutex::new(None)),
@@ -1356,6 +1375,97 @@ impl Faber {
 
 #[tool_router]
 impl Faber {
+    #[tool(description = "Save a cutter. See schema machining.")]
+    fn set_tool(&self, Parameters(Checked(a)): Parameters<Checked<SetTool>>) -> CallToolResult {
+        self.machining_edit(
+            a.expected_revision,
+            faber_core::machining::Edit::SetTool {
+                id: a.id,
+                definition: a.definition,
+            },
+        )
+    }
+    #[tool(description = "Set stock, origin and direction for a part.")]
+    fn set_setup(&self, Parameters(Checked(a)): Parameters<Checked<SetSetup>>) -> CallToolResult {
+        self.machining_edit(
+            a.expected_revision,
+            faber_core::machining::Edit::SetSetup {
+                id: a.id,
+                setup: a.setup,
+            },
+        )
+    }
+    #[tool(description = "Add or change one machining operation.")]
+    fn set_operation(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<SetOperation>>,
+    ) -> CallToolResult {
+        self.machining_edit(
+            a.expected_revision,
+            faber_core::machining::Edit::SetOperation {
+                operation: a.operation,
+            },
+        )
+    }
+    #[tool(description = "Remove a machining operation.")]
+    fn remove_operation(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<RemoveOperation>>,
+    ) -> CallToolResult {
+        self.machining_edit(
+            a.expected_revision,
+            faber_core::machining::Edit::RemoveOperation { id: a.id },
+        )
+    }
+    #[tool(description = "List cutters, setups and operations in order.")]
+    fn machining(&self) -> CallToolResult {
+        self.with(|p|{
+            let m=&p.data.machining;
+            Ok(json!({"revision":p.data.revision,"tools":m.tools.keys().collect::<Vec<_>>(),"setups":m.setups.keys().collect::<Vec<_>>(),
+                "operations":m.operations.iter().map(|o|json!({"id":o.id,"setup":o.setup,"tool":o.tool})).collect::<Vec<_>>()}))
+        })
+    }
+    #[tool(description = "Calculate and check paths. Optionally save a picture.")]
+    fn toolpaths(&self, Parameters(Checked(a)): Parameters<Checked<Paths>>) -> CallToolResult {
+        self.with_folder(|root, p| {
+            check_revision(p, a.expected_revision)?;
+            let run = faber_wiring::machining::cached(
+                root,
+                p,
+                &a.setup,
+                a.operations.as_deref(),
+                a.resolution_mm,
+            )?;
+            let mut reply = run.summary();
+            if let Some(image) = a.render {
+                faber_wiring::machining_image::render(
+                    &run,
+                    &image.path,
+                    image.width.unwrap_or(800),
+                    image.height.unwrap_or(600),
+                )?;
+                reply["path"] = json!(image.path);
+            }
+            Ok(reply)
+        })
+    }
+    #[tool(description = "Write a checked controller program to a file.")]
+    fn write_gcode(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<ProgramFile>>,
+    ) -> CallToolResult {
+        self.with_folder(|root, p| {
+            check_revision(p, a.expected_revision)?;
+            let run = faber_wiring::machining::cached(root, p, &a.setup, None, None)?;
+            let dialect = crate::program_dialect(a.dialect.as_deref())?;
+            if let Some(error) = p.source_error() {
+                return Err(format!("The design source has an error: {error}"));
+            }
+            faber_wiring::machining::check_program_source(root, &p.data)?;
+            faber_wiring::machining::write_program(&run, &p.data, &a.path, dialect, a.force)?;
+            Ok(json!({"path":a.path,"operations":run.paths.len(),"revision":p.data.revision}))
+        })
+    }
     #[tool(description = "Add a component or change its frame.")]
     fn set_component(
         &self,

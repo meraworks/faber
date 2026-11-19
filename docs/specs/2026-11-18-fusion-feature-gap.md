@@ -4,6 +4,17 @@ Date: 2026-11-18. Fusion is the behavioural reference. This note compares the
 installed Fusion command set with Faber. It is static evidence from shipped
 files. Fusion was not run.
 
+## Machining setup
+
+The machining setup in chunk 14 uses a part, stock bounds, a working
+direction and an origin. The installed Fusion `Cam/CAM/Setup.h` exposes
+`stockMode` and `workCoordinateSystem`. REA identified its x64 binding
+`_cam.pyd` with SHA-256
+`4b66aec1bb5e28a7cd9c3918c9175ffcd9ea0ba0af4f8ad12beb9e53af505baf`.
+The public setup reference describes the working axes and stock box
+points. Faber verifies a three-axis tool sweep. Fixture and holder
+collisions remain outside this check. [Autodesk setup reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-CAM/files/MFG-REF-SETUP-MILL.htm)
+
 ## Viewer controls
 
 Chunk 17 adds canvas selection, a view cube, command search and keyboard

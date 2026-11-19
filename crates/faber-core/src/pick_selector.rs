@@ -35,15 +35,11 @@ impl Project {
     }
     pub fn selected_local_face(&self, part: &str, face: &FaceSelector) -> Result<u32> {
         let (_, shape) = self.local_geometry(part)?;
-        let selected = crate::select::faces(
+        single_face(
             self.kernel.as_ref(),
             shape.ok_or("Part has no exact shape.")?,
             face,
-        )?;
-        match selected.as_slice() {
-            [index] => Ok(*index),
-            _ => Err("Select exactly one face.".into()),
-        }
+        )
     }
     pub fn unplaced_topology(&self, part: &str) -> Result<(Vec<EdgeInfo>, Vec<FaceInfo>)> {
         let local = self
@@ -57,6 +53,17 @@ impl Project {
 
 pub fn plane_at(centre: [f64; 3], normal: [f64; 3]) -> Result<Placement> {
     crate::select::plane_axes(centre, normal, 0.)
+}
+
+pub fn single_face(
+    kernel: &dyn Kernel,
+    shape: &faber_ports::Shape,
+    face: &FaceSelector,
+) -> Result<u32> {
+    match crate::select::faces(kernel, shape, face)?.as_slice() {
+        [index] => Ok(*index),
+        _ => Err("Select exactly one face.".into()),
+    }
 }
 
 #[derive(Clone, Debug)]

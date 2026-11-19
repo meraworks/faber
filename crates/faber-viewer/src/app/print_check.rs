@@ -274,18 +274,23 @@ impl Shell {
 
     pub(super) fn print_panel(&mut self, ui: &mut egui::Ui) -> bool {
         if !self.printing.open {
-            if ui
-                .add_enabled(!self.bodies.is_empty(), egui::Button::new("Print check"))
-                .clicked()
-            {
-                self.printing.open = true;
-                self.printing.overlay = false;
-                self.printing.part = self
-                    .selected
-                    .clone()
-                    .or_else(|| (self.bodies.len() == 1).then(|| self.bodies[0].id.clone()));
-                ui.ctx().request_repaint();
-            }
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(!self.bodies.is_empty(), egui::Button::new("Print check"))
+                    .clicked()
+                {
+                    self.printing.open = true;
+                    self.printing.overlay = false;
+                    self.printing.part = self
+                        .selected
+                        .clone()
+                        .or_else(|| (self.bodies.len() == 1).then(|| self.bodies[0].id.clone()));
+                    ui.ctx().request_repaint();
+                }
+                if ui.button("Manufacture").clicked() {
+                    self.open_machining();
+                }
+            });
             return self.printing.open;
         }
         let close = ui

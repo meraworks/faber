@@ -643,3 +643,58 @@ fn surface_helpers_preserve_the_order_of_references_and_driven_values() {
         serde_json::json!([1., 2., 3.])
     );
 }
+
+#[test]
+fn jsonnet_machining_regenerates_the_plate_and_preserves_independent_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let design = include_str!("../../../examples/milled-plate/design.jsonnet");
+    write(root, "design.jsonnet", design);
+    let first = source().ensure_built(root).unwrap().unwrap();
+    assert!(first.written.iter().any(|f| f == "manufacture.json"));
+    let file = root.join("manufacture.json");
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../examples/milled-plate/manufacture.json"
+    ))
+    .unwrap();
+    let read_cam = |v: &serde_json::Value| {
+        serde_json::from_value::<faber_model::machining::Machining>(v["machining"].clone()).unwrap()
+    };
+    assert_eq!(read_cam(&json), read_cam(&expected));
+    json["machining"]["tools"]["end_mill"]["feed_mm_min"] = 375.into();
+    json["machining"]["operations"]
+        .as_array_mut()
+        .unwrap()
+        .remove(1);
+    let tool = json["machining"]["tools"]["end_mill"].clone();
+    json["machining"]["tools"]["spare"] = tool;
+    json["machining"]["tools"]["spare"]["number"] = 7.into();
+    let setup = json["machining"]["setups"]["top"].clone();
+    json["machining"]["setups"]["manual"] = setup;
+    let mut operation = json["machining"]["operations"][0].clone();
+    operation["id"] = "second".into();
+    operation["setup"] = "manual".into();
+    operation["tool"] = "spare".into();
+    json["machining"]["operations"]
+        .as_array_mut()
+        .unwrap()
+        .push(operation);
+    std::fs::write(&file, serde_json::to_vec(&json).unwrap()).unwrap();
+    write(
+        root,
+        "design.jsonnet",
+        &format!("{design}\n// Update the source."),
+    );
+    source().ensure_built(root).unwrap().unwrap();
+    let saved = faber_files::read(root).unwrap().machining;
+    assert_eq!(saved, read_cam(&json));
+    write(
+        root,
+        "design.jsonnet",
+        &format!("({design}) + {{machining: {{}}}}"),
+    );
+    source().ensure_built(root).unwrap().unwrap();
+    assert_eq!(faber_files::read(root).unwrap().machining, saved);
+}

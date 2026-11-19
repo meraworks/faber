@@ -44,7 +44,11 @@ struct Output { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>,
         return vec4(v.colour*shadow-vec3(0.06)*line*fade,1.0);
     }
     if v.kind<0.5 && dot(camera.plane,vec4(v.world,1.0))>0.00001 {discard;}
-    if v.kind == -3.0 {return vec4(v.colour, 1.0);}
+    if v.kind == -5.0 {
+        if !front {discard;}
+        return vec4(v.colour, 0.16);
+    }
+    if v.kind == -3.0 {return vec4(v.colour, 1.0); }
     if v.kind == -2.0 {
         let ray = normalize(v.world - camera.eye.xyz);
         let phase = dot(reflect(ray, normalize(v.normal)), vec3(1.0, 0.0, 0.0)) * f32(camera.zebra.z);

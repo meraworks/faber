@@ -3,6 +3,7 @@
 mod assets;
 pub mod bom;
 mod feature_cache;
+pub mod gcode;
 mod history;
 pub use history::read_committed;
 mod indexed_mesh;

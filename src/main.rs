@@ -19,6 +19,7 @@ async fn main() {
         Some("schema") if args.len() == 1 => serde_json::to_string_pretty(&schemars::schema_for!(faber_model::ProjectData))
             .map(|schema| println!("{schema}")).map_err(|error| error.to_string()),
         Some("drawing") if args.len() == 4 => drawing(Path::new(&args[1]), &args[2], Path::new(&args[3])),
+        Some("gcode") if args.len() >= 4 => gcode(&args),
         Some("flat") if args.len() == 4 => faber_wiring::read_snapshot(Path::new(&args[1]))
             .and_then(|project| faber_wiring::sheet::report(&project,&args[2],Some(Path::new(&args[3]))))
             .map(|report| println!("{report}")),
@@ -32,7 +33,7 @@ async fn main() {
         Some("build") if args.len() == 2 => build(Path::new(&args[1])),
         Some("bom") if args.len() >= 2 => parts_list(&args),
         Some("export") if args.len() >= 3 => export(&args),
-        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | bom PROJECT [--format json|csv|md] | export PROJECT DIRECTORY [--configuration NAME|--all-configurations] [--format stl|step|3mf] [--tolerance MM] [--force] | render PROJECT IMAGE | drawing PROJECT ID FILE | flat PROJECT PART FILE | schema | guide | faber scan PACKAGE".into()),
+        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | bom PROJECT [--format json|csv|md] | export PROJECT DIRECTORY [--configuration NAME|--all-configurations] [--format stl|step|3mf] [--tolerance MM] [--force] | render PROJECT IMAGE | drawing PROJECT ID FILE | flat PROJECT PART FILE | gcode PROJECT SETUP FILE [--dialect NAME] [--force] | schema | guide | faber scan PACKAGE".into()),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -48,6 +49,38 @@ fn drawing(root: &Path, id: &str, path: &Path) -> Result<(), String> {
         serde_json::json!({"path":path,"revision":project.data.revision,
         "problems":rendered.problems,"limits":rendered.limits})
     );
+    Ok(())
+}
+
+fn program_dialect(value: Option<&str>) -> Result<faber_ports::program::Dialect, String> {
+    use faber_ports::program::Dialect;
+    match value.unwrap_or("generic") {
+        "generic" => Ok(Dialect::Generic),
+        "grbl" => Ok(Dialect::Grbl),
+        "linux_cnc" | "linuxcnc" => Ok(Dialect::LinuxCnc),
+        "grbl_laser" => Ok(Dialect::GrblLaser),
+        _ => Err("Choose generic, grbl, linux_cnc or grbl_laser.".into()),
+    }
+}
+
+fn gcode(args: &[String]) -> Result<(), String> {
+    let mut options = args[4..].iter();
+    let mut dialect = None;
+    let mut force = false;
+    while let Some(flag) = options.next() {
+        match flag.as_str() {
+            "--dialect" => dialect = Some(options.next().ok_or("Give the dialect name.")?.as_str()),
+            "--force" => force = true,
+            _ => return Err(format!("Unknown program option: {flag}.")),
+        }
+    }
+    let root = Path::new(&args[1]);
+    let dialect = program_dialect(dialect)?;
+    let data = faber_files::read_committed(root)?;
+    let run = faber_wiring::machining::calculate(root, &data, &args[2], None)?;
+    faber_wiring::machining::check_program_source(root, &data)?;
+    faber_wiring::machining::write_program(&run, &data, Path::new(&args[3]), dialect, force)?;
+    println!("{}", run.summary());
     Ok(())
 }
 

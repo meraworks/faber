@@ -82,6 +82,7 @@ struct Design {
     components: Option<BTreeMap<String, faber_model::Component>>,
     configurations: Option<BTreeMap<String, faber_model::Configuration>>,
     studies: Option<BTreeMap<String, faber_model::study::Study<Scalar>>>,
+    machining: Option<faber_model::machining::Machining>,
 }
 
 /// The project that the source gives. Nothing is written yet.
@@ -282,6 +283,14 @@ fn evaluate_with(
     if let Some(studies) = design.studies {
         data.studies = studies;
     }
+    if !require_active
+        && current.revision == 0
+        && current.parts.is_empty()
+        && current.machining.is_empty()
+        && let Some(machining) = design.machining
+    {
+        data.machining = machining;
+    }
     let authored = Authored {
         parts: Some(source_parts),
         drawings: replace_authored(&mut data.drawings, previous.drawings, design.drawings),
@@ -329,22 +338,21 @@ fn replace_authored<T>(
 pub fn build(kernel: Arc<dyn Kernel>, root: &Path) -> Result<Report> {
     let manifest = root.join("faber.json").is_file();
     let store = Arc::new(FileStore::open(root)?);
-    let current = if manifest {
-        store.load()?
-    } else {
-        empty_project(root)
-    };
-    evaluate(root, &current)?;
     if manifest {
         let mut project =
             Project::open_with_cache(store, kernel, Some(Arc::new(FileAssets::new(root))), None)?;
         return build_project(root, &mut project);
     }
+    if root.join("manufacture.json").is_file() {
+        return open_saved_manufacture(root, &store, kernel.as_ref());
+    }
+    let current = empty_project(root);
+    let candidate = evaluate(root, &current)?;
     // The first build writes an empty project to open it. A failed build removes that project.
     store.save(None, &current)?;
     let mut project =
         Project::open_with_cache(store, kernel, Some(Arc::new(FileAssets::new(root))), None)?;
-    let result = build_project(root, &mut project);
+    let result = save_candidate(root, &mut project, candidate);
     if result.is_err() {
         for file in ["faber.json", "placement.json"] {
             let _ = std::fs::remove_file(root.join(file));
@@ -354,12 +362,34 @@ pub fn build(kernel: Arc<dyn Kernel>, root: &Path) -> Result<Report> {
     result
 }
 
+/// Create a source project around saved manufacturing settings in one store transaction.
+pub fn open_saved_manufacture(
+    root: &Path,
+    store: &FileStore,
+    kernel: &dyn Kernel,
+) -> Result<Report> {
+    let (printer, machining) = faber_files::layout::read_manufacture(root)?;
+    let current = empty_project(root);
+    let mut candidate = evaluate(root, &current)?;
+    candidate.data.machining = machining;
+    candidate.data.printer = printer;
+    faber_core::build_with_assets(&candidate.data, kernel, Some(&FileAssets::new(root)))?;
+    let report = report_of(root, &current, &candidate);
+    store.save(None, &candidate.data)?;
+    write_record(root, &candidate.inputs, candidate.authored)?;
+    Ok(report)
+}
+
 /// Saves the project that the source gives. The save is one undo step. The
 /// build record is written after the save, so a failed build writes no record.
 pub fn build_project(root: &Path, project: &mut Project) -> Result<Report> {
     project.sync()?;
     project.set_source_error(None);
     let candidate = evaluate(root, &project.data)?;
+    save_candidate(root, project, candidate)
+}
+
+fn save_candidate(root: &Path, project: &mut Project, candidate: Candidate) -> Result<Report> {
     let report = report_of(root, &project.data, &candidate);
     project.save_generated(candidate.data)?;
     record_project(root, project, &candidate.inputs, candidate.authored)?;
@@ -459,6 +489,9 @@ fn written_files(before: &ProjectData, after: &ProjectData) -> Vec<String> {
         .filter(|id| !after.drawings.contains_key(*id))
     {
         files.push(format!("drawings/{id}.json"));
+    }
+    if before.machining != after.machining {
+        files.push("manufacture.json".into());
     }
     if before.studies != after.studies {
         files.push("analysis.json".into());

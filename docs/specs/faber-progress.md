@@ -1756,3 +1756,31 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   with warnings denied. The installed viewer opened all 26 examples.
   Section drag in the 232-body assembly took 5.95 ms at the median and
   12.34 ms at the maximum. The same offset gave identical pixels.
+
+## Chunk 14. Machining
+
+- A setup supplies the part, stock, work origin and tool direction. Each
+  operation has a cutter, cutting heights and feed rates. Tools and
+  operations survive a save, reopen and undo in the normal project history.
+- The toolpaths cover facing, contours, pocket clearing, drilling,
+  roughing, parallel finishing and 2D cutting. A selected floor limits
+  the cut to that face. Two pockets at the same height can be cut separately.
+- A separate check of posted coordinates on a 0.05 mm grid found full
+  coverage of the plate top. A 6 mm cutter left 7.740 mm² at the four
+  pocket corners. The analytical area is 7.726 mm². All four hole centres
+  matched. The outside tool centre stayed 2.995 to 3.001 mm from the part.
+- Three tilted and translated copies gave clean paths. The largest hole
+  centre difference in the posted coordinates was 0.000597 mm.
+- A 40 by 20 mm facing pass removed 800 mm³ from 1 mm of stock.
+  The stock check found a deliberately misplaced drill, refused its
+  program and recorded the gouge in the explicitly forced output file.
+- A real pointer test changed the setup in a 980 pixel window. An
+  independent test kept the same camera, control positions and canvas
+  pixels for five frames during an external update. A small change
+  in work direction now preserves the orientation of the toolpaths.
+- All 1357 workspace tests passed, including 239 viewer tests. Clippy
+  passed with warnings denied. All 30 machining tests also passed in a
+  release build.
+- The installed viewer opened and rendered all 27 example projects. A
+  repeated section offset gave the same pixels on the 232-body assembly.
+  The median drag frame took 5.32 ms. The longest took 14.16 ms.
