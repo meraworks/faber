@@ -7,6 +7,7 @@ pub mod archive;
 pub mod drawing;
 pub mod links;
 pub mod mesh_edit;
+pub mod sheet;
 pub mod study;
 pub mod study_image;
 pub mod surface;

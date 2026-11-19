@@ -21,6 +21,18 @@ impl VectorExport for VectorWriter {
 }
 
 impl VectorWriter {
+    /// Write closed cut contours for a sheet cutting machine.
+    pub fn write_flat_pattern(&self, doc: &VectorDoc, path: &Path) -> Result<()> {
+        validate(doc)?;
+        let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+        let text = match extension.to_ascii_lowercase().as_str() {
+            "svg" => svg::render(doc)?,
+            "dxf" => dxf::render(doc, true)?,
+            _ => return Err("Use .svg or .dxf for a flat pattern.".into()),
+        };
+        atomic_write(path, text.as_bytes())
+    }
+
     /// Writes the sheet. The optional pixel width applies to a raster preview.
     pub fn write_with_width(
         &self,
@@ -32,7 +44,7 @@ impl VectorWriter {
         validate(doc)?;
         let bytes = match extension.to_ascii_lowercase().as_str() {
             "svg" => svg::render(doc)?.into_bytes(),
-            "dxf" => dxf::render(doc)?.into_bytes(),
+            "dxf" => dxf::render(doc, false)?.into_bytes(),
             "pdf" => pdf::render(doc)?,
             "png" => png::render(doc, width_px.unwrap_or(1600))?,
             _ => return Err("Use .svg, .pdf, .dxf or .png for a drawing.".into()),

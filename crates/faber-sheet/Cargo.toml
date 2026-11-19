@@ -1,0 +1,17 @@
+[package]
+name = "faber-sheet"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+faber-geometry = { path = "../faber-geometry" }
+faber-model = { path = "../faber-model" }
+faber-ports = { path = "../faber-ports" }
+glam.workspace = true
+earcutr.workspace = true
+i_overlay = "4.5.2"
+
+[dev-dependencies]
+faber-files = { path = "../faber-files" }
+tempfile.workspace = true

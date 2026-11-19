@@ -75,6 +75,15 @@
   feature(id, op, fields)::
     { id: id, geometry: { op: op } + fields },
 
+  sheet(id, rule, base, flanges=[]):: faber.feature(id, 'sheet_metal', {
+    rule: rule, base: base, flanges: flanges,
+  }),
+
+  flange(id, on, edge, length, angle_deg=90, inset_start=null, inset_end=null, holes=[])::
+    {id: id, on: on, edge: edge, length: length, angle_deg: angle_deg, holes: holes}
+    + (if inset_start == null then {} else {inset_start: inset_start})
+    + (if inset_end == null then {} else {inset_end: inset_end}),
+
   // A sketch with editable dimensions. Its coordinates lie in the named plane.
   solved_sketch(id, plane, points, entities, constraints=[], construction=[])::
     faber.feature(id, 'solved_sketch', {plane: plane, sketch: {

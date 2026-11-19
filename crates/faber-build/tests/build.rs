@@ -576,3 +576,30 @@ local face={normal:[1,0,0],tolerance:0.001,expect:1};
     assert_eq!(rows["shape"]["target_volume"], 0.55);
     assert_eq!(rows["shape"]["keep"][0]["expect"], 1);
 }
+
+#[test]
+fn sheet_helpers_keep_driven_rules_edges_and_holes() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"local f=import 'faber.libsonnet';
+local base={outer:{kind:'rectangle',origin:[0,0],size:[50,40]}};
+local hole={kind:'circle',centre:[10,12],radius:2};
+{params:{stock:'2'},parts:{bracket:f.part('Bracket',[
+    f.sheet('fold',{thickness:'stock',bend_radius:2},base,[
+        f.flange('lip','base',2,30,angle_deg=-90,inset_start=1,holes=[hole])])
+],'fold')}}"#,
+    );
+    let baseline = serde_json::from_value(
+        serde_json::json!({"schema":1,"revision":1,"name":"Sheet","parts":{}}),
+    )
+    .unwrap();
+    let built = faber_build::evaluate(dir.path(), &baseline).unwrap();
+    let g = serde_json::to_value(&built.data.parts["bracket"].geometry).unwrap();
+    let recipe = &g["features"][0]["geometry"];
+    assert_eq!(recipe["rule"]["thickness"], "stock");
+    assert_eq!(recipe["flanges"][0]["edge"], 2);
+    assert_eq!(recipe["flanges"][0]["angle_deg"], -90.);
+    assert_eq!(recipe["flanges"][0]["holes"][0]["radius"], 2.);
+}

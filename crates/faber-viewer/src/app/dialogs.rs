@@ -10,6 +10,7 @@ pub(super) enum Choice {
     Folder(Option<PathBuf>),
     Project(Option<(PathBuf, PathBuf, bool)>),
     Drawing(PathBuf, String, Option<PathBuf>),
+    FlatPattern(PathBuf, String, Option<PathBuf>),
     Invalid,
 }
 
@@ -58,6 +59,11 @@ impl Shell {
                 self.start_project_load(ctx, source, target, None, archive);
             }
             Choice::Drawing(root, id, Some(path)) => self.sheets.file_chosen(&root, &id, path),
+            Choice::FlatPattern(root, id, Some(path)) if self.root == root => {
+                if let Some(p) = &mut self.sheet_metal {
+                    p.file_chosen(&id, path);
+                }
+            }
             Choice::Invalid => self.error = Some("Select faber.json in the project folder.".into()),
             _ => {}
         }
@@ -131,4 +137,29 @@ pub(super) fn drawing_file(frame: &eframe::Frame, root: PathBuf, id: String) -> 
 #[cfg(test)]
 pub(super) fn drawing_file(_frame: &eframe::Frame, root: PathBuf, id: String) -> PendingDialog {
     PendingDialog::new(async move { Choice::Drawing(root, id, None) })
+}
+
+#[cfg(not(test))]
+pub(super) fn flat_pattern_file(frame: &eframe::Frame, root: PathBuf, id: String) -> PendingDialog {
+    let picker = rfd::AsyncFileDialog::new()
+        .set_parent(frame)
+        .set_title("Export flat pattern")
+        .set_directory(&root)
+        .set_file_name(format!("{id}.dxf"))
+        .add_filter("Cutting pattern", &["dxf", "svg"]);
+    PendingDialog::new(async move {
+        Choice::FlatPattern(
+            root,
+            id,
+            picker.save_file().await.map(|f| f.path().to_owned()),
+        )
+    })
+}
+#[cfg(test)]
+pub(super) fn flat_pattern_file(
+    _frame: &eframe::Frame,
+    root: PathBuf,
+    id: String,
+) -> PendingDialog {
+    PendingDialog::new(async move { Choice::FlatPattern(root, id, None) })
 }

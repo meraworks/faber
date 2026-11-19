@@ -110,7 +110,7 @@ fn ascii(s: &str) -> String {
     out
 }
 
-pub(super) fn render(doc: &VectorDoc) -> Result<String> {
+pub(super) fn render(doc: &VectorDoc, join_closed: bool) -> Result<String> {
     let mut out = Dxf(String::new());
     out.start("HEADER");
     out.group(9, "$ACADVER");
@@ -169,6 +169,25 @@ pub(super) fn render(doc: &VectorDoc) -> Result<String> {
     for layer in &doc.layers {
         for path in &layer.paths {
             match path {
+                Path2::Polyline {
+                    points,
+                    closed: true,
+                } if join_closed => {
+                    out.entity("POLYLINE", &layer.name);
+                    out.group(66, 1);
+                    out.point(10, [0.; 2]);
+                    out.group(70, 1);
+                    let unique = if points.first() == points.last() {
+                        &points[..points.len() - 1]
+                    } else {
+                        points.as_slice()
+                    };
+                    for &p in unique {
+                        out.entity("VERTEX", &layer.name);
+                        out.point(10, p);
+                    }
+                    out.entity("SEQEND", &layer.name);
+                }
                 Path2::Polyline { points, closed } => {
                     for pair in points.windows(2) {
                         out.line(&layer.name, pair[0], pair[1]);

@@ -39,6 +39,7 @@ mod read_cache;
 mod scale;
 mod section;
 mod select;
+mod sheet;
 mod sketch;
 mod sketch_cache;
 pub use sketch::resolve_sketch;
@@ -995,6 +996,15 @@ fn resolve_part(part: &Part<Scalar>, values: &BTreeMap<String, f64>) -> Result<P
     part.map_numbers(|value| number(value, values))
 }
 
+/// Resolve a recipe without building a solid or loading an asset.
+pub fn resolve_recipe(
+    data: &ProjectData,
+    geometry: &faber_model::Geometry<Scalar>,
+) -> Result<faber_model::Geometry> {
+    let values = faber_expr::resolve(&data.params)?;
+    geometry.map_numbers(&mut |n| number(n, &values))
+}
+
 /// Resolves one number or expression with the parameter values.
 pub(crate) fn number(value: &Scalar, values: &BTreeMap<String, f64>) -> Result<f64> {
     match value {
@@ -1221,6 +1231,11 @@ impl Builder<'_> {
                 ),
                 None,
             ),
+            faber_model::Geometry::SheetMetal {
+                rule,
+                base,
+                flanges,
+            } => (Some(sheet::build(self.kernel, rule, base, flanges)?), None),
             geometry => (self.kernel.exact_shape(geometry)?, None),
         })
     }

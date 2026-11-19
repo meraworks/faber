@@ -45,6 +45,9 @@ mod print_check;
 mod selection;
 #[cfg(test)]
 mod selection_tests;
+mod sheet;
+#[cfg(test)]
+mod sheet_tests;
 mod study;
 #[cfg(test)]
 mod suppress_tests;
@@ -257,6 +260,8 @@ pub struct Shell {
     mesh_tool: Option<mesh_tools::Panel>,
     printing: print_check::PrintPanel,
     study: study::StudyPanel,
+    sheet_metal: Option<sheet::Panel>,
+    design_source_name: Option<String>,
     surface: surface::SurfacePanel,
     window: WindowState,
     search: command_search::CommandSearch,
@@ -408,6 +413,8 @@ impl Shell {
             mesh_tool: None,
             printing: Default::default(),
             study: Default::default(),
+            sheet_metal: None,
+            design_source_name: sheet::source_name(&root),
             surface: Default::default(),
             recent_file: None,
             dialog: None,
@@ -1883,9 +1890,11 @@ impl Shell {
                     }
                     let changing_project = self.pending_project.is_some();
                     if let Some(root) = self.pending_project.take() {
+                        self.close_sheet();
                         self.marking = Default::default();
                         self.project_loaded = true;
                         self.root = root;
+                        self.design_source_name = sheet::source_name(&self.root);
                         self.modified = faber_wiring::project_fingerprint(&self.root).ok();
                         self.camera = Camera::fit(&bodies);
                         self.dirty = true;
@@ -1952,6 +1961,7 @@ impl Shell {
             && self.last_poll.elapsed() > Duration::from_millis(500)
         {
             self.last_poll = Instant::now();
+            self.design_source_name = sheet::source_name(&self.root);
             #[cfg(debug_assertions)]
             match self.gpu.refresh_shader() {
                 Ok(changed) => self.dirty |= changed,
@@ -2304,6 +2314,7 @@ impl Shell {
             }
         });
         let part_id = self.selected.clone();
+        self.sheet_buttons(ui);
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -2420,6 +2431,7 @@ impl Shell {
             }
             let mut next_feature = None;
             let mut next_sketch = None;
+            let mut next_sheet = None;
             let mut suppress: Option<(String, bool)> = None;
             egui::ScrollArea::vertical()
                 .id_salt("feature_list")
@@ -2453,6 +2465,12 @@ impl Shell {
                                     faber_model::Geometry::SolvedSketch { .. }
                                 ) {
                                     next_sketch = Some((id.clone(), feature.id.clone()));
+                                } else if matches!(
+                                    feature.geometry,
+                                    faber_model::Geometry::SheetMetal { .. }
+                                ) && &feature.id == output
+                                {
+                                    next_sheet = Some(id.clone());
                                 } else {
                                     match crate::feature_form::FeatureForm::new(
                                         self.data.clone(),
@@ -2491,6 +2509,9 @@ impl Shell {
                 });
             if let Some((part, id)) = next_sketch {
                 self.open_solved_sketch(&part, &id);
+            }
+            if let Some(id) = next_sheet {
+                self.open_sheet(id, false);
             }
             if let Some(form) = next_feature {
                 self.request_window(Draft::Feature(form));
@@ -2606,7 +2627,10 @@ impl Shell {
             self.open_solved_sketch(&id.clone(), &feature);
         }
     }
-    fn inspector(&mut self, ui: &mut egui::Ui) {
+    fn inspector(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
+        if self.sheet_inspector(ui, frame) {
+            return;
+        }
         if self.mesh_tool.is_some() {
             self.mesh_panel(ui);
             return;
@@ -2796,6 +2820,9 @@ impl Shell {
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
+        if self.sheet_canvas(ui) {
+            return;
+        }
         let (id, rect) = ui.allocate_space(ui.available_size());
         let hit = rect.shrink2(Vec2::new(5., 0.));
         let response = ui.interact(hit, id, egui::Sense::click_and_drag());
@@ -3186,7 +3213,9 @@ impl Shell {
             && let Some(pos) = response.interact_pointer_pos()
         {
             let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
-            self.pick_canvas(rect, pos, ctrl, shift, response.double_clicked(), false);
+            if !self.sheet_pick(rect, pos) {
+                self.pick_canvas(rect, pos, ctrl, shift, response.double_clicked(), false);
+            }
         }
         let hover = if busy || boxed || ui.input(|i| i.pointer.any_down()) {
             None
@@ -3703,7 +3732,7 @@ impl eframe::App for Shell {
                 ui.allocate_space(rect.size());
                 egui::ScrollArea::vertical()
                     .id_salt("inspect_panel_scroll")
-                    .show(&mut content, |ui| self.inspector(ui));
+                    .show(&mut content, |ui| self.inspector(ui, frame));
             });
         egui::CentralPanel::no_frame().show(ui, |ui| {
             if let Some(rs) = frame.wgpu_render_state() {

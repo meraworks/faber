@@ -1441,6 +1441,11 @@ pub(crate) fn build(
                 Geometry::History { .. } => {
                     Err("Nested feature histories are not supported".into())
                 }
+                Geometry::SheetMetal {
+                    rule,
+                    base,
+                    flanges,
+                } => crate::sheet::build(kernel, rule, base, flanges),
                 Geometry::Transform {
                     source: name,
                     placement,

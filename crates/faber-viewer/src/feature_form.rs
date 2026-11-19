@@ -83,7 +83,7 @@ pub fn field_unit(path: &str, numeric: bool) -> Option<&'static str> {
         "count" | "expect" | "turns" | "factor" | "parallel" | "normal" | "direction"
         | "weights" | "knots" => Some("1"),
         "mass_g" => Some("g"),
-        "axis" | "degree" | "sides" => Some("1"),
+        "axis" | "degree" | "sides" | "edge" | "k_factor" => Some("1"),
         _ => Some("mm"),
     }
 }
@@ -167,6 +167,9 @@ impl FeatureForm {
                 }
                 Geometry::PointAtCentre { .. } => {
                     "Select exactly one full circular edge. The point is its centre. The current solid remains the part output."
+                }
+                Geometry::SheetMetal { .. } => {
+                    "Set the stock thickness, inside bend radius and K factor. Flange length starts at the end of the bend. Straight edge numbers start at one."
                 }
                 Geometry::Split { .. } => {
                     "Origin and normal define the cut plane in part coordinates. Positive side follows the normal. Keep both sides or one side. The plane must cut through the solid."
@@ -594,6 +597,9 @@ mod tests {
             assert_eq!(field_unit(path, true), Some("°"), "{path}");
         }
         assert_eq!(field_unit("/ribs/count", true), Some("1"));
+        assert_eq!(field_unit("/rule/k_factor", true), Some("1"));
+        assert_eq!(field_unit("/flanges/0/edge", true), Some("1"));
+        assert_eq!(field_unit("/flanges/0/inset_start", true), Some("mm"));
         assert_eq!(field_unit("/lines/0/1/0", true), Some("mm"));
     }
 

@@ -1,12 +1,7 @@
 use faber_model::{SketchLoop, SketchSegment};
 use faber_ports::Result;
 
-pub(crate) fn boundary(
-    centre: [f64; 2],
-    length: f64,
-    width: f64,
-    rotation: f64,
-) -> Result<SketchLoop> {
+pub fn boundary(centre: [f64; 2], length: f64, width: f64, rotation: f64) -> Result<SketchLoop> {
     super::positive(length)?;
     super::positive(width)?;
     if length < width {

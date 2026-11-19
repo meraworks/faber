@@ -99,6 +99,57 @@ fn open_project(session: &mut Session, dir: &Path) {
 }
 
 #[test]
+fn flat_pattern_reads_a_sheet_and_exports_from_the_cli_and_mcp() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start();
+    open_project(&mut s, dir.path());
+    let angle = json!({"name":"Bracket","colour":[40,90,110],"geometry":{
+        "op":"sheet_metal","rule":{"thickness":2,"bend_radius":2},
+        "base":{"outer":{"kind":"rectangle","origin":[0,0],"size":[50,40]}},
+        "flanges":[{"id":"side","on":"base","edge":2,"length":30}]}});
+    s.ok("put_part", json!({"id":"bracket","part":angle}));
+    let dxf = dir.path().join("cut.dxf");
+    let report = s.ok("flat_pattern", json!({"part":"bracket","path":dxf}));
+    assert!((report["size_mm"][0].as_f64().unwrap() - 84.52389342).abs() < 0.0001);
+    assert_eq!(report["k_factor"], 0.44);
+    assert_eq!(report["bends"][0]["direction"], "up");
+    assert!(report["problems"].as_array().unwrap().is_empty());
+    assert!(report.to_string().len() < 2500);
+    let saved = std::fs::read_to_string(&dxf).unwrap();
+    assert!(saved.lines().any(|line| line.trim() == "POLYLINE"));
+    assert!(saved.lines().any(|line| line.trim() == "BEND"));
+    drop(s);
+    let svg = dir.path().join("cut.svg");
+    let result = Command::new(env!("CARGO_BIN_EXE_faber"))
+        .arg("flat")
+        .arg(dir.path())
+        .arg("bracket")
+        .arg(&svg)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let other: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(other["revision"], report["revision"]);
+    assert_eq!(other["bends"], report["bends"]);
+    assert!(std::fs::read_to_string(svg).unwrap().contains("BEND"));
+    let invalid = dir.path().join("keep.txt");
+    std::fs::write(&invalid, "keep").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_faber"))
+        .arg("flat")
+        .arg(dir.path())
+        .arg("bracket")
+        .arg(&invalid)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert_eq!(std::fs::read_to_string(invalid).unwrap(), "keep");
+}
+
+#[test]
 fn each_study_kind_replies_below_2500_characters() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = Session::start();

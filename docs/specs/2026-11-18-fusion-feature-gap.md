@@ -65,6 +65,16 @@ The viewer can isolate a component. Each joint coordinate has its own
 control. Named configurations set parameters and suppress features.
 A linked part keeps its last imported geometry when its source file is missing.
 
+## Sheet metal
+
+Chunk 12 adds base walls, edge flanges, a constant K factor, bend reliefs
+and a flat pattern with bend lines. The folded solid and its pattern use
+the same wall tree. The sheet rule does not cover hems, jogs or a lofted
+flange. The installed API exposes a separate bend line body in
+`FlatPattern.h`. The neutral axis convention and the folded and flat
+views follow the [Fusion sheet rule](https://help.autodesk.com/cloudhelp/ENU/Fusion-Sheet-Metal/files/SM-RULES-REF.htm)
+and the [Fusion flat pattern guide](https://help.autodesk.com/cloudhelp/ENU/Fusion-Sheet-Metal/files/GUID-121F6E58-0459-4552-85EF-319F44324AE6.htm).
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under

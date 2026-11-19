@@ -1,7 +1,7 @@
 use faber_model::{SketchLoop, SketchProfile, SketchSegment};
 use faber_ports::Result;
 
-pub(crate) fn expand(profile: &SketchProfile) -> Result<SketchProfile> {
+pub fn expand(profile: &SketchProfile) -> Result<SketchProfile> {
     if matches!(profile.outer, SketchLoop::Grid { .. }) {
         return Err("A sketch outer boundary cannot be an array".into());
     }

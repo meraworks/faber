@@ -19,6 +19,9 @@ async fn main() {
         Some("schema") if args.len() == 1 => serde_json::to_string_pretty(&schemars::schema_for!(faber_model::ProjectData))
             .map(|schema| println!("{schema}")).map_err(|error| error.to_string()),
         Some("drawing") if args.len() == 4 => drawing(Path::new(&args[1]), &args[2], Path::new(&args[3])),
+        Some("flat") if args.len() == 4 => faber_wiring::read_snapshot(Path::new(&args[1]))
+            .and_then(|project| faber_wiring::sheet::report(&project,&args[2],Some(Path::new(&args[3]))))
+            .map(|report| println!("{report}")),
         Some("render") if args.len() == 3 => faber_wiring::read(Path::new(&args[1])).and_then(|(_,bodies)|faber_wiring::render(&bodies,Path::new(&args[2]),None,1200,1000)),
         Some("status") if args.len()==2 => {
             let root=Path::new(&args[1]);
@@ -29,7 +32,7 @@ async fn main() {
         Some("build") if args.len() == 2 => build(Path::new(&args[1])),
         Some("bom") if args.len() >= 2 => parts_list(&args),
         Some("export") if args.len() >= 3 => export(&args),
-        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | bom PROJECT [--format json|csv|md] | export PROJECT DIRECTORY [--configuration NAME|--all-configurations] [--format stl|step|3mf] [--tolerance MM] [--force] | render PROJECT IMAGE | drawing PROJECT ID FILE | schema | guide | faber scan PACKAGE".into()),
+        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | bom PROJECT [--format json|csv|md] | export PROJECT DIRECTORY [--configuration NAME|--all-configurations] [--format stl|step|3mf] [--tolerance MM] [--force] | render PROJECT IMAGE | drawing PROJECT ID FILE | flat PROJECT PART FILE | schema | guide | faber scan PACKAGE".into()),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");

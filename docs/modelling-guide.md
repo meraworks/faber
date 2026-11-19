@@ -1409,3 +1409,46 @@ A 50 × 40 × 25 cell beam study with a 2 mm cell size and a 6 mm filter
 reached 50% volume in 12 iterations. On the test PC the optimised solver
 took 17.6 s with four worker threads. Compliance fell from 2.016 to
 0.376 N·mm. The result had one connected piece.
+
+## Sheet metal
+
+Choose **New sheet metal** to make a rectangular base. Set its width,
+depth, sheet thickness and inside bend radius in millimetres. Each field
+also accepts a parameter expression. **Edit sheet rule** changes all bends
+in the part. For an existing sheet, select the part and choose **Sheet
+metal**, or select its output feature in the feature list.
+
+Choose **Add flange** and click a free straight edge on the base or on an
+existing flange. The inspector shows its wall and edge number. Enter the
+straight length after the bend and the bend angle in degrees. A positive
+angle bends towards the top of the parent wall. The start and end insets
+shorten the flange along the selected edge. For an inset flange, choose a
+round or rectangular relief in the sheet rule to cut the ends of the bend.
+Save the flange. Select **Edit** beside a saved flange to change its
+dimensions. Each save makes one project revision.
+
+Select **Flat pattern** to inspect the cut outline, holes and dashed bend
+lines. Drag to pan. Scroll to zoom about the pointer. **Fit pattern** fits
+the entire blank. You can hide bend lines in the preview. **Export flat
+pattern** writes a DXF or SVG with cut outlines, bend lines and labels.
+The inspector lists the bend direction and allowance. The allowance in
+millimetres is the absolute bend angle in radians multiplied by
+`inside radius + K × thickness`. The default K factor is 0.44. Set the
+factor for the stock and bend process before manufacture.
+
+The [sheet bracket](../examples/sheet-bracket/design.jsonnet) has two base
+holes and one mounting hole in its flange. In a design source,
+`f.sheet(id, rule, base, flanges)` defines the feature. Use
+`f.flange(id, on, edge, length, angle_deg=90)` to attach a wall. Edges
+start at 1 and follow the outline. On a rectangle, edge 2 is the right
+edge. Flange holes use the local coordinates of their wall. To export
+the example, run `faber flat examples/sheet-bracket bracket bracket.dxf`.
+
+A folded overlap prevents the edit. A flat overlap prevents export.
+The inspector reports a tight radius and holes close to a bend.
+DXF and SVG retain intact circles, slots and arcs. Ellipses, cubic curves
+and spans clipped during the outline union use a 0.002 mm chord
+tolerance. Convert text and interpolating
+splines to supported outlines first. The sheet recipe supports straight
+flanges. Hems, jogs, lofted flanges and holes across bends are outside
+its scope.

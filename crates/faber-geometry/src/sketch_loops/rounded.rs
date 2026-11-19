@@ -5,7 +5,7 @@ use glam::DVec2;
 use std::f64::consts::{PI, TAU};
 
 /// Lowers a rounded loop to lines and arcs. Other loops return `None`.
-pub(crate) fn lower(boundary: &SketchLoop) -> Result<Option<SketchLoop>> {
+pub fn lower(boundary: &SketchLoop) -> Result<Option<SketchLoop>> {
     match boundary {
         SketchLoop::RoundedRectangle {
             centre,
@@ -55,7 +55,7 @@ pub(crate) fn lower(boundary: &SketchLoop) -> Result<Option<SketchLoop>> {
 }
 
 /// Vertices of a regular polygon. The first vertex is at the rotation angle.
-pub(crate) fn regular_points(
+pub fn regular_points(
     centre: [f64; 2],
     radius: f64,
     sides: usize,

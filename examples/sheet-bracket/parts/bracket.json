@@ -1,0 +1,82 @@
+{
+  "material": "steel-s235",
+  "schema": 1,
+  "name": "Mounting bracket",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "fold",
+        "geometry": {
+          "op": "sheet_metal",
+          "rule": {
+            "thickness": "stock",
+            "bend_radius": 2.0,
+            "k_factor": 0.44,
+            "relief": {
+              "kind": "none"
+            }
+          },
+          "base": {
+            "outer": {
+              "kind": "rectangle",
+              "origin": [
+                0.0,
+                0.0
+              ],
+              "size": [
+                50.0,
+                40.0
+              ]
+            },
+            "holes": [
+              {
+                "kind": "circle",
+                "centre": [
+                  15.0,
+                  10.0
+                ],
+                "radius": 2.5
+              },
+              {
+                "kind": "circle",
+                "centre": [
+                  15.0,
+                  30.0
+                ],
+                "radius": 2.5
+              }
+            ]
+          },
+          "flanges": [
+            {
+              "id": "mount",
+              "on": "base",
+              "edge": 2,
+              "length": 30.0,
+              "angle_deg": 90.0,
+              "holes": [
+                {
+                  "kind": "circle",
+                  "centre": [
+                    20.0,
+                    18.0
+                  ],
+                  "radius": 2.5
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "output": "fold"
+  },
+  "colour": [
+    142,
+    167,
+    181
+  ],
+  "group": "",
+  "note": ""
+}

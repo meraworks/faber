@@ -33,6 +33,13 @@ struct SolveSketch {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct FlatPattern {
+    part: String,
+    path: Option<PathBuf>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct EditSketch {
     part: String,
     feature: String,
@@ -1449,6 +1456,14 @@ impl Faber {
             }
         })
     }
+    #[tool(description = "Read sheet size and bends. Set path for DXF or SVG.")]
+    fn flat_pattern(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<FlatPattern>>,
+    ) -> CallToolResult {
+        self.with(|p| faber_wiring::sheet::report(p, &a.part, a.path.as_deref()))
+    }
+
     #[tool(description = "List the saved drawing sheets.")]
     fn drawings(&self) -> CallToolResult {
         self.with(|p|Ok(json!({"revision":p.data.revision,

@@ -1688,3 +1688,37 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   In the 232-body assembly, section drag frames took 5.44 ms at the median
   and 13.28 ms at the maximum. A return to the same offset gave identical
   pixels. A repeat of the first mode gave identical pixels as well.
+
+## Chunk 12. Folded sheets and flat patterns
+
+- A 50 by 40 mm base with a 30 mm flange, 2 mm stock and a 2 mm inside
+  bend radius gives a single solid of 6776.99 mm³. Its outer size is
+  54 by 40 by 34 mm. With K = 0.44 the 90 degree bend uses 4.52389 mm
+  of the flat sheet. The flat size is 84.52389 by 40 mm.
+- Exact solid checks cover a Z section, a U channel, positive and
+  negative bends, a circular hole in a flange, round relief cuts and
+  a driven thickness. A rejected corner keeps the last solid and revision.
+- Thirteen angle settings from -180 to +180 degrees gave the expected
+  folded volume and developed width. A separate reader opened the
+  exported solid and found cylindrical bend faces of radius 2 and 4 mm.
+  A separate drawing reader found a closed cut and its bend line at
+  52.26195 mm.
+- The viewer reads the selected wall tree and its placement. In the
+  232-body test assembly, opening all solids took 2275 ms. Computing the
+  selected sheet outline, bend lines and edge targets took 0.041 ms at
+  the median of 41 reads and 0.504 ms at the maximum. These times cover
+  the geometry read, before the display frame.
+- The viewer keeps the previous outline visible while it reads a new
+  revision. A test held the worker for eight display frames. The outline,
+  bend line and camera stayed fixed. Edge editing and export require the
+  current result. A source-controlled sheet shows its source name and can
+  still export its flat pattern.
+- The installed Fusion sheet headers identify a separate bend line body.
+  REA identified the Fusion API binary as
+  `5bff3fa5bef6e3e284e1687146a5a5a6451a44c5e779b757f90fd32bc7b910c3`.
+  The rule convention follows the
+  [Fusion sheet rule reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-Sheet-Metal/files/SM-RULES-REF.htm).
+- All 1254 workspace tests passed, including 226 viewer tests. Clippy
+  passed with warnings denied. The installed viewer opened all 25 examples.
+  In the 232-body assembly, section drag frames took 5.78 ms at the median
+  and 12.85 ms at the maximum. Returning to the same cut gave identical pixels.

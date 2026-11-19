@@ -757,10 +757,10 @@ fn path_text(path: &Path) -> Result<CString> {
         .map_err(|_| "Path contains a zero byte".into())
 }
 
-mod rounded;
-mod sketch_arrays;
+use faber_geometry::sketch_loops::rounded;
+use faber_geometry::sketch_loops::sketch_arrays;
 mod sketch_text;
-mod slot;
+use faber_geometry::sketch_loops::slot;
 
 pub struct OcctKernel;
 

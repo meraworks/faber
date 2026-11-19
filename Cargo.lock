@@ -1366,6 +1366,7 @@ dependencies = [
  "faber-meshtools",
  "faber-model",
  "faber-ports",
+ "faber-sheet",
  "faber-sketch",
  "faber-std",
  "glam",
@@ -1506,6 +1507,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "faber-sheet"
+version = "0.1.0"
+dependencies = [
+ "earcutr",
+ "faber-files",
+ "faber-geometry",
+ "faber-model",
+ "faber-ports",
+ "glam",
+ "i_overlay",
+ "tempfile",
+]
+
+[[package]]
 name = "faber-sim"
 version = "0.1.0"
 dependencies = [
@@ -1572,6 +1587,7 @@ dependencies = [
  "faber-print",
  "faber-render",
  "faber-scene",
+ "faber-sheet",
  "faber-sim",
  "glam",
  "i_overlay",
