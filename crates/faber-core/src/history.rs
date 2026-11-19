@@ -584,6 +584,7 @@ pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
         Geometry::PointAtCentre { .. } => "point_at_centre",
         Geometry::RevolveAround { .. } => "revolve_around",
         Geometry::PlaceAtPoint { .. } => "place_at_point",
+        Geometry::SheetMetal { .. } => "sheet_metal",
         Geometry::SolvedSketch { .. } => "solved_sketch",
         Geometry::OffsetSketch { .. } => "offset_sketch",
         Geometry::SketchOnPlane { .. } => "sketch_on_plane",

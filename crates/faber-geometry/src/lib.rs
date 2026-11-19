@@ -49,6 +49,7 @@ impl Kernel for NativeKernel {
             | Geometry::PointAtCentre { .. }
             | Geometry::RevolveAround { .. }
             | Geometry::PlaceAtPoint { .. }
+            | Geometry::SheetMetal { .. }
             | Geometry::SolvedSketch { .. }
             | Geometry::OffsetSketch { .. }
             | Geometry::SketchOnPlane { .. }

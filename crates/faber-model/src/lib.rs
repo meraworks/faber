@@ -3,6 +3,8 @@
 mod material;
 mod plastic;
 mod printer;
+mod sheet;
+pub use sheet::{Flange, Relief, SheetRule};
 mod solved_sketch;
 use plastic::map_lines;
 pub use plastic::{BossRibs, LipLoop, LipSide, RibSide};
@@ -377,6 +379,12 @@ pub enum Geometry<N = f64> {
     PlaceAtPoint {
         source: String,
         point: String,
+    },
+    SheetMetal {
+        rule: SheetRule<N>,
+        base: SketchProfile<N>,
+        #[serde(default)]
+        flanges: Vec<Flange<N>>,
     },
     SolvedSketch {
         plane: String,
@@ -1488,6 +1496,18 @@ impl<N> Geometry<N> {
         map: &mut impl FnMut(&N) -> Result<T, String>,
     ) -> Result<Geometry<T>, String> {
         Ok(match self {
+            Geometry::SheetMetal {
+                rule,
+                base,
+                flanges,
+            } => Geometry::SheetMetal {
+                rule: rule.map_numbers(map)?,
+                base: base.map_numbers(map)?,
+                flanges: flanges
+                    .iter()
+                    .map(|f| f.map_numbers(map))
+                    .collect::<Result<_, _>>()?,
+            },
             Geometry::SolvedSketch { plane, sketch } => Geometry::SolvedSketch {
                 plane: plane.clone(),
                 sketch: sketch.map_numbers(map)?,
