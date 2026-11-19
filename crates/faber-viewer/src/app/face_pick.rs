@@ -63,10 +63,7 @@ impl Shell {
     }
 
     fn pick_pose(&self, part: &str) -> DMat4 {
-        self.motion
-            .poses
-            .get(part)
-            .map_or(DMat4::IDENTITY, |m| m.as_dmat4())
+        self.display_pose(part).as_dmat4()
     }
 
     fn front_triangle(&self, rect: egui::Rect, pos: egui::Pos2) -> Option<(&Body, usize, DVec3)> {

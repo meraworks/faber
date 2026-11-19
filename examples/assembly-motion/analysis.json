@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "views": {
+    "front_detail": {
+      "camera": {
+        "eye": [
+          88,
+          -71,
+          68
+        ],
+        "target": [
+          31,
+          2,
+          3
+        ],
+        "up": [
+          0,
+          0,
+          1
+        ],
+        "ortho_height": 69
+      },
+      "style": "studio",
+      "note": "The complete linkage in its assembled position."
+    },
+    "side_detail": {
+      "camera": {
+        "eye": [
+          98,
+          64,
+          56
+        ],
+        "target": [
+          31,
+          2,
+          3
+        ],
+        "up": [
+          0,
+          0,
+          1
+        ],
+        "fov_deg": 42
+      },
+      "joints": {
+        "input": 20
+      },
+      "style": "studio",
+      "note": "The linkage after a 20 degree turn."
+    }
+  }
+}

@@ -23,6 +23,7 @@ faber-build = { path = "../faber-build" }
 faber-files = { path = "../faber-files" }
 faber-geometry = { path = "../faber-geometry" }
 faber-kernel-occt = { path = "../faber-kernel-occt" }
+faber-trace = { path = "../faber-trace" }
 faber-render = { path = "../faber-render" }
 faber-sim = { path = "../faber-sim" }
 faber-scene = { path = "../faber-scene" }

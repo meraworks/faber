@@ -1,7 +1,7 @@
 //! Drag the selected plane along its normal.
 use super::*;
 use faber_wiring::press_pull::{self as edit, PressFace};
-use glam::{DMat4, DVec3};
+use glam::DVec3;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -50,10 +50,8 @@ impl Shell {
             return;
         }
         let point = self.pick_point.map(|p| {
-            self.motion
-                .poses
-                .get(&part)
-                .map_or(DMat4::IDENTITY, |m| m.as_dmat4())
+            self.display_pose(&part)
+                .as_dmat4()
                 .inverse()
                 .transform_point3(DVec3::from(p))
                 .into()
@@ -225,11 +223,7 @@ impl Shell {
     pub(super) fn press_arrow(&self, rect: egui::Rect) -> Option<(egui::Pos2, egui::Pos2, f64)> {
         let tool = self.press.as_ref()?;
         let face = tool.face.as_ref()?;
-        let pose = self
-            .motion
-            .poses
-            .get(&face.part)
-            .map_or(DMat4::IDENTITY, |m| m.as_dmat4());
+        let pose = self.display_pose(&face.part).as_dmat4();
         let normal = pose
             .transform_vector3(DVec3::from(face.normal))
             .normalize_or_zero();

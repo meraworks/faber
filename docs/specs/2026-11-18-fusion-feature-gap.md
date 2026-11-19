@@ -4,6 +4,17 @@ Date: 2026-11-18. Fusion is the behavioural reference. This note compares the
 installed Fusion command set with Faber. It is static evidence from shipped
 files. Fusion was not run.
 
+## Cameras and exploded views
+
+The installed Fusion headers expose a camera on each named view.
+`Core/Application/Camera.h` defines the projection type, perspective angle,
+up vector and view extents. REA identified the shipped x64 Fusion binding
+with SHA-256 `5bff3fa5bef6e3e284e1687146a5a5a6451a44c5e779b757f90fd32bc7b910c3`.
+Faber stores the camera, visible parts, section, joint inputs and explode
+factor. Its animation samples a view without editing the part placements.
+Fusion documents automatic and manual exploded views in its Animation
+workspace. [Autodesk exploded view guide](https://help.autodesk.com/view/fusion360/ENU/?caas=caas%2Fsfdcarticles%2Fsfdcarticles%2FHow-to-create-an-exploded-view-drawing-in-Fusion-360.html)
+
 ## Machining setup
 
 The machining setup in chunk 14 uses a part, stock bounds, a working

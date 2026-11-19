@@ -6,6 +6,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod named_camera;
+pub use named_camera::Lens;
 mod edge_pick;
 pub use edge_pick::{EdgeHit, pick_edge, pick_edge_hit, pick_edge_hit_where};
 
@@ -351,6 +353,7 @@ fn section_mesh<'a>(
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
+    pub lens: Lens,
     pub target: Vec3,
     pub yaw: f32,
     pub pitch: f32,
@@ -359,6 +362,7 @@ pub struct Camera {
 
 impl Camera {
     pub fn set_view(&mut self, view: View) {
+        self.lens.roll_deg = 0.;
         (self.yaw, self.pitch) = match view {
             View::Iso => (-45., (1.0_f32 / 3.0_f32.sqrt()).asin().to_degrees()),
             View::Front => (-90., 0.),
@@ -383,10 +387,27 @@ impl Camera {
 
     /// Keep a picked point at its screen position as the distance changes.
     pub fn zoom_about(&mut self, point: Vec3, factor: f32) {
+        if let Some(height) = self.lens.ortho_height {
+            let next = (height * factor).clamp(0.001, 1e8);
+            self.target += (point - self.target) * (1. - next / height);
+            self.lens.ortho_height = Some(next);
+            return;
+        }
         let distance = (self.distance * factor).clamp(1., 1e7);
         self.target += (point - self.target) * (1. - distance / self.distance);
         self.distance = distance;
     }
+    /// Scale a square-frame fit to include the full width of a portrait image.
+    pub fn fit_image_scale(width: u32, height: u32) -> f64 {
+        (f64::from(height) / f64::from(width.max(1))).max(1.)
+    }
+
+    pub fn fit_image(bodies: &[faber_ports::Body], width: u32, height: u32) -> Self {
+        let mut camera = Self::fit(bodies);
+        camera.distance *= Self::fit_image_scale(width, height) as f32;
+        camera
+    }
+
     pub fn fit(bodies: &[faber_ports::Body]) -> Self {
         let mut lo = Vec3::splat(f32::INFINITY);
         let mut hi = Vec3::splat(f32::NEG_INFINITY);
@@ -399,6 +420,7 @@ impl Camera {
             hi = Vec3::splat(100.);
         }
         Self {
+            lens: Default::default(),
             target: (lo + hi) / 2.,
             yaw: -55.,
             pitch: 24.,
@@ -411,10 +433,18 @@ impl Camera {
         self.target + Vec3::new(c * cp, s * cp, sp) * self.distance
     }
     fn reference_up(&self) -> Vec3 {
-        if self.pitch.abs() >= 89.99 {
+        let up = if self.pitch.abs() >= 89.99 {
             Vec3::Y
         } else {
             Vec3::Z
+        };
+        if self.lens.roll_deg == 0. {
+            up
+        } else {
+            glam::Quat::from_axis_angle(
+                (self.eye() - self.target).normalize(),
+                self.lens.roll_deg.to_radians(),
+            ) * up
         }
     }
 
@@ -425,12 +455,22 @@ impl Camera {
     }
 
     pub fn matrix(&self, aspect: f32) -> Mat4 {
-        glam::camera::rh::proj::directx::perspective(
-            38f32.to_radians(),
-            aspect.max(0.01),
-            self.distance * 0.001,
-            self.distance * 10. + 1000.,
-        ) * glam::camera::rh::view::look_at_mat4(self.eye(), self.target, self.reference_up())
+        let near = self.distance * 0.001;
+        let far = self.distance * 10. + 1000.;
+        let projection = if let Some(h) = self.lens.ortho_height {
+            let y = h * 0.5;
+            let x = y * aspect.max(0.01);
+            glam::camera::rh::proj::directx::orthographic(-x, x, -y, y, near, far)
+        } else {
+            glam::camera::rh::proj::directx::perspective(
+                self.lens.fov_deg.to_radians(),
+                aspect.max(0.01),
+                near,
+                far,
+            )
+        };
+        projection
+            * glam::camera::rh::view::look_at_mat4(self.eye(), self.target, self.reference_up())
     }
     pub fn ray(&self, aspect: f32, point: [f32; 2]) -> (DVec3, DVec3) {
         let inverse = self.matrix(aspect).as_dmat4().inverse();
@@ -526,5 +566,29 @@ mod viewport_bounds_tests {
         assert!(ray_hits_bounds(bounds, DVec3::ZERO, DVec3::X));
         assert!(!ray_hits_bounds(bounds, DVec3::ZERO, -DVec3::X));
         assert!(!ray_hits_bounds(bounds, DVec3::Y * 2., DVec3::X));
+    }
+}
+
+/// Linear reflectance and microfacet parameters for a displayed part.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Surface {
+    pub base: [f32; 3],
+    pub roughness: f32,
+    pub metallic: f32,
+}
+impl Surface {
+    pub fn from_colour(colour: [u8; 3]) -> Self {
+        Self {
+            base: colour.map(|c| {
+                let c = f32::from(c) / 255.;
+                if c <= 0.04045 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
+            }),
+            roughness: 0.6,
+            metallic: 0.,
+        }
     }
 }

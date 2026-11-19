@@ -12,3 +12,5 @@ wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+faber-geometry = { path = "../faber-geometry" }
+rayon = "1"

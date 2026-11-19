@@ -2,12 +2,58 @@
   "schema": 1,
   "name": "Input arm",
   "geometry": {
-    "op": "box",
-    "size": [
-      5.0,
-      25.0,
-      3.0
-    ]
+    "op": "history",
+    "features": [
+      {
+        "id": "outline",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "slot",
+              "centre": [
+                0,
+                10.0
+              ],
+              "length": 26,
+              "width": 6,
+              "rotation": 90
+            },
+            "holes": [
+              {
+                "kind": "circle",
+                "centre": [
+                  0,
+                  0
+                ],
+                "radius": 1.2
+              },
+              {
+                "kind": "circle",
+                "centre": [
+                  0,
+                  20
+                ],
+                "radius": 1.2
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "link",
+        "geometry": {
+          "op": "extrude_sketch",
+          "source": "outline",
+          "vector": [
+            0,
+            0,
+            3
+          ]
+        }
+      }
+    ],
+    "output": "link"
   },
   "colour": [
     216,

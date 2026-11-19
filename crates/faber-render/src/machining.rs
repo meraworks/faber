@@ -162,6 +162,7 @@ impl Display {
     pub fn camera(&self, aspect: f32) -> Camera {
         let [lo, hi] = self.bounds.map(|v| glam::Vec3::from(v.map(|x| x as f32)));
         Camera {
+            lens: Default::default(),
             target: (lo + hi) * 0.5,
             yaw: -55.,
             pitch: 32.,

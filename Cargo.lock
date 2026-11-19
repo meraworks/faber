@@ -1412,6 +1412,7 @@ dependencies = [
  "faber-model",
  "faber-ports",
  "glam",
+ "png",
  "quick-xml",
  "roxmltree",
  "serde",
@@ -1499,11 +1500,13 @@ name = "faber-render"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "faber-geometry",
  "faber-ports",
  "faber-scene",
  "glam",
  "image",
  "pollster 1.0.1",
+ "rayon",
  "wgpu",
 ]
 
@@ -1562,6 +1565,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "faber-trace"
+version = "0.1.0"
+dependencies = [
+ "faber-geometry",
+ "faber-model",
+ "faber-ports",
+ "faber-scene",
+ "glam",
+ "rayon",
+]
+
+[[package]]
 name = "faber-viewer"
 version = "0.2.1"
 dependencies = [
@@ -1604,6 +1619,7 @@ dependencies = [
  "faber-scene",
  "faber-sheet",
  "faber-sim",
+ "faber-trace",
  "glam",
  "i_overlay",
  "image",

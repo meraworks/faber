@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+png = "0.18"
 serde.workspace = true
 faber-model = { path = "../faber-model" }
 faber-ports = { path = "../faber-ports" }

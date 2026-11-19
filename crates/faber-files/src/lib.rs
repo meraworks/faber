@@ -1,5 +1,6 @@
 //! Project storage and mesh file output.
 
+pub mod apng;
 mod assets;
 pub mod bom;
 mod feature_cache;

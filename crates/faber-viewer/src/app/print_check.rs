@@ -287,6 +287,9 @@ impl Shell {
                         .or_else(|| (self.bodies.len() == 1).then(|| self.bodies[0].id.clone()));
                     ui.ctx().request_repaint();
                 }
+                if ui.button("Views").clicked() {
+                    self.views.open = true;
+                }
                 if ui.button("Manufacture").clicked() {
                     self.open_machining();
                 }

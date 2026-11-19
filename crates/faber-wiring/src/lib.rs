@@ -1,7 +1,9 @@
 //! Adapter composition.
 
+pub mod animate;
 pub mod bom;
 pub mod configurations;
+pub mod views;
 pub use configurations::use_configuration;
 pub mod archive;
 pub mod drawing;
@@ -10,6 +12,7 @@ pub mod machining;
 pub mod machining_image;
 pub mod mesh_edit;
 pub mod sheet;
+pub mod studio;
 pub mod study;
 pub mod study_image;
 pub mod surface;
@@ -740,6 +743,7 @@ pub fn render_view(
     height: u32,
     view: faber_scene::View,
 ) -> Result<()> {
+    views::check_picture_path(path)?;
     if !(64..=4096).contains(&width) || !(64..=4096).contains(&height) {
         return Err("Image size must be between 64 and 4096 pixels".into());
     }

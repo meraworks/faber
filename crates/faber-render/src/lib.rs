@@ -2,6 +2,7 @@
 
 mod face_marks;
 pub mod machining;
+pub mod studio;
 use bytemuck::{Pod, Zeroable};
 use faber_ports::{Body, Mesh, Result};
 use faber_scene::{Camera, Section, section};
@@ -60,6 +61,7 @@ struct Uniform {
 }
 
 pub struct Gpu {
+    studio: std::sync::Arc<std::sync::OnceLock<studio::Pipelines>>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub hatch: bool,
@@ -389,6 +391,7 @@ impl Gpu {
         let pipeline =
             Self::surface_pipeline(&device, &pipeline_layout, include_str!("shader.wgsl"));
         Self {
+            studio: Default::default(),
             hatch: true,
             zebra: None,
             surface: None,
@@ -848,6 +851,34 @@ impl Gpu {
         hidden: &BTreeSet<String>,
         scope: &BTreeSet<String>,
     ) {
+        self.draw_scoped_matrix(
+            target,
+            list,
+            camera.matrix(target.width as f32 / target.height as f32),
+            camera.eye(),
+            selected,
+            plane,
+            caps,
+            poses,
+            hidden,
+            scope,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_scoped_matrix(
+        &self,
+        target: &Target,
+        list: &DrawList,
+        matrix: glam::Mat4,
+        eye: glam::Vec3,
+        selected: Option<&str>,
+        plane: Option<Section>,
+        caps: Option<&DrawList>,
+        poses: &std::collections::BTreeMap<String, glam::Mat4>,
+        hidden: &BTreeSet<String>,
+        scope: &BTreeSet<String>,
+    ) {
         let instances = (!poses.is_empty()).then(|| {
             let transforms: Vec<_> = list
                 .ranges
@@ -895,9 +926,7 @@ impl Gpu {
                 ]
             }),
             section_style: [tint[0], tint[1], tint[2], if self.hatch { 1. } else { 0. }],
-            matrix: camera
-                .matrix(target.width as f32 / target.height as f32)
-                .to_cols_array_2d(),
+            matrix: matrix.to_cols_array_2d(),
             selected: ranges(selected),
             hovered: ranges(self.hovered.as_deref()),
             plane: plane.map_or([0.; 4], |p| {
@@ -907,7 +936,7 @@ impl Gpu {
                     .as_vec4()
                     .to_array()
             }),
-            eye: camera.eye().extend(1.).to_array(),
+            eye: eye.extend(1.).to_array(),
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
@@ -1167,7 +1196,7 @@ fn field_image(
         let bodies = std::slice::from_ref(body);
         let target = gpu.target(width, height);
         let list = gpu.upload_field(bodies, &body.id, field)?;
-        let mut camera = Camera::fit(bodies);
+        let mut camera = Camera::fit_image(bodies, target.width, target.height);
         camera.set_view(view);
         gpu.draw(&target, &list, camera);
         image::RgbaImage::from_raw(width, height, gpu.read(&target)?)
@@ -1198,7 +1227,7 @@ pub fn save_painted(
     with_headless(|gpu| {
         let target = gpu.target(width, height);
         let list = gpu.upload_painted(bodies, &BTreeSet::new(), plane, None, paint)?;
-        let mut camera = Camera::fit(bodies);
+        let mut camera = Camera::fit_image(bodies, target.width, target.height);
         camera.set_view(view);
         gpu.draw(&target, &list, camera);
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {

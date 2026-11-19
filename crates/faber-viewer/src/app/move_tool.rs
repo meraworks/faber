@@ -412,6 +412,14 @@ pub(super) fn relative_moves(
 }
 
 impl MoveDraft {
+    fn preview_delta(&self) -> Mat4 {
+        let pivot = self.pivot_point().as_vec3();
+        let (translate, turn) = self.motion();
+        Mat4::from_translation(pivot + translate.as_vec3())
+            * Mat4::from_quat(turn.as_quat())
+            * Mat4::from_translation(-pivot)
+    }
+
     fn sync_fields(&mut self) {
         self.fields = self.translate.to_array().map(mm_text);
         self.applied_fields = self.fields.clone();
@@ -1487,17 +1495,36 @@ impl Shell {
         }
     }
 
-    /// Returns the poses for drawing. The moved part gets the preview turn.
+    fn assembly_poses(&self) -> &BTreeMap<String, Mat4> {
+        if self.views.explode == 0. {
+            &self.motion.poses
+        } else {
+            &self.views.poses
+        }
+    }
+
+    pub(super) fn display_pose(&self, part: &str) -> Mat4 {
+        let base = self
+            .assembly_poses()
+            .get(part)
+            .copied()
+            .unwrap_or(Mat4::IDENTITY);
+        if let Some(draft) = &self.move_draft
+            && (draft.part == part || draft.others.iter().any(|(id, _)| id == part))
+        {
+            return draft.preview_delta() * base;
+        }
+        base
+    }
+
+    /// Returns the display placement of each moved part.
     pub(super) fn move_poses(&self) -> Cow<'_, BTreeMap<String, Mat4>> {
+        let base = self.assembly_poses();
         let Some(draft) = &self.move_draft else {
-            return Cow::Borrowed(&self.motion.poses);
+            return Cow::Borrowed(base);
         };
-        let pivot = draft.pivot_point().as_vec3();
-        let (translate, turn) = draft.motion();
-        let delta = Mat4::from_translation(pivot + translate.as_vec3())
-            * Mat4::from_quat(turn.as_quat())
-            * Mat4::from_translation(-pivot);
-        let mut poses = self.motion.poses.clone();
+        let delta = draft.preview_delta();
+        let mut poses = base.clone();
         for id in std::iter::once(&draft.part).chain(draft.others.iter().map(|(id, _)| id)) {
             let current = poses.get(id).copied().unwrap_or(Mat4::IDENTITY);
             poses.insert(id.clone(), delta * current);

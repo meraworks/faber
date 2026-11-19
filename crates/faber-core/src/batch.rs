@@ -202,7 +202,7 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             crate::section::detach_part(data, &id)?;
         }
         Edit::SetView { name, view } => {
-            if !crate::valid_id(&name) {
+            if !crate::names::valid_view(&name) {
                 return Err(format!("Invalid view name: {name}"));
             }
             view.validate()?;

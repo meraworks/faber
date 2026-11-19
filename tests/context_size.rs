@@ -99,6 +99,65 @@ fn open_project(session: &mut Session, dir: &Path) {
 }
 
 #[test]
+fn named_view_and_animation_follow_the_saved_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start();
+    open_project(&mut s, dir.path());
+    s.ok("put_part",json!({"id":"block","part":{"name":"Block","colour":[26,141,160],"geometry":{"op":"box","size":[3,4,10]}}}));
+    let view = json!({"camera":{"eye":[14,-12,15],"target":[1,2,4],"up":[0,0,1],"ortho_height":18},"hidden":["removed"]});
+    s.refused(
+        "set_view",
+        json!({"name":"side","view":view,"expected_revision":0}),
+    );
+    s.ok(
+        "set_view",
+        json!({"name":"side","view":view,"expected_revision":1}),
+    );
+    let file = dir.path().join("side.png");
+    let manifest = dir.path().join("faber.json");
+    let saved = std::fs::read(&manifest).unwrap();
+    s.refused(
+        "render",
+        json!({"view":"side","path":manifest,"quality":"high","samples":1,"width":64,"height":64}),
+    );
+    assert_eq!(std::fs::read(manifest).unwrap(), saved);
+    let picture = s.ok(
+        "render",
+        json!({"view":"side","path":file,"quality":"high","samples":1,"width":64,"height":64}),
+    );
+    assert_eq!(
+        picture["warnings"],
+        json!(["View side: part removed was not found."])
+    );
+    assert_eq!(picture["samples_done"], 1);
+    assert!(file.is_file());
+    let out = dir.path().join("side.apng");
+    s.ok("animate",json!({"kind":"turntable","view":"side","frames":3,"fps":12,"width":64,"height":64,"path":out}));
+    assert!(out.is_file());
+    s.ok("remove_view", json!({"name":"side","expected_revision":2}));
+    s.refused("render", json!({"view":"side","path":file}));
+    s.ok("undo", json!({}));
+    assert!(
+        s.ok("schema", json!({"kind":"view"}))["definition"]["properties"]["camera"].is_object()
+    );
+    assert!(
+        !s.ok(
+            "render",
+            json!({"view":"side","width":64,"height":64,"path":file})
+        )
+        .is_null()
+    );
+    s.ok("set_view", json!({"name":"Ön görünüş","view":view}));
+    assert_eq!(
+        s.ok(
+            "render",
+            json!({"view":"Ön görünüş","width":64,"height":64,"path":file})
+        )["view"],
+        "Ön görünüş"
+    );
+}
+
+#[test]
 fn set_operation_then_machining_lists_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = Session::start();

@@ -9,7 +9,7 @@ pub(super) struct Controls {
     report: Option<String>,
     ranges: BTreeMap<(String, usize), [f64; 2]>,
     pub poses: BTreeMap<String, Mat4>,
-    values: Pose,
+    pub(super) values: Pose,
     enabled: bool,
     active: String,
     coordinate: usize,
@@ -84,7 +84,16 @@ impl Shell {
         }
     }
 
-    fn apply_motion_values(&mut self, values: Pose) {
+    pub(super) fn reset_motion_pose(&mut self) {
+        self.motion.values.clear();
+        self.motion.poses.clear();
+        self.motion.notice = None;
+        self.cap_plane = None;
+        self.caps = None;
+        self.dirty = true;
+    }
+
+    pub(super) fn apply_motion_values(&mut self, values: Pose) {
         match self.data.motion.solve_pose(&values) {
             Ok(placements) => {
                 self.motion.values = values;
@@ -238,10 +247,11 @@ impl Shell {
         };
         let joint = &self.data.motion.joints[&id];
         let matrix = self.camera.matrix(rect.aspect_ratio());
+        let display = self.move_poses();
         let pose = joint
             .parts
             .iter()
-            .find_map(|k| self.motion.poses.get(k))
+            .find_map(|k| display.get(k))
             .copied()
             .unwrap_or(Mat4::IDENTITY);
         let i = self.motion.coordinate.min(joint.kind.count() - 1);
@@ -260,7 +270,7 @@ impl Shell {
             .parent
             .as_ref()
             .and_then(|parent| self.data.motion.joints.get(parent))
-            .and_then(|j| j.parts.iter().find_map(|p| self.motion.poses.get(p)))
+            .and_then(|j| j.parts.iter().find_map(|p| display.get(p)))
             .copied()
             .unwrap_or(Mat4::IDENTITY);
         let axis = parent.transform_vector3(axis.as_vec3()).normalize();
@@ -436,12 +446,7 @@ impl Shell {
                         });
                     }
                     if ui.button("Reset pose").clicked() {
-                        self.motion.values.clear();
-                        self.motion.poses.clear();
-                        self.motion.notice = None;
-                        self.cap_plane = None;
-                        self.caps = None;
-                        self.dirty = true;
+                        self.reset_motion_pose();
                     }
                 }
                 ui.collapsing("Joint setup", |ui| {

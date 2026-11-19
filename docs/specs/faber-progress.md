@@ -1784,3 +1784,31 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
 - The installed viewer opened and rendered all 27 example projects. A
   repeated section offset gave the same pixels on the 232-body assembly.
   The median drag frame took 5.32 ms. The longest took 14.16 ms.
+
+## Chunk 15. Pictures and animation
+
+- A saved view records the camera, projection, hidden parts, section,
+  joint coordinates and explode factor. Existing projects with no views
+  keep their original file contents. An obsolete hidden part gives a warning.
+- The studio uses roughness, metal reflectance, local ambient occlusion and
+  a ground shadow. The CPU renderer uses a fixed random stream per pixel.
+  One and four worker threads produced the same pixel values at the same
+  sample count. A time limit stops after a complete sample pass.
+- The original square technical picture matched its saved pixels. An
+  orthographic distance change now keeps highlights in place. A view from
+  below shows the underside with the ground enabled. The 80 by 480 portrait
+  test kept the whole part between columns 10 and 69.
+- Turntable, explode, joint and named camera animations stream frames to a
+  temporary file. A failed frame preserves the previous picture. The linkage
+  example has concentric pin holes at both ends of the connecting rod.
+- In a headless Studio test on the linkage, 21 section drags took a median
+  of 0.90 ms per input frame and a maximum of 1.02 ms. For 21 explode
+  steps the median was 0.83 ms and the maximum was 1.69 ms. Both controls
+  reused the original mesh upload and the section index. Shader preparation
+  ran on a worker. The first Studio draw submission took 0.35 ms.
+- All 1415 workspace tests passed, including 248 viewer tests. The eight
+  release tracer tests passed. Four CPU workers completed 64 samples of
+  the 1280 by 720 trash bin in 115.05 seconds.
+- The Windows installation opened and rendered all 27 examples. On the
+  232-body assembly the median section drag took 5.23 ms and the longest
+  took 14.36 ms. Returning to the same offset restored the same pixels.

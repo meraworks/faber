@@ -1,6 +1,6 @@
 use super::{Pick, SelectFilter, Shell};
 use faber_core::pick_selector::{PickTopology, edge_loop, face_selector, plane_at, tangent_chain};
-use glam::{DMat4, DVec3};
+use glam::DVec3;
 use serde_json::Value;
 
 pub(super) struct PendingPick {
@@ -163,11 +163,7 @@ impl Shell {
             let world = self
                 .pick_point
                 .ok_or("Click the hole position on the face.")?;
-            let pose = self
-                .motion
-                .poses
-                .get(part)
-                .map_or(DMat4::IDENTITY, |m| m.as_dmat4());
+            let pose = self.display_pose(part).as_dmat4();
             let local = (topo.inverse * pose.inverse()).transform_point3(DVec3::from(world));
             serde_json::to_value(plane_at(local.into(), normal.map(|v| -v))?)
         } else if key == "edges" {

@@ -22,6 +22,7 @@ pub enum Kind {
     Study,
     Printer,
     Machining,
+    View,
     Edit,
 }
 
@@ -38,6 +39,7 @@ impl Kind {
             Kind::Study => "study",
             Kind::Printer => "printer",
             Kind::Machining => "machining",
+            Kind::View => "view",
             Kind::Edit => "edit",
         }
     }
@@ -81,6 +83,7 @@ fn definition(kind: Kind) -> Value {
         Kind::Study => schema_json::<faber_model::study::Study<Scalar>>(),
         Kind::Printer => schema_json::<faber_model::Printer>(),
         Kind::Machining => schema_json::<faber_model::machining::Machining>(),
+        Kind::View => schema_json::<faber_model::view::NamedView>(),
         Kind::Edit => edit_schema(),
     }
 }

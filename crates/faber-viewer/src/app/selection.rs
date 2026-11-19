@@ -216,12 +216,7 @@ impl Shell {
             if self.hidden.contains(&body.id) {
                 continue;
             }
-            let transform = self
-                .motion
-                .poses
-                .get(&body.id)
-                .copied()
-                .unwrap_or(glam::Mat4::IDENTITY);
+            let transform = self.display_pose(&body.id);
             let hit = mesh_in_rect(&body.mesh, transform.as_dmat4(), matrix, rect, mode);
             if hit {
                 ids.push(body.id.clone());

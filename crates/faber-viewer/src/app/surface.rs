@@ -237,6 +237,9 @@ fn direction(ui: &mut egui::Ui, vector: &mut [f64; 3]) -> bool {
 }
 
 impl Shell {
+    pub(super) fn has_surface_overlay(&self) -> bool {
+        self.surface.mode != Mode::Off
+    }
     fn invalidate_surface(&mut self) {
         self.surface.generation = self.surface.generation.wrapping_add(1);
         self.surface.reading = None;

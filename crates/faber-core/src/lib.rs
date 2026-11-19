@@ -13,6 +13,7 @@ pub use components::{
 mod construction;
 mod dress_variant;
 mod emboss;
+pub mod explode;
 mod face_edit;
 mod feature_cache;
 mod feature_edit;
@@ -38,6 +39,8 @@ mod plastic_walls;
 pub mod press_pull;
 mod provenance;
 mod read_cache;
+mod saved_view;
+pub use saved_view::pose as view_pose;
 mod scale;
 mod section;
 mod select;
@@ -657,6 +660,9 @@ impl Project {
             .checked_add(1)
             .ok_or("Revision limit reached")?;
         validate_data(&next)?;
+        if next.views != self.data.views || next.motion != self.data.motion {
+            saved_view::validate_poses(&next)?;
+        }
         let paths = assets::resolve_with(&next, self.assets.as_deref(), staged)?;
         let values = faber_expr::resolve(&next.params)?;
         let old_values = faber_expr::resolve(&self.data.params)?;
@@ -812,7 +818,7 @@ pub fn valid_id(id: &str) -> bool {
 
 fn validate_data(data: &ProjectData) -> Result<()> {
     for (name, view) in &data.views {
-        if !valid_id(name) {
+        if !names::valid_view(name) {
             return Err(format!("Invalid view name: {name}"));
         }
         view.validate().map_err(|e| format!("View {name}: {e}"))?;

@@ -457,12 +457,7 @@ impl Shell {
         }
         let painter = ui.painter().with_clip_rect(rect);
         let matrix = self.camera.matrix(rect.aspect_ratio());
-        let pose = self
-            .motion
-            .poses
-            .get(&report.part)
-            .copied()
-            .unwrap_or(glam::Mat4::IDENTITY);
+        let pose = self.display_pose(&report.part);
         for (i, &point) in paint.points.iter().enumerate() {
             let placed = pose.as_dmat4().transform_point3(point);
             if let Some(p) = move_tool::screen_point(rect, matrix, placed) {

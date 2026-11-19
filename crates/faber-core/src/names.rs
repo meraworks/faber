@@ -37,3 +37,10 @@ fn distance(a: &str, b: &str) -> usize {
     }
     row[b.len()]
 }
+/// A display name stored inside the project.
+pub fn valid_view(name: &str) -> bool {
+    !name.is_empty()
+        && name == name.trim()
+        && name.chars().count() <= 100
+        && !name.chars().any(char::is_control)
+}

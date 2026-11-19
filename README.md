@@ -72,6 +72,14 @@ queries and units. The CLI guide and MCP guide return this same text.
 
 Open the [assembly motion example](examples/assembly-motion) to try the same movement. Both animations use frames from the Faber viewer.
 
+### Studio pictures and exploded assemblies
+
+The studio view shows material reflections and a ground shadow. The explosion
+separates each part for inspection. The joint axes guide the moving parts.
+[Open the assembly](examples/assembly-motion) · [Pictures and animations](docs/modelling-guide.md#pictures-and-animations)
+
+<p align="center"><img src="docs/media/assembly-studio.png" width="440" alt="Four-bar assembly on the studio ground"><img src="docs/media/assembly-exploded.png" width="440" alt="The parts of the four-bar assembly move from their assembled positions into an exploded view"></p>
+
 ## Tools
 
 - `open`: open a project, or create it with `create: true`.

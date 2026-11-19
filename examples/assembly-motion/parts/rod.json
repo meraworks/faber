@@ -2,12 +2,58 @@
   "schema": 1,
   "name": "Connecting rod",
   "geometry": {
-    "op": "box",
-    "size": [
-      44.0,
-      4.0,
-      3.0
-    ]
+    "op": "history",
+    "features": [
+      {
+        "id": "outline",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "slot",
+              "centre": [
+                20.0,
+                0
+              ],
+              "length": 45,
+              "width": 5,
+              "rotation": 0
+            },
+            "holes": [
+              {
+                "kind": "circle",
+                "centre": [
+                  0,
+                  0
+                ],
+                "radius": 1.2
+              },
+              {
+                "kind": "circle",
+                "centre": [
+                  40,
+                  0
+                ],
+                "radius": 1.2
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "link",
+        "geometry": {
+          "op": "extrude_sketch",
+          "source": "outline",
+          "vector": [
+            0,
+            0,
+            3
+          ]
+        }
+      }
+    ],
+    "output": "link"
   },
   "colour": [
     137,

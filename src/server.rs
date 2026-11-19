@@ -2,7 +2,9 @@
 
 mod drawing_tools;
 mod machining_tools;
+pub(crate) mod pictures;
 use machining_tools::{Paths, ProgramFile, RemoveOperation, SetOperation, SetSetup, SetTool};
+use pictures::{AnimationFile, PictureFile, SaveView, ViewName};
 mod mesh_tools;
 mod surface_tools;
 use crate::input::Checked;
@@ -1149,7 +1151,7 @@ pub struct Render {
 }
 
 /// A section for render. It is a saved section id or an inline plane.
-#[derive(Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum SectionArg {
     /// Id of a saved section.
@@ -1207,6 +1209,9 @@ fn image_height() -> u32 {
 
 pub fn report(data: &ProjectData, bodies: &[Body]) -> Value {
     let mut report = json!({"schema":1,"name":data.name,"revision":data.revision,"part_count":bodies.len(),"parts":bodies.iter().map(|b| json!({"id":b.id,"name":b.name,"group":b.group,"volume_mm3":b.volume,"bounds_mm":b.bounds,"triangles":b.mesh.triangles.len()})).collect::<Vec<_>>()});
+    if !data.views.is_empty() {
+        report["views"] = json!(data.views.keys().collect::<Vec<_>>());
+    }
     if !data.components.is_empty() {
         let mut counts = BTreeMap::new();
         for part in data.parts.values() {
@@ -1322,6 +1327,35 @@ fn result(value: Result<Value, String>) -> CallToolResult {
     }
 }
 
+/// Keep numeric constraints. Rust storage widths are JSON Schema annotations.
+fn omit_numeric_formats(node: &mut Value) {
+    match node {
+        Value::Object(fields) => {
+            if matches!(
+                fields.get("format").and_then(Value::as_str),
+                Some(
+                    "double"
+                        | "float"
+                        | "int8"
+                        | "int16"
+                        | "int32"
+                        | "int64"
+                        | "uint8"
+                        | "uint16"
+                        | "uint32"
+                        | "uint64"
+                        | "uint"
+                )
+            ) {
+                fields.remove("format");
+            }
+            fields.values_mut().for_each(omit_numeric_formats);
+        }
+        Value::Array(items) => items.iter_mut().for_each(omit_numeric_formats),
+        _ => {}
+    }
+}
+
 impl Faber {
     pub fn new() -> Self {
         let mut tool_router = Self::tool_router();
@@ -1333,14 +1367,9 @@ impl Faber {
             {
                 Arc::make_mut(schema).remove("$schema");
             }
-            // The integer type and minimum describe a revision to JSON clients.
-            if let Some(revision) = Arc::make_mut(schema)
-                .get_mut("properties")
-                .and_then(|fields| fields.get_mut("expected_revision"))
-                .and_then(Value::as_object_mut)
-            {
-                revision.remove("format");
-            }
+            Arc::make_mut(schema)
+                .values_mut()
+                .for_each(omit_numeric_formats);
         }
         Self {
             project: Arc::new(Mutex::new(None)),
@@ -2964,14 +2993,46 @@ impl Faber {
     }
 
     #[tool(
-        description = "Render the model without a window to a PNG file at path. Set part to frame only that part. Set view to iso, front, back, left, right, top or bottom. Set section to a saved section id or to an inline plane. Set inline to true to also send the image. Source geometry stays unchanged."
+        description = "Save a named camera and display state. Read schema kind view for its fields."
     )]
-    fn render(&self, Parameters(Checked(args)): Parameters<Checked<Render>>) -> CallToolResult {
-        let mut response=self.with(|p| {
-            let (section, bodies) = render_input(p, &args)?;
-            faber_wiring::render_view(&bodies,Path::new(&args.path),section,args.width,args.height,args.view)?;
-            Ok(json!({"schema":1,"path":args.path,"width":args.width,"height":args.height,"view":args.view,"part":args.part,"revision":p.data.revision}))
-        });
+    fn set_view(&self, Parameters(Checked(args)): Parameters<Checked<SaveView>>) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            p.batch(vec![Edit::SetView {
+                name: args.name,
+                view: args.view,
+            }])?;
+            Ok(json!({"revision":p.data.revision}))
+        })
+    }
+    #[tool(description = "Remove a saved view.")]
+    fn remove_view(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<ViewName>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, args.expected_revision)?;
+            p.batch(vec![Edit::RemoveView { name: args.name }])?;
+            Ok(json!({"revision":p.data.revision}))
+        })
+    }
+    #[tool(
+        description = "Write a turntable, explode, motion or views animation as an animated PNG."
+    )]
+    fn animate(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<AnimationFile>>,
+    ) -> CallToolResult {
+        self.with(|p| args.write(p))
+    }
+    #[tool(
+        description = "Render a preset or saved view to PNG. Styles are technical and studio. Use high quality for a traced picture."
+    )]
+    fn render(
+        &self,
+        Parameters(Checked(args)): Parameters<Checked<PictureFile>>,
+    ) -> CallToolResult {
+        let mut response = self.with(|p| args.write(p));
         if args.inline && response.is_error != Some(true) {
             match std::fs::read(&args.path) {
                 Ok(bytes) => response.content.push(ContentBlock::image(

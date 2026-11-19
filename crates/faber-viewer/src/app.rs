@@ -59,6 +59,7 @@ mod surface_feature;
 #[cfg(test)]
 mod surface_feature_tests;
 mod view_cube;
+mod views;
 use crate::mark;
 use eframe::{egui, egui_wgpu};
 use egui::{Color32, RichText, Sense, Vec2};
@@ -269,6 +270,7 @@ pub struct Shell {
     study: study::StudyPanel,
     sheet_metal: Option<sheet::Panel>,
     machining: Option<machining::Panel>,
+    views: views::Views,
     intermediate: Option<surface_feature::Preview>,
     design_source_name: Option<String>,
     surface: surface::SurfacePanel,
@@ -426,6 +428,7 @@ impl Shell {
             study: Default::default(),
             sheet_metal: None,
             machining: None,
+            views: Default::default(),
             intermediate: None,
             design_source_name: sheet::source_name(&root),
             surface: Default::default(),
@@ -515,9 +518,18 @@ impl Shell {
     fn fit(&mut self) {
         let fitted = self
             .machining_camera()
+            .or_else(|| self.exploded_camera())
             .unwrap_or_else(|| Camera::fit(&self.bodies));
         self.camera.target = fitted.target;
         self.camera.distance = fitted.distance;
+        if self.camera.lens.ortho_height.is_some() {
+            let aspect = self
+                .target
+                .as_ref()
+                .map_or(1., |t| t.width as f32 / t.height as f32);
+            self.camera.lens.ortho_height =
+                Some(2. * fitted.distance * 19_f32.to_radians().tan() / aspect.clamp(0.01, 1.));
+        }
         self.dirty = true;
     }
 
@@ -1827,7 +1839,7 @@ impl Shell {
             self.cap_plane = None;
             self.caps = None;
         }
-        if !section.visible {
+        if !section.visible && self.views.section_override.as_deref() != Some(&id) {
             self.section_on = false;
             return;
         }
@@ -1860,7 +1872,8 @@ impl Shell {
         }
         match result {
             Ok(plane) => {
-                let visible = self.data.sections.get(&id).is_some_and(|s| s.visible);
+                let visible = self.views.section_override.as_deref() == Some(&id)
+                    || self.data.sections.get(&id).is_some_and(|s| s.visible);
                 self.plane = plane;
                 self.section_on = visible;
                 self.mesh_dirty = true;
@@ -1946,6 +1959,7 @@ impl Shell {
                     let changing_project = self.pending_project.is_some();
                     if let Some(root) = self.pending_project.take() {
                         self.machining = None;
+                        self.views = Default::default();
                         self.close_sheet();
                         self.close_surface_feature();
                         self.marking = Default::default();
@@ -2042,6 +2056,7 @@ impl Shell {
 
     /// Selects a saved section. Selecting the same section again clears the selection.
     fn select_section(&mut self, ctx: &egui::Context, id: String) {
+        self.views.section_override = None;
         if self.section_selected.as_deref() == Some(id.as_str()) {
             self.section_selected = None;
             self.section_on = false;
@@ -2125,6 +2140,7 @@ impl Shell {
         {
             let mut section = section.clone();
             section.visible = visible;
+            self.views.section_override = None;
             self.save_sections(
                 ui.ctx(),
                 vec![faber_model::Edit::SetSection { id, section }],
@@ -2695,7 +2711,7 @@ impl Shell {
         }
     }
     fn inspector(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
-        if self.machining_panel(ui) {
+        if self.views_panel(ui) || self.machining_panel(ui) {
             return;
         }
         if self.surface_feature_panel(ui) {
@@ -2926,6 +2942,7 @@ impl Shell {
         }
     }
     fn canvas(&mut self, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
+        self.update_pictures(ui.ctx());
         if self.machining_canvas(ui, rs) || self.sheet_canvas(ui) {
             return;
         }
@@ -3103,18 +3120,18 @@ impl Shell {
             let (axis, scale) = if projected.length() > 0.1 {
                 (projected.normalized(), projected.length())
             } else {
-                (-Vec2::Y, rect.height() / self.camera.distance)
+                (-Vec2::Y, rect.height() / self.camera.interaction_scale())
             };
             let fine = ui.input(|i| i.modifiers.shift);
             let gain = if fine { 0.05 } else { 0.35 };
-            let screen_scale = rect.height() / self.camera.distance;
+            let screen_scale = rect.height() / self.camera.interaction_scale();
             let tip = centre + axis * 58.;
             let basis = self
                 .section_basis
                 .and_then(|b| (b - n * b.dot(n)).try_normalize())
                 .unwrap_or_else(|| n.any_orthonormal_vector());
             let directions = [basis, n.cross(basis)];
-            let world_scale = self.camera.distance / rect.height() * 64.;
+            let world_scale = self.camera.interaction_scale() / rect.height() * 64.;
             let arc_point = |index: usize, t: f32| {
                 let offset = n * t.cos() + directions[index] * t.sin();
                 centre + (screen(anchor + offset * world_scale) - screen(anchor))
@@ -3127,13 +3144,9 @@ impl Shell {
             let grips = [arc_point(0, 1.1), arc_point(1, -1.1)];
             let mut lo = [f32::INFINITY; 2];
             let mut hi = [f32::NEG_INFINITY; 2];
+            let poses = self.move_poses();
             for body in self.bodies.iter().filter(|b| !self.hidden.contains(&b.id)) {
-                let pose = self
-                    .motion
-                    .poses
-                    .get(&body.id)
-                    .copied()
-                    .unwrap_or(glam::Mat4::IDENTITY);
+                let pose = poses.get(&body.id).copied().unwrap_or(glam::Mat4::IDENTITY);
                 for mask in 0..8 {
                     let point = glam::Vec3::from_array(std::array::from_fn(|i| {
                         body.bounds[(mask >> i) & 1][i] as f32
@@ -3301,7 +3314,7 @@ impl Shell {
         if pan {
             let (right, up) = self.camera.screen_axes();
             self.camera.target +=
-                (-right * delta.x + up * delta.y) * self.camera.distance / rect.height();
+                (-right * delta.x + up * delta.y) * self.camera.interaction_scale() / rect.height();
             self.dirty = true;
         }
         let right_press = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
@@ -3420,23 +3433,51 @@ impl Shell {
             && let (Some(target), Some(list)) = (&self.target, &self.list)
         {
             let start = Instant::now();
-            self.gpu.draw_scoped_view(
-                target,
-                list,
-                self.camera,
-                self.selected
-                    .as_deref()
-                    .filter(|_| show_selection)
-                    .filter(|_| {
-                        self.select_filter == SelectFilter::Body
-                            || matches!(self.picks.last(), Some(Pick::Body(_)))
-                    }),
-                self.cap_plane,
-                self.caps.as_ref(),
-                &self.move_poses(),
-                &self.hidden,
-                &self.section_scope,
-            );
+            if self.views.studio
+                && let Some(studio) = &self.views.display
+                && study_paint.is_none()
+                && wall_paint.is_none()
+                && self.press.is_none()
+                && !self.has_surface_overlay()
+                && !self.overhang.on
+                && self.intermediate.is_none()
+            {
+                if let Err(e) = faber_render::studio::draw(
+                    &self.gpu,
+                    target,
+                    studio,
+                    self.camera
+                        .matrix(target.width as f32 / target.height as f32),
+                    self.camera.eye(),
+                    &self.views.style,
+                    self.selected.as_deref(),
+                    self.cap_plane,
+                    self.caps.as_ref(),
+                    &self.move_poses(),
+                    &self.hidden,
+                    &self.section_scope,
+                ) {
+                    self.error = Some(e);
+                }
+            } else {
+                self.gpu.draw_scoped_view(
+                    target,
+                    list,
+                    self.camera,
+                    self.selected
+                        .as_deref()
+                        .filter(|_| show_selection)
+                        .filter(|_| {
+                            self.select_filter == SelectFilter::Body
+                                || matches!(self.picks.last(), Some(Pick::Body(_)))
+                        }),
+                    self.cap_plane,
+                    self.caps.as_ref(),
+                    &self.move_poses(),
+                    &self.hidden,
+                    &self.section_scope,
+                );
+            }
             self.frame_ms = start.elapsed().as_secs_f64() * 1000.;
             self.dirty = false;
         }
@@ -3521,6 +3562,8 @@ impl Shell {
             egui::Align2::LEFT_TOP,
             if self.section_on {
                 "SECTION VIEW"
+            } else if self.camera.lens.ortho_height.is_some() {
+                "ORTHOGRAPHIC"
             } else {
                 "PERSPECTIVE"
             },
@@ -3562,6 +3605,7 @@ impl eframe::App for Shell {
         let ctx = ui.ctx().clone();
         self.poll_dialog(&ctx);
         self.poll(&ctx);
+        self.poll_animation();
         self.poll_study(&ctx);
         self.poll_surface(&ctx);
         self.poll_print(&ctx);
@@ -5603,3 +5647,5 @@ mod constrained_sketch_tests;
 mod marking_menu_tests;
 #[cfg(test)]
 mod surface_tests;
+#[cfg(test)]
+mod views_tests;

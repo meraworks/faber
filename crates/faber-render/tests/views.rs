@@ -113,6 +113,27 @@ fn top_view_shows_the_box() {
 }
 
 #[test]
+fn portrait_fit_keeps_the_whole_part_in_the_image() {
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("portrait-fit.png");
+    let bodies = [box_body([80., 32., 2.])];
+    faber_render::save_view(&bodies, &path, None, 80, 480, View::Top).unwrap();
+    let image = image::open(path).unwrap().to_rgba8();
+    let mut low = [u32::MAX; 2];
+    let mut high = [0; 2];
+    for (x, y, p) in image.enumerate_pixels() {
+        if p[0] > 100 && u16::from(p[0]) > 2 * u16::from(p[1]) {
+            low = [low[0].min(x), low[1].min(y)];
+            high = [high[0].max(x), high[1].max(y)];
+        }
+    }
+    assert!(high[0] > low[0] + 30 && high[1] > low[1] + 10);
+    assert!(
+        low[0] > 1 && high[0] < 78 && low[1] > 1 && high[1] < 478,
+        "The projected part extends from {low:?} to {high:?}."
+    );
+}
+
+#[test]
 fn bottom_view_shows_the_box() {
     let share = part_share(&render(View::Bottom));
     assert!(share >= 0.5, "bottom view part share {share}");
@@ -187,4 +208,22 @@ fn zebra_on_a_flat_plate_has_straight_stripes() {
         counts.push(centre);
     }
     assert!(counts[1] >= 2 * counts[0], "{counts:?}");
+}
+
+#[test]
+fn technical_render_is_unchanged() {
+    let before = image::load_from_memory(include_bytes!("fixtures/technical-top.png"))
+        .unwrap()
+        .to_rgba8();
+    let actual = render(View::Top);
+    let diff = before
+        .as_raw()
+        .iter()
+        .zip(actual.as_raw())
+        .filter(|(a, b)| a.abs_diff(**b) > 2)
+        .count();
+    assert!(
+        diff < 640,
+        "{diff} channels changed in the technical reference image"
+    );
 }

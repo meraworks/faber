@@ -1547,3 +1547,55 @@ rest machining and tabs are outside its scope.
 The [milled plate](../examples/milled-plate/) has a 60 × 40 × 8 mm
 body, a 24 × 14 mm pocket and four 5 mm holes. The top setup faces
 the stock, clears the pocket, drills the holes and cuts the outer contour.
+
+## Pictures and animations
+
+Open **Views** in the inspector. **Technical** shows the modelling colours.
+**Studio** shows the material colour, roughness, metallic reflections and
+ground shadow. Adjust **Exposure** and **Background**, or turn **Ground shadow**
+off to remove the floor. A part with no
+material uses its part colour, roughness 0.6 and metallic 0.
+
+Orbit or zoom, hide parts or adjust the section plane, then type a **View
+name** and choose **Save view**. Select the name and choose **Apply** to
+restore its camera, visibility, section, joint positions, style and explode
+factor. **Update view** replaces the selected name with the current state.
+Views are stored in `analysis.json`. The **Explode** slider separates parts
+for inspection along their joint axes or away from the largest body. Set it
+to zero to see the assembled position.
+
+For an image file, call `render` with a PNG path. Set `style` to `studio`
+for the studio image. Set `quality` to `high` for CPU path tracing. Use
+`samples` to control noise and `seconds` to limit run time. The reply gives
+the completed sample count and the elapsed time. A time limit allows the
+current whole-image sample to finish. For example, this request allows five
+seconds for a preview of the assembly.
+
+```json
+{"path":"assembly.png","style":"studio","quality":"high","width":640,"height":480,"samples":64,"seconds":5}
+```
+
+On the test PC, the trash bin at 1280 by 720 pixels took 115 seconds for
+64 samples with four CPU workers. The assembly at 800 by 500 pixels took
+4.13 seconds for 48 samples.
+
+Compare the [studio image](media/assembly-studio.png) with the
+[path-traced image](media/assembly-traced.png). Both use the
+[assembly motion example](../examples/assembly-motion).
+
+Choose **Export animation** in the Views panel to write an animated PNG.
+Set its kind, frame count, frame rate, dimensions and output file. A relative
+file path is inside the project. The export runs in the background. Each
+frame uses the same saved model. The `animate` tool accepts the same kinds.
+These calls use the assembly example. It contains the two named cameras
+`front_detail` and `side_detail`.
+
+```json
+{"kind":"turntable","turns":1,"frames":48,"fps":24,"path":"turntable.apng"}
+{"kind":"explode","from":0,"to":1,"frames":36,"fps":24,"path":"exploded.apng"}
+{"kind":"motion","joint":"input","from":-30,"to":30,"frames":48,"fps":24,"path":"input-arm.apng"}
+{"kind":"views","names":["front_detail","side_detail"],"style":"studio","frames":36,"fps":24,"path":"camera.apng"}
+```
+
+Use 2 to 600 frames. The duration is the frame count divided by the frame
+rate. Set `frames_dir` to keep the individual PNG files with the animation.

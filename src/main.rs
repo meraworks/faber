@@ -23,7 +23,8 @@ async fn main() {
         Some("flat") if args.len() == 4 => faber_wiring::read_snapshot(Path::new(&args[1]))
             .and_then(|project| faber_wiring::sheet::report(&project,&args[2],Some(Path::new(&args[3]))))
             .map(|report| println!("{report}")),
-        Some("render") if args.len() == 3 => faber_wiring::read(Path::new(&args[1])).and_then(|(_,bodies)|faber_wiring::render(&bodies,Path::new(&args[2]),None,1200,1000)),
+        Some("render") if args.len() >= 3 => picture_command(&args, false),
+        Some("animate") if args.len() >= 4 => picture_command(&args, true),
         Some("status") if args.len()==2 => {
             let root=Path::new(&args[1]);
             faber_wiring::read_snapshot(root).and_then(|p|server::project_status(root,&p)).map(|v|println!("{v}"))
@@ -33,12 +34,54 @@ async fn main() {
         Some("build") if args.len() == 2 => build(Path::new(&args[1])),
         Some("bom") if args.len() >= 2 => parts_list(&args),
         Some("export") if args.len() >= 3 => export(&args),
-        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | bom PROJECT [--format json|csv|md] | export PROJECT DIRECTORY [--configuration NAME|--all-configurations] [--format stl|step|3mf] [--tolerance MM] [--force] | render PROJECT IMAGE | drawing PROJECT ID FILE | flat PROJECT PART FILE | gcode PROJECT SETUP FILE [--dialect NAME] [--force] | schema | guide | faber scan PACKAGE".into()),
+        _ => Err("Usage: faber mcp | import ARCHIVE.f3d NEW_DIRECTORY | migrate PROJECT | build PROJECT | status PROJECT | bom PROJECT [--format json|csv|md] | export PROJECT DIRECTORY [--configuration NAME|--all-configurations] [--format stl|step|3mf] [--tolerance MM] [--force] | render PROJECT IMAGE [--style STYLE --quality QUALITY --view VIEW] | animate PROJECT KIND FILE [--frames COUNT --fps RATE] | drawing PROJECT ID FILE | flat PROJECT PART FILE | gcode PROJECT SETUP FILE [--dialect NAME] [--force] | schema | guide | faber scan PACKAGE".into()),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
         std::process::exit(2);
     }
+}
+
+fn picture_command(args: &[String], animation: bool) -> Result<(), String> {
+    use server::pictures::{AnimationFile, PictureFile};
+    let at = if animation { 3 } else { 2 };
+    let mut options = serde_json::json!({"path":args[at]});
+    if animation {
+        options["kind"] = serde_json::json!(args[2]);
+    }
+    let (flags, rest) = args[at + 1..].as_chunks::<2>();
+    for pair in flags {
+        let name = pair[0]
+            .strip_prefix("--")
+            .ok_or_else(|| format!("Expected an option before {}.", pair[0]))?
+            .replace('-', "_");
+        if options.get(&name).is_some() {
+            return Err(format!("Repeated option: {}", pair[0]));
+        }
+        let raw = &pair[1];
+        options[&name] = match name.as_str() {
+            "view" | "style" | "quality" | "joint" | "part" | "frames_dir" => {
+                serde_json::json!(raw)
+            }
+            "section" if !raw.starts_with('{') => serde_json::json!(raw),
+            "names" if !raw.starts_with('[') => {
+                serde_json::json!(raw.split(',').collect::<Vec<_>>())
+            }
+            _ => serde_json::from_str(raw)
+                .map_err(|_| format!("Invalid value for {}: {raw}", pair[0]))?,
+        };
+    }
+    if let Some(flag) = rest.first() {
+        return Err(format!("Set a value for {flag}."));
+    }
+    let project = faber_wiring::read_snapshot(Path::new(&args[1]))?;
+    let report = if animation {
+        input::read::<AnimationFile>(&options, "")?.write(&project)?
+    } else {
+        input::read::<PictureFile>(&options, "")?.write(&project)?
+    };
+    println!("{report}");
+    Ok(())
 }
 
 fn drawing(root: &Path, id: &str, path: &Path) -> Result<(), String> {
