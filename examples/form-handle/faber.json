@@ -1,0 +1,9 @@
+{
+  "schema": 2,
+  "revision": 0,
+  "name": "Form handle",
+  "params": {
+    "socket_outer_mm": "8",
+    "shaft_radius_mm": "3"
+  }
+}

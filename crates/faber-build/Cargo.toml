@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 description = "Builds Faber project files from a modular Jsonnet design source"
 
 [dependencies]
+faber-form = { path = "../faber-form" }
 faber-core = { path = "../faber-core" }
 faber-files = { path = "../faber-files" }
 faber-model = { path = "../faber-model" }

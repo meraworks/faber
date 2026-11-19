@@ -163,6 +163,9 @@ impl Shell {
         if !self.command_enabled(command) {
             return;
         }
+        if self.form_command(ctx, command) {
+            return;
+        }
         if let Some(tool) = &self.press {
             if tool.submitting {
                 return;

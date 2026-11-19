@@ -754,19 +754,19 @@ fn field_grid(ui: &mut egui::Ui, id: &str, captions: [&str; 3], values: &mut [St
 }
 
 /// Screen geometry of the move triad.
-struct Triad {
+pub(super) struct Triad {
     centre: egui::Pos2,
     tips: [egui::Pos2; 3],
     dirs: [Vec2; 3],
     px_per: [f32; 3],
-    rings: [Vec<egui::Pos2>; 3],
+    pub(super) rings: [Vec<egui::Pos2>; 3],
 }
 
 fn ring_basis(axis: usize) -> (DVec3, DVec3) {
     (AXES[(axis + 1) % 3], AXES[(axis + 2) % 3])
 }
 
-fn triad_at(rect: egui::Rect, matrix: Mat4, pivot: DVec3, size: f64) -> Option<Triad> {
+pub(super) fn triad_at(rect: egui::Rect, matrix: Mat4, pivot: DVec3, size: f64) -> Option<Triad> {
     let project = |point: DVec3| {
         let clip = matrix * point.as_vec3().extend(1.);
         (clip.w > 0.).then(|| {

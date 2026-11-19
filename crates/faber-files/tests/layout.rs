@@ -34,6 +34,22 @@ fn fixture() -> ProjectData {
 }
 
 #[test]
+fn two_edits_preserve_the_exact_rotated_coordinates() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::open(dir.path()).unwrap();
+    let mut rotated = fixture();
+    rotated.parts.get_mut("base").unwrap().placement.translation =
+        [-4.134760300730367, -13.524191556448175, 20.000000155380253].map(Scalar::Number);
+    store.save(None, &rotated).unwrap();
+    assert_eq!(store.load().unwrap(), rotated);
+    let mut next = rotated.clone();
+    next.revision += 1;
+    next.parts.get_mut("base").unwrap().note = "Rotated".into();
+    store.save_checked(&rotated, &next).unwrap();
+    assert_eq!(store.load().unwrap(), next);
+}
+
+#[test]
 fn machining_round_trips_in_manufacture_json() {
     let dir = tempfile::tempdir().unwrap();
     let mut data = fixture();

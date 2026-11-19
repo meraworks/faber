@@ -1334,6 +1334,7 @@ version = "0.1.0"
 dependencies = [
  "faber-core",
  "faber-files",
+ "faber-form",
  "faber-kernel-occt",
  "faber-model",
  "faber-ports",
@@ -1376,6 +1377,7 @@ name = "faber-core"
 version = "0.1.0"
 dependencies = [
  "faber-expr",
+ "faber-form",
  "faber-geometry",
  "faber-meshtools",
  "faber-model",
@@ -1422,6 +1424,19 @@ dependencies = [
  "tempfile",
  "tiny-skia",
  "zip",
+]
+
+[[package]]
+name = "faber-form"
+version = "0.1.0"
+dependencies = [
+ "faber-meshtools",
+ "faber-model",
+ "faber-ports",
+ "glam",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1585,6 +1600,7 @@ dependencies = [
  "embed-resource",
  "faber-core",
  "faber-expr",
+ "faber-form",
  "faber-model",
  "faber-ports",
  "faber-print",
@@ -1609,6 +1625,7 @@ dependencies = [
  "faber-core",
  "faber-drawing",
  "faber-files",
+ "faber-form",
  "faber-geometry",
  "faber-kernel-occt",
  "faber-meshtools",

@@ -18,6 +18,8 @@ mod face_edit;
 mod feature_cache;
 mod feature_edit;
 mod feature_info;
+pub mod form;
+mod form_normals;
 mod generated;
 mod history;
 mod hole;
@@ -1163,7 +1165,15 @@ impl Builder<'_> {
         imported: impl FnOnce() -> Result<Option<faber_ports::Mesh>>,
         timing: &mut body_cache::Timing,
     ) -> Result<body_cache::LocalBody> {
-        let imported = imported().map_err(|error| format!("{id}: {error}"))?;
+        let imported = match &part.geometry {
+            faber_model::Geometry::Form {
+                cage,
+                levels,
+                as_solid: false,
+                symmetry,
+            } => Some(form::mesh(cage, *levels, symmetry).map_err(|e| format!("{id}: {e}"))?),
+            _ => imported().map_err(|error| format!("{id}: {error}"))?,
+        };
         let is_imported = imported.is_some();
         let started = std::time::Instant::now();
         let (shape, output_key) = if is_imported {
@@ -1203,6 +1213,7 @@ impl Builder<'_> {
             let (mesh, edge_lines) = self
                 .tessellate(
                     &shape,
+                    &part.geometry,
                     properties.faces,
                     properties.edges,
                     output_key.as_deref(),
@@ -1287,6 +1298,21 @@ impl Builder<'_> {
                 base,
                 flanges,
             } => (Some(sheet::build(self.kernel, rule, base, flanges)?), None),
+            faber_model::Geometry::Form {
+                cage,
+                levels,
+                as_solid,
+                symmetry,
+            } => (
+                Some(form::solid(
+                    self.kernel,
+                    cage,
+                    *levels,
+                    *as_solid,
+                    symmetry,
+                )?),
+                None,
+            ),
             geometry => (self.kernel.exact_shape(geometry)?, None),
         })
     }
@@ -1296,6 +1322,7 @@ impl Builder<'_> {
     fn tessellate(
         &self,
         shape: &Shape,
+        geometry: &faber_model::Geometry,
         face_count: u32,
         edge_count: u32,
         output_key: Option<&str>,
@@ -1308,9 +1335,11 @@ impl Builder<'_> {
                     .iter()
                     .all(|i| (1..=face_count).contains(i))
         };
-        // The prefix identifies the 0.03 mm mesh with faces and edge lines.
+        let form = form_normals::has_form(geometry);
+        // Cached form meshes include the subdivision normals.
+        let prefix = if form { "formmesh06" } else { "mesh05" };
         let cached = match (self.persist, output_key) {
-            (Some(store), Some(key)) => Some((store, format!("mesh05{key}"))),
+            (Some(store), Some(key)) => Some((store, format!("{prefix}{key}"))),
             _ => None,
         };
         if let Some((store, name)) = &cached
@@ -1329,20 +1358,24 @@ impl Builder<'_> {
             Err(error) if error == faber_ports::EDGE_LINES_UNSUPPORTED => Default::default(),
             Err(error) => return Err(error),
         };
-        let mesh = match self.kernel.tessellate_faces(shape, TESSELLATION_MM) {
+        let mut mesh = match self.kernel.tessellate_faces(shape, TESSELLATION_MM) {
             Err(error) if error == faber_ports::FACE_MESH_UNSUPPORTED => {
-                return Ok((
-                    faber_ports::FaceMesh {
-                        mesh: self.kernel.tessellate(shape, TESSELLATION_MM)?,
-                        face_of_triangle: Vec::new(),
-                    },
-                    lines,
-                ));
+                let mut mesh = faber_ports::FaceMesh {
+                    mesh: self.kernel.tessellate(shape, TESSELLATION_MM)?,
+                    face_of_triangle: Vec::new(),
+                };
+                if form {
+                    form_normals::transfer(geometry, None, &mut mesh)?;
+                }
+                return Ok((mesh, lines));
             }
             result => result?,
         };
         if !valid(&mesh) {
             return Err("Each triangle needs a face index".into());
+        }
+        if form {
+            form_normals::transfer(geometry, shape.face_origins(), &mut mesh)?;
         }
         if let Some((store, name)) = &cached
             && (!lines.is_empty() || edge_count == 0)

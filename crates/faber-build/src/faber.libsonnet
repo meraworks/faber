@@ -137,6 +137,16 @@
     faber.feature(id, 'offset_sketch', {sketch: sketch, distance: distance}),
 
   // A box at the origin with the corner at the origin. `size` is [x, y, z].
+  form_box(id,size,segments=[1,1,1],levels=3,as_solid=true,symmetry=[])::
+    faber.feature(id,'form_primitive',{shape:{primitive:'box',size:size,segments:segments},levels:levels,as_solid:as_solid,symmetry:symmetry}),
+  form_cylinder(id,radius,height,sides=16,segments=1,levels=3,as_solid=true,symmetry=[])::
+    faber.feature(id,'form_primitive',{shape:{primitive:'cylinder',radius:radius,height:height,sides:sides,segments:segments},levels:levels,as_solid:as_solid,symmetry:symmetry}),
+  form_sphere(id,radius,segments=4,levels=3,as_solid=true,symmetry=[])::
+    faber.feature(id,'form_primitive',{shape:{primitive:'sphere',radius:radius,segments:segments},levels:levels,as_solid:as_solid,symmetry:symmetry}),
+  form_torus(id,major,minor,sides=16,rings=8,levels=3,as_solid=true,symmetry=[])::
+    faber.feature(id,'form_primitive',{shape:{primitive:'torus',major:major,minor:minor,sides:sides,rings:rings},levels:levels,as_solid:as_solid,symmetry:symmetry}),
+  form_ops(feature,ops):: feature + {geometry+: {ops+: ops}},
+
   box(id, size)::
     faber.feature(id, 'box', { size: size }),
 

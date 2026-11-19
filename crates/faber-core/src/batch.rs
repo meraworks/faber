@@ -429,10 +429,19 @@ impl Project {
     }
     /// Apply a result calculated from one project revision.
     pub fn batch_at_revision(&mut self, revision: u64, edits: Vec<Edit>) -> Result<()> {
+        self.batch_strict_at_revision(revision, edits, false)
+    }
+
+    pub fn batch_strict_at_revision(
+        &mut self,
+        revision: u64,
+        edits: Vec<Edit>,
+        strict: bool,
+    ) -> Result<()> {
         self.check_edit_revision(revision)?;
         let operations = to_operations(edits);
         self.refuse_generated_operations(&operations)?;
-        self.apply_history(self.candidate(operations)?, None, false)
+        self.apply_history(self.candidate(operations)?, None, strict)
     }
 
     pub fn check_edit_revision(&mut self, revision: u64) -> Result<()> {

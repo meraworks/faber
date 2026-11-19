@@ -21,6 +21,7 @@ use faber_files::{FileAssets, FileStore};
 use faber_model::{Part, ProjectData, Scalar};
 use faber_ports::source::Report;
 use faber_ports::{Kernel, ProjectStore, Result};
+mod form;
 use jrsonnet_evaluator::error::ErrorKind;
 use jrsonnet_evaluator::manifest::JsonFormat;
 use jrsonnet_evaluator::trace::{CompactFormat, PathResolver, TraceFormat};
@@ -225,7 +226,10 @@ fn evaluate_with(
     let design: Design =
         serde_json::from_value(value).map_err(|e| format!("{SOURCE_FILE}: {e}"))?;
     let mut parts = BTreeMap::new();
-    for (id, value) in design.parts {
+    for (id, mut value) in design.parts {
+        if let Some(geometry) = value.get_mut("geometry") {
+            form::expand(geometry).map_err(|e| format!("parts.{id}: {e}"))?;
+        }
         if value.get("placement").is_some() {
             return Err(format!(
                 "parts.{id}: placement is not in the source. Move the part with the tools."

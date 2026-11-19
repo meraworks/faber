@@ -4,6 +4,18 @@ Date: 2026-11-18. Fusion is the behavioural reference. This note compares the
 installed Fusion command set with Faber. It is static evidence from shipped
 files. Fusion was not run.
 
+## Form editing
+
+The installed `Fusion/TSpline/TSplineBoxInput.h` gives a face count for
+each axis. The shipped binding also contains the names `TSplineVertex`,
+`TSplineEdge`, `TSplineFace` and `TSplineTorusInput`. REA identified the
+x64 binding by the hash below. Its Ghidra string search timed out. The
+names were checked separately in the binary. Autodesk describes how a
+person selects vertices, edges or faces, then moves, rotates or scales
+them with the manipulator. Faber uses a Catmull–Clark control cage and
+produces a faceted solid under decision D5.
+[Autodesk Edit Form guide](https://help.autodesk.com/view/fusion360/ENU/?contextId=FORM-EDIT-FORM-CMD)
+
 ## Cameras and exploded views
 
 The installed Fusion headers expose a camera on each named view.

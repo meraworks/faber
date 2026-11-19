@@ -116,8 +116,19 @@ impl SurfacePaint {
         body: &Body,
         boundaries: &faber_ports::EdgeLines,
     ) -> Result<Self> {
+        Self::lit(device, &body.id, &body.mesh, [83, 164, 195], boundaries)
+    }
+
+    /// Draw a smooth lit mesh in place of its part.
+    pub fn lit(
+        device: &wgpu::Device,
+        id: &str,
+        mesh: &Mesh,
+        colour: [u8; 3],
+        boundaries: &faber_ports::EdgeLines,
+    ) -> Result<Self> {
         let mut vertices = Vec::new();
-        append(&mut vertices, &body.mesh, [83, 164, 195], -4.);
+        append(&mut vertices, mesh, colour, -4.);
         for range in &boundaries.ranges {
             let line = boundaries
                 .points
@@ -128,7 +139,7 @@ impl SurfacePaint {
             }
         }
         Ok(Self {
-            part: body.id.clone(),
+            part: id.to_owned(),
             marks: FaceMarks::new(device, vertices.len(), Default::default()),
             count: vertices
                 .len()

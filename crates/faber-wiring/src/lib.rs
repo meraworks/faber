@@ -7,6 +7,7 @@ pub mod views;
 pub use configurations::use_configuration;
 pub mod archive;
 pub mod drawing;
+pub mod form;
 pub mod links;
 pub mod machining;
 pub mod machining_image;

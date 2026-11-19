@@ -1812,3 +1812,33 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
 - The Windows installation opened and rendered all 27 examples. On the
   232-body assembly the median section drag took 5.23 ms and the longest
   took 14.36 ms. Returning to the same offset restored the same pixels.
+
+## Chunk 16. Subdivision forms
+
+- A form stores its cage, subdivision level, creases and symmetry planes.
+  Boxes, cylinders, spheres and tori can be edited as meshes or used as
+  faceted solids in a feature history.
+- Face extrusion and inset share the walls of a selected region. Edge
+  loops, bridging, welding, flattening and transforms retain a closed cage.
+  A batch of edits saves one revision. Unchanged coordinates on surviving
+  vertices keep their parameter expressions after renumbering.
+- The form mesh has a limit of 400 000 triangles. A solid conversion
+  checks the shared cage surface for self-intersection. Display vertices
+  can have separate normals along creases. They do not split the solid.
+- After a Boolean operation, the display uses subdivision normals on the
+  surviving form faces. The socket bore, rim and sharp creases retain
+  their own normals.
+- Saved coordinates retain all their bits when the file is read again.
+  This lets a second edit follow a rotation. The revision check still
+  detects an edit made by another program.
+- All 1475 workspace tests passed, including 256 viewer tests. The four
+  separate release benchmarks passed for ray queries, heat flow, shape
+  optimisation and stress at two grid resolutions.
+- The Windows installation opened and rendered all 28 examples. The
+  exported handle has 3478 triangles. Each of its 5217 edges has two
+  incident triangles. Returning to the same view restored the same pixels.
+- On the 232-body test assembly, a section drag took a median of 6.89 ms
+  per input frame and a maximum of 15.17 ms. Returning to the same
+  section offset restored the same pixels. Three separate runs of the
+  eight form interaction tests passed. Their median drag times ranged
+  from 0.64 to 0.79 ms per input frame.

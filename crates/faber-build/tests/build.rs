@@ -20,6 +20,46 @@ fn read_file(root: &Path, rel: &str) -> Vec<u8> {
 }
 
 #[test]
+fn form_helpers_expand_into_editable_cages() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"
+local f=import 'faber.libsonnet';
+local base=f.form_box('grip',[16,20,24],levels=1);
+local edit={op:'move',select:{vertices:[0]},by:[1,0,0]};
+{ parts: {
+  grip:f.part('Grip',[f.form_ops(base,[edit])],'grip'),
+  collar:f.part('Collar',[f.form_cylinder('rim',6,4,sides=8,levels=1)],'rim')
+} }
+"#,
+    );
+    let current = serde_json::from_value(
+        serde_json::json!({"schema":2,"revision":0,"name":"Test","params":{},"parts":{}}),
+    )
+    .unwrap();
+    let candidate = faber_build::evaluate(dir.path(), &current).unwrap();
+    for id in ["grip", "collar"] {
+        let Geometry::History { features, .. } = &candidate.data.parts[id].geometry else {
+            panic!()
+        };
+        let Geometry::Form {
+            cage,
+            levels,
+            as_solid,
+            ..
+        } = &features[0].geometry
+        else {
+            panic!()
+        };
+        assert_eq!(*levels, Some(1));
+        assert!(*as_solid);
+        assert!(!cage.faces.is_empty());
+    }
+}
+
+#[test]
 fn plastic_helpers_preserve_the_recipe_fields() {
     let dir = tempfile::tempdir().unwrap();
     write(

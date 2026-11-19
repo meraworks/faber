@@ -1,6 +1,7 @@
 //! Stdio tools call the same project operations as the CLI.
 
 mod drawing_tools;
+mod forms;
 mod machining_tools;
 pub(crate) mod pictures;
 use machining_tools::{Paths, ProgramFile, RemoveOperation, SetOperation, SetSetup, SetTool};
@@ -2148,7 +2149,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Build a candidate from ordered edits without saving or changing undo history. Return its bounds and volumes with the base revision. Optional render accepts path, width, height, section and inline. The PNG file is always written. Set inline to true to also send the image. To save the design, send the same operations to batch with expected_revision set to base_revision. Strict checks are optional."
+        description = "Preview ordered edits, bounds and volumes without saving. Optional render writes a PNG and can return it inline. To save, call batch with the same edits and expected_revision=base_revision."
     )]
     fn preview_batch(
         &self,
@@ -2348,7 +2349,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Read exact edges and faces of a placed part in world coordinates. Each list has at most 50 items. Set limit to change the cap and read more items; there is no offset. Totals count the items before the cap. Set feature to read a feature shape in part coordinates. Indices are valid only for the returned revision. Set kind to edges or faces to return one list; the other total is null. Set edge or face to filter the lists."
+        description = "Read world edges and faces, or part coordinates for a feature. Indices apply to this revision. Each list defaults to 50. Set limit to read more. Totals precede the cap. Filter by edge, face or kind. A skipped kind has a null total."
     )]
     fn topology(&self, Parameters(Checked(args)): Parameters<Checked<Topology>>) -> CallToolResult {
         self.with(|p| {
@@ -2595,7 +2596,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Suppress or unsuppress a feature. A suppressed feature stays in the recipe. A suppressed modifier, for example a fillet or a hole, passes its input solid to later features. A suppressed creation feature gives no solid: features that need it are refused unless cascade is true. The change is one undo step."
+        description = "Suppress or restore a feature in one undo step. Suppressed modifiers pass their input through. Suppressed creators have no solid. Set cascade to suppress their dependants."
     )]
     fn suppress_feature(
         &self,
@@ -2710,7 +2711,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Move or turn a part. Give exactly one mode: translate, rotate, point_to_point or position. Give id, or ids to move several parts together. Set copy_as to keep the source part. In rotate, origin is the world origin. Reply lists the changed parts with placement and bounds. The change is one undo step."
+        description = "Move id or ids in one undo step. Choose translate, rotate, point_to_point or position. Rotation uses world coordinates. Set copy_as for a copy. Returns placements and bounds."
     )]
     fn move_part(
         &self,
@@ -2874,7 +2875,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Find faces that need support for 3D printing. Each face is classed by its angle to the build direction. Read the support area, the bed area and the flattest overhang angle. Read up to five largest support regions with centroid and area. The project stays unchanged."
+        description = "Measure support and bed areas by build direction, the flattest overhang angle, and up to five largest support regions with area and centroid."
     )]
     fn overhang_analysis(
         &self,
@@ -3004,6 +3005,31 @@ impl Faber {
             }])?;
             Ok(json!({"revision":p.data.revision}))
         })
+    }
+    #[tool(
+        description = "Make a box, cylinder, sphere or torus cage. See schema kind form_primitive for dimensions."
+    )]
+    fn new_form(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<forms::NewForm>>,
+    ) -> CallToolResult {
+        self.with(|p| a.create(p))
+    }
+    #[tool(description = "Edit a cage in one revision. See schema kind form_op.")]
+    fn edit_form(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<forms::EditForm>>,
+    ) -> CallToolResult {
+        self.with(|p| a.apply(p))
+    }
+    #[tool(
+        description = "Read cage counts and mesh checks. Set detail for all vertices and faces."
+    )]
+    fn form_info(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<forms::FormInfo>>,
+    ) -> CallToolResult {
+        self.with(|p| faber_wiring::form::info(p, &a.part, a.feature.as_deref(), a.detail))
     }
     #[tool(description = "Remove a saved view.")]
     fn remove_view(

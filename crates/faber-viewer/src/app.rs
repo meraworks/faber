@@ -21,6 +21,9 @@ use face_pick::{Pick, SelectFilter};
 #[cfg(test)]
 mod face_pick_tests;
 mod feature_tools;
+mod form;
+#[cfg(test)]
+mod form_tests;
 #[cfg(test)]
 mod forms_tests;
 mod keys;
@@ -272,6 +275,7 @@ pub struct Shell {
     machining: Option<machining::Panel>,
     views: views::Views,
     intermediate: Option<surface_feature::Preview>,
+    form: Option<form::Panel>,
     design_source_name: Option<String>,
     surface: surface::SurfacePanel,
     window: WindowState,
@@ -430,6 +434,7 @@ impl Shell {
             machining: None,
             views: Default::default(),
             intermediate: None,
+            form: None,
             design_source_name: sheet::source_name(&root),
             surface: Default::default(),
             recent_file: None,
@@ -1961,6 +1966,7 @@ impl Shell {
                         self.machining = None;
                         self.views = Default::default();
                         self.close_sheet();
+                        self.close_form();
                         self.close_surface_feature();
                         self.marking = Default::default();
                         self.project_loaded = true;
@@ -2377,6 +2383,8 @@ impl Shell {
         self.component_tree(ui);
         ui.add_space(24.);
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().button_padding.x = 4.;
+            ui.spacing_mut().item_spacing.x = 4.;
             if ui.button("Show all").clicked() {
                 self.structure.clear_isolation();
                 self.hidden.clear();
@@ -2385,12 +2393,17 @@ impl Shell {
             if ui.button("Parts list").clicked() {
                 self.structure.bom_open = true;
             }
+            self.new_form_button(ui);
         });
+        if self.form.is_some() {
+            ui.disable();
+        }
         let part_id = self.selected.clone();
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().button_padding.x = 8.;
             self.sheet_buttons(ui);
             self.surface_feature_menu(ui);
+            self.edit_form_button(ui);
         });
         ui.horizontal(|ui| {
             if ui
@@ -2510,6 +2523,7 @@ impl Shell {
             let mut next_sketch = None;
             let mut next_sheet = None;
             let mut next_surface = None;
+            let mut next_form = None;
             let mut suppress: Option<(String, bool)> = None;
             egui::ScrollArea::vertical()
                 .id_salt("feature_list")
@@ -2538,7 +2552,12 @@ impl Shell {
                                 .clicked()
                                 && let Some(id) = &part_id
                             {
-                                if crate::feature_form::surfaces::surface(features, feature) {
+                                if matches!(feature.geometry, faber_model::Geometry::Form { .. })
+                                    && !feature.suppressed
+                                {
+                                    next_form = Some((id.clone(), feature.id.clone()));
+                                } else if crate::feature_form::surfaces::surface(features, feature)
+                                {
                                     next_surface = Some((id.clone(), feature.id.clone()));
                                 } else if matches!(
                                     feature.geometry,
@@ -2592,6 +2611,9 @@ impl Shell {
             }
             if let Some(id) = next_sheet {
                 self.open_sheet(id, false);
+            }
+            if let Some((part, id)) = next_form {
+                self.open_form(ui.ctx(), part, Some(id), false);
             }
             if let Some((part, id)) = next_surface {
                 self.open_surface_feature(part, id);
@@ -2711,7 +2733,7 @@ impl Shell {
         }
     }
     fn inspector(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
-        if self.views_panel(ui) || self.machining_panel(ui) {
+        if self.form_panel(ui) || self.views_panel(ui) || self.machining_panel(ui) {
             return;
         }
         if self.surface_feature_panel(ui) {
@@ -3285,9 +3307,11 @@ impl Shell {
                 corners,
             )
         });
-        let moving = self.press_interact(ui, rect) || self.move_canvas(ui, rect);
+        let form_input = self.form_input(ui, rect, &response);
+        let moving = form_input || self.press_interact(ui, rect) || self.move_canvas(ui, rect);
         let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
         let busy = moving
+            || self.form.is_some()
             || alt
             || self.marking.anchor.is_some()
             || self.move_draft.is_some()
@@ -3299,7 +3323,7 @@ impl Shell {
             ui,
             rect,
             &response,
-            handle.as_ref().is_some_and(|h| h.3) || moving,
+            handle.as_ref().is_some_and(|h| h.3) || moving || self.form.is_some(),
         );
         // Fusion mapping. Left drag on empty space selects. Shift + middle, or Alt + left, orbits.
         // Middle drag pans. Right drag selects a menu command.
@@ -3319,6 +3343,7 @@ impl Shell {
         }
         let right_press = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
         if right_press
+            && self.form.is_none()
             && self.intermediate.is_none()
             && self.marking.anchor.is_none()
             && response.contains_pointer()
@@ -3327,6 +3352,7 @@ impl Shell {
             self.start_mark(rect, pos);
         }
         if response.clicked()
+            && self.form.is_none()
             && self.marking.anchor.is_none()
             && !moving
             && !boxed
@@ -3441,6 +3467,7 @@ impl Shell {
                 && !self.has_surface_overlay()
                 && !self.overhang.on
                 && self.intermediate.is_none()
+                && self.form.is_none()
             {
                 if let Err(e) = faber_render::studio::draw(
                     &self.gpu,
@@ -3489,7 +3516,8 @@ impl Shell {
                 Color32::WHITE,
             );
         }
-        if show_selection {
+        self.form_paint(ui, rect);
+        if show_selection && self.form.is_none() {
             self.draw_pick_edges(ui, rect);
         }
         self.surface_marker(ui, rect);

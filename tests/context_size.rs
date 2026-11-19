@@ -99,6 +99,45 @@ fn open_project(session: &mut Session, dir: &Path) {
 }
 
 #[test]
+fn form_info_is_small_without_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = Session::start();
+    open_project(&mut client, dir.path());
+    let made=client.ok("new_form",json!({"id":"ring","primitive":"torus","major":12,"minor":3,"sides":16,"rings":8,"levels":1,"expected_revision":0}));
+    let info = client.ok("form_info", json!({"part":"ring"}));
+    assert_eq!(info["euler"], 0);
+    assert_eq!(info["mesh"]["watertight"], true);
+    assert!(info.get("cage").is_none() && info.to_string().len() < 1500);
+    let full = client.ok("form_info", json!({"part":"ring","detail":true}));
+    assert_eq!(full["cage"]["vertices"].as_array().unwrap().len(), 128);
+    let op = json!({"op":"move","select":{"vertices":[0]},"by":[0,0,0.25]});
+    assert!(
+        client
+            .refused(
+                "edit_form",
+                json!({"part":"ring","ops":[op],"expected_revision":0})
+            )
+            .contains("revision")
+    );
+    let edited = client.ok(
+        "edit_form",
+        json!({"part":"ring","ops":[op],"expected_revision":made["revision"]}),
+    );
+    assert_eq!(edited["revision"], 2);
+    assert_eq!(edited["changed"]["id"], "ring");
+    assert!(
+        client
+            .refused("new_form", json!({"id":"ring","primitive":"box"}))
+            .contains("new valid part id")
+    );
+    assert!(
+        client
+            .refused("new_form", json!({"id":"bad","primitive":"box","radius":3}))
+            .contains("radius")
+    );
+}
+
+#[test]
 fn named_view_and_animation_follow_the_saved_revision() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = Session::start();

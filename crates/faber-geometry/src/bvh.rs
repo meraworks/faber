@@ -1,4 +1,5 @@
 //! Spatial queries on a triangle mesh. Distances are in millimetres.
+mod self_intersection;
 
 use faber_ports::{Mesh, Result};
 use glam::DVec3;
@@ -13,6 +14,7 @@ pub struct Hit {
 
 struct Triangle {
     points: [DVec3; 3],
+    indices: [u32; 3],
     source: u32,
 }
 
@@ -188,6 +190,7 @@ impl Bvh {
             }
             Ok((area > 0.).then_some(Triangle {
                 points,
+                indices: *indices,
                 source: i as u32,
             }))
         };

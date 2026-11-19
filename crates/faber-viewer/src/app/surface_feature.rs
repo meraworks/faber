@@ -74,6 +74,7 @@ impl Shell {
         }
     }
     pub(super) fn open_surface_feature(&mut self, part: String, id: String) {
+        self.close_form();
         if self
             .intermediate
             .as_ref()

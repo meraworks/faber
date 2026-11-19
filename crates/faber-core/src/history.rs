@@ -1498,6 +1498,12 @@ pub(crate) fn build(
                     base,
                     flanges,
                 } => crate::sheet::build(kernel, rule, base, flanges),
+                Geometry::Form {
+                    cage,
+                    levels,
+                    as_solid,
+                    symmetry,
+                } => crate::form::solid(kernel, cage, *levels, *as_solid, symmetry),
                 Geometry::Transform {
                     source: name,
                     placement,

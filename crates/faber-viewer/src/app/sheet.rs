@@ -190,6 +190,7 @@ impl Shell {
         }
     }
     pub(super) fn open_sheet(&mut self, id: String, create: bool) {
+        self.close_form();
         self.close_sheet();
         self.sheet_metal = Some(Panel {
             path: self.root.join(format!("{id}.dxf")).display().to_string(),

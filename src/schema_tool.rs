@@ -23,6 +23,8 @@ pub enum Kind {
     Printer,
     Machining,
     View,
+    FormOp,
+    FormPrimitive,
     Edit,
 }
 
@@ -40,6 +42,8 @@ impl Kind {
             Kind::Printer => "printer",
             Kind::Machining => "machining",
             Kind::View => "view",
+            Kind::FormOp => "form_op",
+            Kind::FormPrimitive => "form_primitive",
             Kind::Edit => "edit",
         }
     }
@@ -84,6 +88,8 @@ fn definition(kind: Kind) -> Value {
         Kind::Printer => schema_json::<faber_model::Printer>(),
         Kind::Machining => schema_json::<faber_model::machining::Machining>(),
         Kind::View => schema_json::<faber_model::view::NamedView>(),
+        Kind::FormOp => schema_json::<faber_wiring::form::FormOp>(),
+        Kind::FormPrimitive => schema_json::<faber_wiring::form::Primitive>(),
         Kind::Edit => edit_schema(),
     }
 }

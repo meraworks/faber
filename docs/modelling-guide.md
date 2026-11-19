@@ -1599,3 +1599,52 @@ These calls use the assembly example. It contains the two named cameras
 
 Use 2 to 600 frames. The duration is the frame count divided by the frame
 rate. Set `frames_dir` to keep the individual PNG files with the animation.
+
+## Forms
+
+Choose **New form** in the model browser. Set the primitive, its dimensions
+and the number of segments. Choose **Use as solid** for a handle that needs
+a hole, socket or other solid feature. Choose **Create form**. To edit an
+existing grip, choose its form feature in the history or select the part
+and choose **Edit form**.
+
+The lines show the control cage. The smooth surface follows the cage at
+subdivision level 2 while you edit. Press **1** for vertices, **2** for
+edges and **3** for faces. Click to select. Hold Ctrl or Shift and click
+to add or remove an item. For **Move**, **Rotate** or **Scale selection**, drag the
+selection or drag a coloured axis handle. A free move follows the screen
+plane. Rotation and scaling use the centre of the selection.
+
+Select one or more faces for **Extrude** or **Inset** and set the distance
+in millimetres. Adjacent faces extrude together. **Bridge** joins two
+faces. Select one edge for **Insert loop** and set the fraction along it.
+**Crease** sets the sharpness of the selected edges from 0 to 10.
+**Flatten** aligns a selection with an axis plane through its centre.
+**Weld** joins two vertices. An edit that leaves an open cage is refused.
+
+Use **Symmetry X**, **Y** or **Z** to mirror an edit about a plane through
+the part origin. Each completed drag or button edit saves one revision.
+**Finish form** restores the result at the saved level, from 0 to 4, and
+shows the later features. Level 0 uses the cage coordinates. At levels 1
+to 4 each mesh vertex lies halfway between its control point and the
+position of that point at the next subdivision level. The final mesh
+has a limit of 400 000 faces. A solid form uses the faces of this mesh.
+
+The [form handle](../examples/form-handle/) has a grip symmetric about the
+X plane. Open its **grip** feature to edit the cage. The later features
+join a cylindrical sleeve to the grip and cut a 6 mm shaft bore.
+
+For an editable mesh, call `new_form` with a primitive and its dimensions.
+Set `as_solid` to use the form in a solid history. Use `form_info` with
+`detail: true` to read the full cage. Indices start at zero. Apply several
+edits in one `edit_form` request. For example, after creating the box
+below, the second request raises its top face by 4 mm.
+
+```json
+{"id":"grip","primitive":"box","size":[24,16,50],"levels":3,"symmetry":["x"]}
+{"part":"grip","ops":[{"op":"extrude","faces":[1],"distance":4}]}
+```
+
+A source can use `form_box`, `form_cylinder`, `form_sphere` or
+`form_torus` to make a feature. Use `form_ops(feature, ops)` to apply cage
+edits to it. A source rebuild writes the resulting vertices and faces.

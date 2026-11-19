@@ -1,0 +1,16 @@
+[package]
+name = "faber-form"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+faber-model = { path = "../faber-model" }
+faber-ports = { path = "../faber-ports" }
+glam.workspace = true
+serde.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+faber-meshtools = { path = "../faber-meshtools" }
+serde_json.workspace = true
