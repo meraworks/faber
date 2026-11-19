@@ -1,0 +1,8 @@
+{
+  "schema": 2,
+  "revision": 1,
+  "name": "Surfaced handle",
+  "params": {
+    "wall": "1.5"
+  }
+}

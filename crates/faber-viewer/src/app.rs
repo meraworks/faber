@@ -52,6 +52,9 @@ mod study;
 #[cfg(test)]
 mod suppress_tests;
 mod surface;
+mod surface_feature;
+#[cfg(test)]
+mod surface_feature_tests;
 mod view_cube;
 use crate::mark;
 use eframe::{egui, egui_wgpu};
@@ -185,6 +188,7 @@ struct ProjectDraft {
 
 #[derive(Clone, Copy)]
 pub(crate) enum ToolKind {
+    Surface(crate::feature_form::surfaces::SurfaceTool),
     Plane,
     FacePlane,
     Axis,
@@ -246,7 +250,7 @@ pub(crate) fn is_plane(geometry: &faber_model::Geometry<faber_model::Scalar>) ->
     )
 }
 
-fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
+pub(crate) fn is_axis(geometry: &faber_model::Geometry<faber_model::Scalar>) -> bool {
     use faber_model::Geometry;
     matches!(
         geometry,
@@ -261,6 +265,7 @@ pub struct Shell {
     printing: print_check::PrintPanel,
     study: study::StudyPanel,
     sheet_metal: Option<sheet::Panel>,
+    intermediate: Option<surface_feature::Preview>,
     design_source_name: Option<String>,
     surface: surface::SurfacePanel,
     window: WindowState,
@@ -414,6 +419,7 @@ impl Shell {
             printing: Default::default(),
             study: Default::default(),
             sheet_metal: None,
+            intermediate: None,
             design_source_name: sheet::source_name(&root),
             surface: Default::default(),
             recent_file: None,
@@ -1209,6 +1215,7 @@ impl Shell {
         let part = self.data.parts.get(part_id).ok_or("Select a part")?;
         faber_core::pick_selector::editable_part(part_id, part)?;
         let prefix = match kind {
+            ToolKind::Surface(t) => t.op(),
             ToolKind::Plane => "plane",
             ToolKind::FacePlane => "face_plane",
             ToolKind::Axis => "axis",
@@ -1260,7 +1267,27 @@ impl Shell {
             .find(|body| body.id == part_id)
             .ok_or("Part has no solid")?;
         let pitch = ((body.bounds[1][0] - body.bounds[0][0]) * 1.5).max(1.);
-        let geometry = if matches!(kind, ToolKind::FacePlane) {
+        let highlighted = self
+            .intermediate
+            .as_ref()
+            .filter(|p| p.part == part_id)
+            .map(|p| p.id.clone());
+        let geometry = if let ToolKind::Surface(t) = kind {
+            let mut g = t.geometry(&part.geometry, source)?;
+            if let Some(selected) = highlighted {
+                match &mut g {
+                    Geometry::Extend { surface, .. } | Geometry::ReplaceFace { surface, .. } => {
+                        *surface = selected
+                    }
+                    Geometry::SplitBody { tool, .. } => *tool = selected,
+                    Geometry::Trim { surface, tool, .. } if *tool != selected => {
+                        *surface = selected
+                    }
+                    _ => {}
+                }
+            }
+            g
+        } else if matches!(kind, ToolKind::FacePlane) {
             Geometry::PlaneOnFace {
                 source,
                 face: faber_model::FaceSelector {
@@ -1389,6 +1416,14 @@ impl Shell {
                 depth: Scalar::Number(10.),
                 placement: Default::default(),
                 head: None,
+            }
+        } else if matches!(kind, ToolKind::Thicken)
+            && let Some(source) = highlighted
+        {
+            Geometry::Thicken {
+                source,
+                thickness: Scalar::Number(1.),
+                face: None,
             }
         } else if matches!(kind, ToolKind::Thicken) {
             Geometry::Thicken {
@@ -1528,6 +1563,9 @@ impl Shell {
     }
 
     fn feature_editor(&mut self, ctx: &egui::Context) {
+        if self.picking_surface_edge() {
+            return;
+        }
         let Some(form) = &mut self.feature_draft else {
             return;
         };
@@ -1604,6 +1642,10 @@ impl Shell {
             },
         );
         self.window.dirty |= preset_changed;
+        let edge_pick = form
+            .surface_pick
+            .take()
+            .map(|(s, k)| (form.part.clone(), s, k));
         cancel |= event == WindowEvent::Cancel;
         apply |= event == WindowEvent::Apply
             && self.pending.is_none()
@@ -1644,7 +1686,11 @@ impl Shell {
             }
         }
         if choose_pick {
+            self.close_surface_feature();
             self.enter_pick_tool();
+        }
+        if let Some((part, s, k)) = edge_pick {
+            self.start_surface_edge_pick(part, s, k);
         }
         if cancel {
             self.cancel_window();
@@ -1891,6 +1937,7 @@ impl Shell {
                     let changing_project = self.pending_project.is_some();
                     if let Some(root) = self.pending_project.take() {
                         self.close_sheet();
+                        self.close_surface_feature();
                         self.marking = Default::default();
                         self.project_loaded = true;
                         self.root = root;
@@ -2314,7 +2361,11 @@ impl Shell {
             }
         });
         let part_id = self.selected.clone();
-        self.sheet_buttons(ui);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().button_padding.x = 8.;
+            self.sheet_buttons(ui);
+            self.surface_feature_menu(ui);
+        });
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -2432,6 +2483,7 @@ impl Shell {
             let mut next_feature = None;
             let mut next_sketch = None;
             let mut next_sheet = None;
+            let mut next_surface = None;
             let mut suppress: Option<(String, bool)> = None;
             egui::ScrollArea::vertical()
                 .id_salt("feature_list")
@@ -2460,7 +2512,9 @@ impl Shell {
                                 .clicked()
                                 && let Some(id) = &part_id
                             {
-                                if matches!(
+                                if crate::feature_form::surfaces::surface(features, feature) {
+                                    next_surface = Some((id.clone(), feature.id.clone()));
+                                } else if matches!(
                                     feature.geometry,
                                     faber_model::Geometry::SolvedSketch { .. }
                                 ) {
@@ -2512,6 +2566,9 @@ impl Shell {
             }
             if let Some(id) = next_sheet {
                 self.open_sheet(id, false);
+            }
+            if let Some((part, id)) = next_surface {
+                self.open_surface_feature(part, id);
             }
             if let Some(form) = next_feature {
                 self.request_window(Draft::Feature(form));
@@ -2628,6 +2685,9 @@ impl Shell {
         }
     }
     fn inspector(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
+        if self.surface_feature_panel(ui) {
+            return;
+        }
         if self.sheet_inspector(ui, frame) {
             return;
         }
@@ -3200,6 +3260,7 @@ impl Shell {
         }
         let right_press = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
         if right_press
+            && self.intermediate.is_none()
             && self.marking.anchor.is_none()
             && response.contains_pointer()
             && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
@@ -3213,7 +3274,7 @@ impl Shell {
             && let Some(pos) = response.interact_pointer_pos()
         {
             let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
-            if !self.sheet_pick(rect, pos) {
+            if !self.surface_input_click(rect, pos) && !self.sheet_pick(rect, pos) {
                 self.pick_canvas(rect, pos, ctrl, shift, response.double_clicked(), false);
             }
         }

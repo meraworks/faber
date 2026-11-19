@@ -1,12 +1,21 @@
-struct Uniform { matrix:mat4x4<f32>, eye:vec4<f32>, plane:vec4<f32>, selected:vec4<u32>, hovered:vec4<u32>, section_style:vec4<f32>, stress_ramp:array<vec4<f32>,4>, zebra:vec4<u32> }
+struct Uniform { matrix:mat4x4<f32>, eye:vec4<f32>, plane:vec4<f32>, selected:vec4<u32>, hovered:vec4<u32>, section_style:vec4<f32>, stress_ramp:array<vec4<f32>,4>, zebra:vec4<u32>, viewport:vec4<f32> }
 @group(0) @binding(0) var<uniform> camera:Uniform;
 struct Input { @location(0) position:vec3<f32>, @location(1) normal:vec3<f32>, @location(2) colour:vec3<f32>, @location(3) kind:f32, @location(4) mx:vec4<f32>,@location(5) my:vec4<f32>,@location(6) mz:vec4<f32>,@location(7) mw:vec4<f32>, @location(8) face_mark:u32 }
-struct Output { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>, @location(1) normal:vec3<f32>, @location(2) colour:vec3<f32>, @location(3) kind:f32 }
+struct Output { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>, @location(1) normal:vec3<f32>, @location(2) colour:vec3<f32>, @location(3) @interpolate(flat) kind:f32 }
 @vertex fn vs_main(v:Input, @builtin(vertex_index) index:u32) -> Output {
     var o:Output;
     let model=mat4x4<f32>(v.mx,v.my,v.mz,v.mw);
     let world=model*vec4(v.position,1.0);
     o.clip=camera.matrix*world;o.world=world.xyz;o.normal=(model*vec4(v.normal,0.0)).xyz;o.colour=v.colour;o.kind=v.kind;
+    if v.kind <= -6.0 {
+        let tip=camera.matrix*model*vec4(v.normal,1.0);
+        let delta=(tip.xy*o.clip.w-o.clip.xy*tip.w)*camera.viewport.xy;
+        let side=vec2(-delta.y,delta.x)/max(length(delta),1e-8);
+        let xy=o.clip.xy+side*select(2.8,-2.8,v.kind < -6.5)*o.clip.w/camera.viewport.xy;
+        o.clip=vec4(xy,o.clip.z-0.000004*o.clip.w,o.clip.w);
+        o.kind=-3.0;
+        return o;
+    }
     if v.kind < -0.5 {return o;}
     if v.kind == 0.0 && index >= camera.zebra.x && index < camera.zebra.y {
         o.kind = -2.0;
@@ -35,8 +44,8 @@ struct Output { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>,
         return vec4(v.colour*shadow-vec3(0.06)*line*fade,1.0);
     }
     if v.kind<0.5 && dot(camera.plane,vec4(v.world,1.0))>0.00001 {discard;}
-    if v.kind < -2.5 {return vec4(v.colour, 1.0);}
-    if v.kind < -1.5 {
+    if v.kind == -3.0 {return vec4(v.colour, 1.0);}
+    if v.kind == -2.0 {
         let ray = normalize(v.world - camera.eye.xyz);
         let phase = dot(reflect(ray, normalize(v.normal)), vec3(1.0, 0.0, 0.0)) * f32(camera.zebra.z);
         let edge = abs(fract(phase) - 0.5);
@@ -44,7 +53,7 @@ struct Output { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>,
         let stripe = smoothstep(0.25 - half_pixel, 0.25 + half_pixel, edge);
         return vec4(vec3(mix(0.008, 0.96, stripe)), 1.0);
     }
-    if v.kind < -0.5 {
+    if v.kind == -1.0 {
         let t=clamp(v.colour.x,0.0,1.0)*3.0;
         let i=min(u32(t),2u);
         let srgb=mix(camera.stress_ramp[i].rgb,camera.stress_ramp[i+1u].rgb,t-f32(i));

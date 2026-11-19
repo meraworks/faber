@@ -51,6 +51,12 @@ struct FaberEdgeLineData {
 extern "C" int faber_edge_lines(const void* shape, double tolerance, FaberEdgeLineData* result,
     char* error, std::size_t capacity) noexcept;
 extern "C" void faber_free_edge_lines(void* lines) noexcept;
+extern "C" int faber_profile_wires(const void* shape, std::size_t size, std::size_t* count,
+    void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_surface_area(const void* shape, double* area, char* error,
+    std::size_t capacity) noexcept;
+extern "C" int faber_free_edges(const void* shape, std::uint32_t* ids, std::size_t size,
+    std::size_t* count, char* error, std::size_t capacity) noexcept;
 
 extern "C" int faber_linear_form(const void* body, const void* profile, const double* direction,
     double thickness, double offset, void** result, char* error, std::size_t capacity) noexcept;
@@ -59,9 +65,27 @@ extern "C" int faber_inset_face(const void* face, std::uint32_t loop, double dis
 extern "C" int faber_offset_sketch_face(const void* face, double distance,
     void** result, char* error, std::size_t capacity) noexcept;
 
+extern "C" int faber_trim_surface(const void* surface, const void* tool, int mode, const double* origin,
+    const double* normal, const double* point, void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_extend_surface(const void* surface, std::uint32_t edge, double distance,
+    void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_split_surface(const void* solid, const void* tool, int side,
+    void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_surface_piece(const void* shape, std::uint32_t index,
+    void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_replace_surface(const void* solid, std::uint32_t face, const void* surface,
+    void** result, char* error, std::size_t capacity) noexcept;
 extern "C" int faber_remove_faces(const void* shape, const std::uint32_t* faces, std::size_t count,
     void** result, char* error, std::size_t capacity) noexcept;
 extern "C" int faber_move_faces(const void* shape, const std::uint32_t* faces, std::size_t count,
     double distance, void** result, char* error, std::size_t capacity) noexcept;
 extern "C" int faber_split_face(const void* shape, std::uint32_t face, const void* tool,
+    void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_join_edge(const void* shape, std::uint32_t index,
+    void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_patch_boundary(const void* const* edges, std::size_t edge_count,
+    const void* const* support, std::size_t support_count, void** result,
+    char* error, std::size_t capacity) noexcept;
+extern "C" int faber_stitch_faces(const void* const* surfaces, std::size_t count,
+    double tolerance, int solid, std::uint32_t* open_edges, double* largest_gap,
     void** result, char* error, std::size_t capacity) noexcept;

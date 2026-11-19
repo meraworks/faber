@@ -10,11 +10,17 @@ pub struct FeatureInfo {
     pub kind: &'static str,
     pub reading: Reading,
     pub hook_check: Option<crate::plastic::HookCheck>,
+    pub largest_gap_mm: Option<f64>,
 }
 
 /// What a feature gives in part coordinates.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Reading {
+    Surface {
+        area_mm2: f64,
+        bounds_mm: [[f64; 3]; 2],
+        open_edges: u32,
+    },
     OpenSketch {
         reason: String,
     },
@@ -60,11 +66,8 @@ fn solid_source<'a>(features: &'a [Feature<Scalar>], feature: &'a str) -> Option
 impl Project {
     /// Reads one feature of a part. Solids give their size. Reference features give their frame.
     pub fn feature_info(&self, id: &str, feature: &str) -> Result<FeatureInfo> {
-        let part = self
-            .data
-            .parts
-            .get(id)
-            .ok_or_else(|| format!("Unknown part: {id}"))?;
+        let owner = crate::instances::owner(&self.data, id)?;
+        let part = &self.data.parts[owner];
         let faber_model::Geometry::History { features, .. } = &part.geometry else {
             return Err(format!("Part {id} has no feature history"));
         };
@@ -72,7 +75,9 @@ impl Project {
             .iter()
             .find(|entry| entry.id == feature)
             .ok_or_else(|| format!("Unknown feature {feature} in part {id}"))?;
-        let cache = self.histories.get(id);
+        let cache = self.histories.get(owner);
+        let shape = solid_source(features, feature)
+            .and_then(|source| cache.and_then(|cache| cache.shape(source)));
         let reading = if let Some(frame) = cache.and_then(|cache| cache.placement(feature)) {
             let rotation = placement::rotation_matrix(frame.rotation);
             Reading::Plane {
@@ -90,9 +95,14 @@ impl Project {
         } else if let Some(point) = cache.and_then(|cache| cache.point(feature)) {
             Reading::Point { point }
         } else {
-            let source = solid_source(features, feature)
-                .and_then(|source| cache.and_then(|cache| cache.shape(source)));
-            match source {
+            match shape {
+                Some(shape) if history::surface_ops::is_surface_output(features, feature) => {
+                    Reading::Surface {
+                        area_mm2: self.kernel.surface_area(shape)?,
+                        bounds_mm: self.kernel.properties(shape)?.bounds,
+                        open_edges: self.kernel.open_edges(shape)?,
+                    }
+                }
                 Some(shape) => {
                     let properties = self.kernel.properties(shape)?;
                     Reading::Solid {
@@ -122,9 +132,7 @@ impl Project {
             && !entry.suppressed
         {
             let values = self.params()?;
-            let material = part
-                .material
-                .as_deref()
+            let material = crate::part_material(&self.data, id)
                 .map(|id| crate::materials::get(&self.data, id))
                 .transpose()?;
             Some(crate::plastic::checked_hook(
@@ -140,6 +148,7 @@ impl Project {
             kind: history::operation_kind(&entry.geometry),
             reading,
             hook_check,
+            largest_gap_mm: shape.and_then(|s| s.stitch_gap()),
         })
     }
 }

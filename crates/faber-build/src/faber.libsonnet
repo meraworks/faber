@@ -75,6 +75,29 @@
   feature(id, op, fields)::
     { id: id, geometry: { op: op } + fields },
 
+  surface_extrude(id, profile, distance, direction=null)::
+    faber.feature(id, 'surface_extrude', {profile: profile, distance: distance}
+      + (if direction==null then {} else {direction: direction})),
+  surface_revolve(id, profile, axis, angle_deg=360)::
+    faber.feature(id, 'surface_revolve', {profile: profile, axis: axis, angle_deg: angle_deg}),
+  surface_loft(id, sections, ruled=false)::
+    faber.feature(id, 'surface_loft', {sections: sections, ruled: ruled}),
+  surface_sweep(id, profile, path)::
+    faber.feature(id, 'surface_sweep', {profile: profile, path: path}),
+  patch(id, boundary, tangent_to=[])::
+    faber.feature(id, 'patch', {boundary: boundary, tangent_to: tangent_to}),
+  trim(id, surface, tool, near)::
+    faber.feature(id, 'trim', {surface: surface, tool: tool, keep: {near: near}}),
+  extend(id, surface, edge, distance)::
+    faber.feature(id, 'extend', {surface: surface, edge: edge, distance: distance}),
+  stitch(id, surfaces, tolerance=null, as_solid=false)::
+    faber.feature(id, 'stitch', {surfaces: surfaces, as_solid: as_solid}
+      + (if tolerance==null then {} else {tolerance: tolerance})),
+  split_body(id, body, tool, keep='both')::
+    faber.feature(id, 'split_body', {body: body, tool: tool, keep: keep}),
+  replace_face(id, body, face, surface)::
+    faber.feature(id, 'replace_face', {body: body, face: face, surface: surface}),
+
   sheet(id, rule, base, flanges=[]):: faber.feature(id, 'sheet_metal', {
     rule: rule, base: base, flanges: flanges,
   }),

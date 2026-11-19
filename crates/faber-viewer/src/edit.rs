@@ -41,20 +41,29 @@ pub fn append_feature(
             "source".into(),
         ),
     };
-    let output = if matches!(
-        geometry,
-        Geometry::Plane { .. }
-            | Geometry::OffsetSketch { .. }
-            | Geometry::PlaneOnFace { .. }
-            | Geometry::Axis { .. }
-            | Geometry::Point { .. }
-            | Geometry::PlaneAtAngle { .. }
-            | Geometry::Midplane { .. }
-            | Geometry::PlaneThroughPoints { .. }
-            | Geometry::AxisFromCylinder { .. }
-            | Geometry::AxisFromPlanes { .. }
-            | Geometry::PointAtCentre { .. }
-    ) {
+    let output = if faber_core::surface_feature::creates_surface(&geometry)
+        || match &geometry {
+            Geometry::Transform { source, .. }
+            | Geometry::Scale { source, .. }
+            | Geometry::PlaceAtPoint { source, .. } => {
+                faber_core::surface_feature::is_surface_output(&features, source)
+            }
+            _ => false,
+        }
+        || matches!(
+            geometry,
+            Geometry::Plane { .. }
+                | Geometry::OffsetSketch { .. }
+                | Geometry::PlaneOnFace { .. }
+                | Geometry::Axis { .. }
+                | Geometry::Point { .. }
+                | Geometry::PlaneAtAngle { .. }
+                | Geometry::Midplane { .. }
+                | Geometry::PlaneThroughPoints { .. }
+                | Geometry::AxisFromCylinder { .. }
+                | Geometry::AxisFromPlanes { .. }
+                | Geometry::PointAtCentre { .. }
+        ) {
         output
     } else {
         id.into()

@@ -137,6 +137,7 @@ impl Shell {
         let poses = self.move_poses();
         self.bodies
             .iter()
+            .map(|b| self.intermediate_body(b))
             .filter(|b| !self.hidden.contains(&b.id))
             .filter_map(|b| {
                 let pose = poses.get(&b.id).map_or(DMat4::IDENTITY, |m| m.as_dmat4());
@@ -182,7 +183,8 @@ impl Shell {
             .caps
             .as_ref()
             .filter(|_| {
-                plane.is_some()
+                !self.replacing_solid(&body.id)
+                    && plane.is_some()
                     && plane == self.cap_plane
                     && self
                         .cap_poses
@@ -214,7 +216,11 @@ impl Shell {
         response: &egui::Response,
         section_handle: bool,
     ) -> bool {
-        if !self.motion.enabled || section_handle || !ui.input(|i| i.pointer.primary_down()) {
+        if !self.motion.enabled
+            || self.picking_surface_edge()
+            || section_handle
+            || !ui.input(|i| i.pointer.primary_down())
+        {
             self.motion.drag = None;
             return false;
         }

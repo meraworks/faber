@@ -1,5 +1,6 @@
 mod faces;
 mod plastic;
+pub(crate) mod surfaces;
 pub(crate) use faces::{sketch_ids, split_tools};
 pub(crate) use plastic::plane_ids;
 
@@ -115,6 +116,8 @@ pub fn field(
 }
 
 pub struct FeatureForm {
+    pub(crate) surface_pick: Option<(String, String)>,
+    pub(crate) solid_edge_path: Option<String>,
     pub help: &'static str,
     pub create: bool,
     pub expected: ProjectData,
@@ -249,6 +252,8 @@ impl FeatureForm {
                 _ => "",
             },
             create: false,
+            surface_pick: None,
+            solid_edge_path: None,
             expected,
             part,
             id,
@@ -259,7 +264,7 @@ impl FeatureForm {
     }
 
     pub fn split_options(&mut self, ui: &mut eframe::egui::Ui) {
-        if self.value["op"] != "split" {
+        if !matches!(self.value["op"].as_str(), Some("split" | "split_body")) {
             return;
         }
         let mut selected = self.value["keep"].as_str().unwrap_or("both").to_owned();
@@ -393,6 +398,7 @@ impl FeatureForm {
     /// Optional fields. Scale can use one factor per axis. Pipe and path pattern can omit a field.
     pub fn option_fields(&mut self, ui: &mut eframe::egui::Ui) -> Result<(), String> {
         self.face_options(ui)?;
+        self.surface_options(ui)?;
         self.plastic_options(ui)?;
         match self.value["op"].as_str().unwrap_or_default() {
             "scale" => {
@@ -451,18 +457,26 @@ impl FeatureForm {
     }
 
     pub(crate) fn pick_field(&self) -> Option<(&'static str, &'static str)> {
+        if self.solid_edge_path.is_some() {
+            return Some(("Pick edge", "edges"));
+        }
+        if self.value["op"] == "thicken" && self.value["face"].is_null() {
+            return None;
+        }
         match self.value["op"].as_str()? {
             "fillet" | "chamfer" => Some(("Edges", "edges")),
             "remove_faces" | "move_faces" | "shell" | "draft" => Some(("Faces", "faces")),
-            "split_face" | "emboss" | "plane_on_face" | "thicken" | "lip" | "groove" => {
-                Some(("Faces", "face"))
-            }
+            "replace_face" | "split_face" | "emboss" | "plane_on_face" | "thicken" | "lip"
+            | "groove" => Some(("Faces", "face")),
             "hole" => Some(("Face", "placement")),
             _ => None,
         }
     }
 
     pub(crate) fn set_picked(&mut self, key: &str, field: Value) -> Result<(), String> {
+        if let Some(path) = self.solid_edge_path.take() {
+            return self.apply_surface_edge(&path, field);
+        }
         let mut value = self.geometry_value()?;
         let displayed = match &self
             .expected
@@ -565,7 +579,11 @@ fn collect(
             let op = value["op"].as_str();
             for (key, value) in values {
                 if key != "op"
-                    && key != "keep"
+                    && (key != "keep" || op == Some("trim"))
+                    && !surfaces::choice(op, key)
+                    && !(op == Some("surface_sweep") && key == "path" && value.is_string())
+                    && !(path.starts_with("/boundary/")
+                        && matches!(key.as_str(), "kind" | "feature"))
                     && !plastic::choice_field(op, key)
                     && !faces::choice_field(op, key)
                     && !(path == "/head" && key == "kind")

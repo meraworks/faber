@@ -99,6 +99,41 @@ fn open_project(session: &mut Session, dir: &Path) {
 }
 
 #[test]
+fn feature_info_of_a_surface_has_no_volume_and_retains_the_stitch_gap_on_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::start();
+    open_project(&mut session, dir.path());
+    let square = |id: &str, x: f64| {
+        json!({"id":id,"geometry":{"op":"sketch","profile":{
+            "outer":{"kind":"rectangle","origin":[x,0],"size":[20,20]}
+        }}})
+    };
+    let part = json!({"name":"Joined panels","colour":[40,90,110],"geometry":{"op":"history","features":[
+        square("a",0.),square("b",20.01),
+        {"id":"join","geometry":{"op":"stitch","surfaces":["a","b"],"tolerance":0.02}},
+        {"id":"stock","geometry":{"op":"box","size":[20,40,10]}}
+    ],"output":"stock"}});
+    session.ok("put_part", json!({"id":"panels","part":part}));
+    let args = json!({"part":"panels","feature":"join"});
+    let first = session.ok("feature_info", args.clone());
+    assert_eq!(first["kind"], "surface");
+    assert_eq!(first["operation"], "stitch");
+    assert_eq!(first["open_edges"], 6);
+    assert!(first.get("volume_mm3").is_none());
+    assert!((first["largest_gap_mm"].as_f64().unwrap() - 0.01).abs() < 1e-6);
+    session.ok("put_part",json!({"id":"copy","part":{"name":"Other panels","colour":[32,80,80],
+        "geometry":{"op":"instance","of":"panels"},"placement":{"translation":[0,20,3],"rotation":[0,0,90]}}}));
+    let copy = session.ok("feature_info", json!({"part":"copy","feature":"join"}));
+    assert_eq!(copy["area_mm2"], first["area_mm2"]);
+    assert_eq!(copy["bounds_mm"], first["bounds_mm"]);
+    let first = session.ok("feature_info", args.clone());
+    drop(session);
+    let mut reopened = Session::start();
+    reopened.ok("open", json!({"path":dir.path()}));
+    assert_eq!(reopened.ok("feature_info", args), first);
+}
+
+#[test]
 fn flat_pattern_reads_a_sheet_and_exports_from_the_cli_and_mcp() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = Session::start();

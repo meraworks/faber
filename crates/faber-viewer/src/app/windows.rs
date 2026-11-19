@@ -94,6 +94,7 @@ impl WindowState {
 impl Shell {
     pub(super) fn cancel_window(&mut self) {
         self.pending_pick_action = None;
+        self.clear_surface_edge_request();
         if let Some(filter) = self.pick_tool_filter.take() {
             self.set_filter(filter);
         }
@@ -143,6 +144,14 @@ impl Shell {
             Draft::Feature(d) => self.feature_draft = Some(d),
             Draft::Sketch(d) => self.sketch_draft = Some(d),
             Draft::Move(d) => self.move_draft = Some(*d),
+        }
+        if self
+            .feature_draft
+            .as_ref()
+            .is_some_and(|f| f.pick_field().is_some())
+            || self.sketch_draft.is_some()
+        {
+            self.close_surface_feature();
         }
         self.enter_pick_tool();
     }

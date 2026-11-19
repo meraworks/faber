@@ -4,7 +4,7 @@ use faber_ports::FaceOrigins;
 use sha2::{Digest, Sha256};
 
 /// Version of the entry layout, and the build of this crate. A new build can change results.
-const LAYOUT: &str = concat!("faber-feature-1 core ", env!("FABER_CORE_BUILD"));
+const LAYOUT: &str = concat!("faber-feature-2 core ", env!("FABER_CORE_BUILD"));
 
 /// Key of one feature. It hashes the layout, the kernel version, the feature id, the feature
 /// and the keys of its inputs. The stored face origins name the feature id, so the id is part of the key.
@@ -33,12 +33,24 @@ pub(crate) fn key(
 /// A stored feature: its face count, its face origins and the opaque shape bytes.
 pub(crate) struct Entry<'a> {
     pub(crate) faces: u32,
+    pub(crate) gap: Option<f64>,
     pub(crate) origins: Option<FaceOrigins>,
     pub(crate) shape: &'a [u8],
 }
 
-pub(crate) fn encode(faces: u32, origins: Option<&FaceOrigins>, shape: &[u8]) -> Vec<u8> {
+pub(crate) fn encode(
+    faces: u32,
+    origins: Option<&FaceOrigins>,
+    gap: Option<f64>,
+    shape: &[u8],
+) -> Vec<u8> {
     let mut out = faces.to_le_bytes().to_vec();
+    if let Some(gap) = gap {
+        out.push(1);
+        out.extend_from_slice(&gap.to_le_bytes())
+    } else {
+        out.push(0)
+    }
     match origins {
         None => out.push(0),
         Some(origins) => {
@@ -85,6 +97,17 @@ impl<'a> Reader<'a> {
 pub(crate) fn decode(bytes: &[u8]) -> Option<Entry<'_>> {
     let mut reader = Reader { bytes };
     let faces = reader.u32()?;
+    let gap = match reader.take(1)?[0] {
+        0 => None,
+        1 => {
+            let gap = f64::from_le_bytes(reader.take(8)?.try_into().ok()?);
+            if !gap.is_finite() || gap < 0. {
+                return None;
+            }
+            Some(gap)
+        }
+        _ => return None,
+    };
     let origins = match reader.take(1)?[0] {
         0 => None,
         1 => {
@@ -108,6 +131,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Entry<'_>> {
     }
     Some(Entry {
         faces,
+        gap,
         origins,
         shape,
     })

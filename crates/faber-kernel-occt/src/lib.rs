@@ -1,6 +1,8 @@
 //! Exact solid adapter.
 mod emboss;
 mod projection;
+mod surface_cut;
+mod surface_profile;
 
 use faber_model::{Geometry, Placement};
 pub use faber_ports::SOLID_TRIANGLE_LIMIT;
@@ -763,6 +765,7 @@ mod sketch_text;
 use faber_geometry::sketch_loops::slot;
 
 pub struct OcctKernel;
+mod surface_join;
 
 impl OcctKernel {
     fn mesh_with_curvature(
@@ -1095,6 +1098,52 @@ impl Kernel for OcctKernel {
             faber_remove_faces(input, faces.as_ptr(), faces.len(), out, error, len)
         })
     }
+    fn trim_surface(&self, surface: &Shape, tool: &Shape, keep_near: [f64; 3]) -> Result<Shape> {
+        surface_cut::trim(surface, Some(tool), None, keep_near)
+    }
+    fn trim_with_sketch(
+        &self,
+        surface: &Shape,
+        sketch_face: &Shape,
+        normal: [f64; 3],
+        keep_near: [f64; 3],
+    ) -> Result<Shape> {
+        surface_cut::trim(
+            surface,
+            Some(sketch_face),
+            Some(([0.; 3], normal)),
+            keep_near,
+        )
+    }
+    fn trim_with_plane(
+        &self,
+        surface: &Shape,
+        origin: [f64; 3],
+        normal: [f64; 3],
+        keep_near: [f64; 3],
+    ) -> Result<Shape> {
+        surface_cut::trim(surface, None, Some((origin, normal)), keep_near)
+    }
+    fn extend_surface(&self, surface: &Shape, edge: u32, distance: f64) -> Result<Shape> {
+        surface_cut::extend(surface, edge, distance)
+    }
+    fn split_body_by_surface(
+        &self,
+        solid: &Shape,
+        tool: &Shape,
+        keep: faber_model::SplitKeep,
+    ) -> Result<Shape> {
+        surface_cut::split(solid, tool, keep)
+    }
+    fn split_by_surface(&self, solid: &Shape, tool: &Shape) -> Result<Vec<Shape>> {
+        let split = surface_cut::split(solid, tool, faber_model::SplitKeep::Both)?;
+        (1..=self.properties(&split)?.solids)
+            .map(|i| surface_cut::piece(&split, i))
+            .collect()
+    }
+    fn replace_face(&self, solid: &Shape, face: u32, surface: &Shape) -> Result<Shape> {
+        surface_cut::replace(solid, face, surface)
+    }
     fn move_faces(&self, shape: &Shape, faces: &[u32], distance: f64) -> Result<Shape> {
         positive(distance.abs())?;
         let input = pointer(shape)?;
@@ -1160,6 +1209,29 @@ impl Kernel for OcctKernel {
         shape_call(|out, error, len| unsafe {
             faber_offset_sketch_face(face, distance, out, error, len)
         })
+    }
+    fn profile_wires(&self, shape: &Shape) -> Result<Vec<Shape>> {
+        surface_profile::wires(shape)
+    }
+    fn surface_area(&self, shape: &Shape) -> Result<f64> {
+        surface_profile::area(shape)
+    }
+    fn open_edge_indices(&self, shape: &Shape) -> Result<Vec<u32>> {
+        surface_profile::open_edges(self, shape)
+    }
+    fn edge_shape(&self, shape: &Shape, index: u32) -> Result<Shape> {
+        surface_join::edge(shape, index)
+    }
+    fn patch(&self, boundary: &[Shape], support: &[Shape]) -> Result<Shape> {
+        surface_join::patch(boundary, support)
+    }
+    fn stitch(
+        &self,
+        surfaces: &[Shape],
+        tolerance: f64,
+        as_solid: bool,
+    ) -> Result<faber_ports::Stitched> {
+        surface_join::stitch(surfaces, tolerance, as_solid)
     }
     fn face_shape(&self, shape: &Shape, index: u32) -> Result<Shape> {
         let input = pointer(shape)?;

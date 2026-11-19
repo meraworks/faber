@@ -55,6 +55,7 @@ struct Uniform {
     section_style: [f32; 4],
     stress_ramp: [[f32; 4]; 4],
     zebra: [u32; 4],
+    viewport: [f32; 4],
 }
 
 pub struct Gpu {
@@ -63,6 +64,8 @@ pub struct Gpu {
     pub hatch: bool,
     pub zebra: Option<(String, u32)>,
     pub surface: Option<SurfacePaint>,
+    /// The selected surface feature replaces the output solid in the same depth pass.
+    pub intermediate: Option<SurfacePaint>,
     pub hovered: Option<String>,
     pub cut_colour: Option<[u8; 3]>,
     uniform: wgpu::Buffer,
@@ -105,6 +108,55 @@ pub struct SurfacePaint {
 }
 
 impl SurfacePaint {
+    pub fn intermediate(
+        device: &wgpu::Device,
+        body: &Body,
+        boundaries: &faber_ports::EdgeLines,
+    ) -> Result<Self> {
+        let mut vertices = Vec::new();
+        append(&mut vertices, &body.mesh, [83, 164, 195], -4.);
+        for range in &boundaries.ranges {
+            let line = boundaries
+                .points
+                .get(range.start as usize..range.end as usize)
+                .ok_or("Invalid boundary range.")?;
+            for pair in line.windows(2) {
+                let a = pair[0].map(|v| v as f32);
+                let b = pair[1].map(|v| v as f32);
+                if a == b {
+                    continue;
+                }
+                // The shader expands each segment in screen pixels at its own depth.
+                let v = |position, normal, kind| Vertex {
+                    position,
+                    normal,
+                    colour: [1., 0.23, 0.015],
+                    kind,
+                };
+                vertices.extend([
+                    v(a, b, -6.),
+                    v(a, b, -7.),
+                    v(b, a, -6.),
+                    v(b, a, -6.),
+                    v(b, a, -7.),
+                    v(a, b, -6.),
+                ]);
+            }
+        }
+        Ok(Self {
+            part: body.id.clone(),
+            marks: FaceMarks::new(device, vertices.len(), Default::default()),
+            count: vertices
+                .len()
+                .try_into()
+                .map_err(|_| "Too many surface vertices.")?,
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Intermediate surface and open edges"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+        })
+    }
     pub fn new(
         device: &wgpu::Device,
         part: String,
@@ -228,8 +280,13 @@ impl DrawList {
         posed: bool,
         section: Option<SectionBindings<'_>>,
         surface: Option<&SurfacePaint>,
+        show_intermediate: bool,
     ) {
-        let surface = self.field.as_ref().or(surface);
+        let surface = if show_intermediate {
+            surface
+        } else {
+            self.field.as_ref().or(surface)
+        };
         pass.set_vertex_buffer(0, self.buffer.slice(..));
         pass.set_vertex_buffer(2, self.marks.buffer.slice(..));
         if !posed && hidden.is_empty() && section.is_none() {
@@ -353,6 +410,7 @@ impl Gpu {
             hatch: true,
             zebra: None,
             surface: None,
+            intermediate: None,
             hovered: None,
             cut_colour: None,
             device: device.clone(),
@@ -841,6 +899,7 @@ impl Gpu {
             .cut_colour
             .map_or([-1.; 3], |rgb| rgb.map(|c| (c as f32 / 255.).powf(2.2)));
         let u = Uniform {
+            viewport: [target.width as f32, target.height as f32, 0., 0.],
             zebra: self.zebra.as_ref().map_or([0; 4], |(part, count)| {
                 let [start, stop] = range(list, Some(part));
                 [start, stop, *count, 0]
@@ -921,12 +980,19 @@ impl Gpu {
                 hidden,
                 instances.is_some(),
                 scoped,
-                self.surface.as_ref(),
+                self.intermediate.as_ref().or(self.surface.as_ref()),
+                self.intermediate.is_some(),
             );
             if let Some(cap) = caps {
                 pass.set_bind_group(0, &self.bind, &[]);
                 pass.set_vertex_buffer(1, self.identity.slice(..));
-                cap.draw_visible(&mut pass, hidden, false, None, None);
+                if let Some(surface) = &self.intermediate {
+                    let mut hidden_caps = hidden.clone();
+                    hidden_caps.insert(surface.part.clone());
+                    cap.draw_visible(&mut pass, &hidden_caps, false, None, None, false);
+                } else {
+                    cap.draw_visible(&mut pass, hidden, false, None, None, false);
+                }
             }
         }
         self.queue.submit([encoder.finish()]);

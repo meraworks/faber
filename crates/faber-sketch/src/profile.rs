@@ -136,37 +136,39 @@ pub struct Loop {
 
 impl Loop {
     fn outline(&self) -> SketchLoop {
-        if let [Segment::Circle { centre, radius }] = self.segments.as_slice() {
-            return SketchLoop::Circle {
-                centre: *centre,
-                radius: *radius,
-            };
-        }
-        let segments = self
-            .segments
-            .iter()
-            .map(|segment| match *segment {
-                Segment::Line { end, .. } => SketchSegment::Line { end },
-                Segment::Arc {
-                    centre,
-                    radius,
-                    angle,
-                    sweep,
-                } => SketchSegment::Arc {
-                    via: radial(centre, radius, angle + sweep / 2.),
-                    end: radial(centre, radius, angle + sweep),
-                },
-                Segment::Circle { .. } => unreachable!("A full circle forms its own loop"),
-            })
-            .collect();
-        SketchLoop::Path {
-            start: self.segments[0].start(),
-            segments,
-        }
+        outline(&self.segments)
     }
-
     fn contains(&self, p: Point) -> bool {
         self.segments.iter().map(|s| s.crossings(p)).sum::<usize>() % 2 == 1
+    }
+}
+
+fn outline(edges: &[Segment]) -> SketchLoop {
+    if let [Segment::Circle { centre, radius }] = edges {
+        return SketchLoop::Circle {
+            centre: *centre,
+            radius: *radius,
+        };
+    }
+    let segments = edges
+        .iter()
+        .map(|segment| match *segment {
+            Segment::Line { end, .. } => SketchSegment::Line { end },
+            Segment::Arc {
+                centre,
+                radius,
+                angle,
+                sweep,
+            } => SketchSegment::Arc {
+                via: radial(centre, radius, angle + sweep / 2.),
+                end: radial(centre, radius, angle + sweep),
+            },
+            Segment::Circle { .. } => unreachable!("A full circle forms its own loop"),
+        })
+        .collect();
+    SketchLoop::Path {
+        start: edges[0].start(),
+        segments,
     }
 }
 
@@ -185,6 +187,14 @@ pub enum Contours {
 
 /// An open sketch can be edited until a feature requires a closed region.
 pub fn contours(sketch: &Sketch, solution: &Solution) -> Result<Contours, String> {
+    Ok(contours_and_wires(sketch, solution)?.0)
+}
+
+/// An open result also gives each traced chain for surface operations.
+pub fn contours_and_wires(
+    sketch: &Sketch,
+    solution: &Solution,
+) -> Result<(Contours, Vec<SketchLoop>), String> {
     let point = |name: &str| {
         solution
             .points
@@ -263,6 +273,7 @@ pub fn contours(sketch: &Sketch, solution: &Solution) -> Result<Contours, String
     }
     let mut used = BTreeSet::new();
     let mut open = None;
+    let mut paths = Vec::new();
     for seed in 0..edges.len() {
         if used.contains(&seed) {
             continue;
@@ -284,7 +295,7 @@ pub fn contours(sketch: &Sketch, solution: &Solution) -> Result<Contours, String
                 ));
             }
             if incident.len() == 1 {
-                ends.push(nodes[node].0.as_str())
+                ends.push(node)
             }
             for &index in incident {
                 let (_, a, b, _) = edges[index];
@@ -293,7 +304,7 @@ pub fn contours(sketch: &Sketch, solution: &Solution) -> Result<Contours, String
             }
         }
         if !ends.is_empty() {
-            ends.sort_unstable();
+            ends.sort_by_key(|&node| &nodes[node].0);
             let names = component
                 .iter()
                 .map(|&i| edges[i].0.as_str())
@@ -302,13 +313,14 @@ pub fn contours(sketch: &Sketch, solution: &Solution) -> Result<Contours, String
             open.get_or_insert_with(|| {
                 format!(
                     "The entities {names} do not close a loop. The open ends are at {}.",
-                    ends.join(" and ")
+                    ends.iter()
+                        .map(|&i| nodes[i].0.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" and ")
                 )
             });
-            used.extend(component);
-            continue;
         }
-        let mut at = start;
+        let mut at = ends.first().copied().unwrap_or(start);
         let mut segments = Vec::new();
         while let Some(&i) = adjacent[&at].iter().find(|i| !used.contains(*i)) {
             used.insert(i);
@@ -319,6 +331,10 @@ pub fn contours(sketch: &Sketch, solution: &Solution) -> Result<Contours, String
                 edge.reversed()
             });
             at = if at == a { b } else { a };
+        }
+        if !ends.is_empty() {
+            paths.push(outline(&segments));
+            continue;
         }
         let area = segments.iter().map(|s| s.area(nodes[start].1)).sum::<f64>();
         if area.abs() < 1e-12 {
@@ -334,12 +350,16 @@ pub fn contours(sketch: &Sketch, solution: &Solution) -> Result<Contours, String
     }
     check_boundaries(&found)?;
     if let Some(reason) = open {
-        return Ok(Contours::Open(reason));
+        paths.extend(found.iter().map(Loop::outline));
+        return Ok((Contours::Open(reason), paths));
     }
     if found.is_empty() {
-        return Ok(Contours::Open("The sketch has no closed profile.".into()));
+        return Ok((
+            Contours::Open("The sketch has no closed profile.".into()),
+            paths,
+        ));
     }
-    Ok(Contours::Closed(found))
+    Ok((Contours::Closed(found), paths))
 }
 
 fn check_boundaries(loops: &[Loop]) -> Result<(), String> {

@@ -199,6 +199,8 @@ pub(crate) fn resolve_with(
                         | Geometry::MoveFaces { .. }
                         | Geometry::SplitFace { .. }
                         | Geometry::Emboss { .. }
+                        | Geometry::SplitBody { .. }
+                        | Geometry::ReplaceFace { .. }
                 )
         }) {
             continue;

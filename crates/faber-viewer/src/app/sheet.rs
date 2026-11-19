@@ -218,33 +218,31 @@ impl Shell {
         });
     }
     pub(super) fn sheet_buttons(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    self.pending.is_none() && self.design_source_name.is_none(),
-                    egui::Button::new("New sheet metal"),
-                )
-                .on_disabled_hover_text(
-                    self.design_source_name
-                        .as_ref()
-                        .map(|s| format!("Add the sheet in {s}, then build the project."))
-                        .unwrap_or_default(),
-                )
-                .clicked()
-            {
-                let id = (1..)
-                    .map(|n| format!("sheet_{n}"))
-                    .find(|id| !self.data.parts.contains_key(id))
-                    .unwrap();
-                self.open_sheet(id, true);
-            }
-            if let Some(id) = self.selected.clone()
-                && recipe(&self.data, &id).is_some()
-                && ui.button("Sheet metal").clicked()
-            {
-                self.open_sheet(id, false);
-            }
-        });
+        if ui
+            .add_enabled(
+                self.pending.is_none() && self.design_source_name.is_none(),
+                egui::Button::new("New sheet metal"),
+            )
+            .on_disabled_hover_text(
+                self.design_source_name
+                    .as_ref()
+                    .map(|s| format!("Add the sheet in {s}, then build the project."))
+                    .unwrap_or_default(),
+            )
+            .clicked()
+        {
+            let id = (1..)
+                .map(|n| format!("sheet_{n}"))
+                .find(|id| !self.data.parts.contains_key(id))
+                .unwrap();
+            self.open_sheet(id, true);
+        }
+        if let Some(id) = self.selected.clone()
+            && recipe(&self.data, &id).is_some()
+            && ui.button("Sheet metal").clicked()
+        {
+            self.open_sheet(id, false);
+        }
     }
     pub(super) fn sheet_inspector(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) -> bool {
         let Some(mut p) = self.sheet_metal.take() else {

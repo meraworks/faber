@@ -2279,7 +2279,17 @@ impl Faber {
             if let Some(check) = info.hook_check {
                 reply["hook_check"]=json!(check);
             }
+            if let Some(gap) = info.largest_gap_mm {
+                reply["largest_gap_mm"]=json!(gap);
+            }
             match info.reading {
+                Reading::Surface {area_mm2,bounds_mm,open_edges} => {
+                    reply["operation"]=json!(info.kind);
+                    reply["kind"]=json!("surface");
+                    reply["area_mm2"]=json!(area_mm2);
+                    reply["bounds_mm"]=json!(bounds_mm);
+                    reply["open_edges"]=json!(open_edges);
+                }
                 Reading::Solid { volume_mm3, bounds_mm, faces, edges, suppressed, depends_on } => {
                     reply["volume_mm3"] = json!(volume_mm3);
                     reply["bounds_mm"] = json!(bounds_mm);

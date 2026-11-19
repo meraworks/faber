@@ -603,3 +603,43 @@ local hole={kind:'circle',centre:[10,12],radius:2};
     assert_eq!(recipe["flanges"][0]["angle_deg"], -90.);
     assert_eq!(recipe["flanges"][0]["holes"][0]["radius"], 2.);
 }
+
+#[test]
+fn surface_helpers_preserve_the_order_of_references_and_driven_values() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"local f=import 'faber.libsonnet';
+{parts:{body:f.part('Surface recipes',[
+ f.box('base',[10,10,10]),
+ f.surface_extrude('side','rim','height'),
+ f.surface_revolve('cone','rim','axis',180),
+ f.surface_loft('loft',['rim','cap'],ruled=true),
+ f.surface_sweep('sweep','rim','path'),
+ f.patch('end',[{kind:'curve',feature:'rim'}],tangent_to=['loft']),
+ f.trim('inside','loft','end',[1,2,3]),
+ f.extend('more','inside',{near_centre:[0,0,0],tolerance:0.1,expect:1},3),
+ f.stitch('joined',['side','end'],as_solid=false),
+ f.split_body('piece','base','end',keep='positive'),
+ f.replace_face('top','piece',{normal:[0,0,1],tolerance:0.001,expect:1},'end')
+],'base')},params:{height:'8'}}"#,
+    );
+    let baseline = serde_json::from_value(
+        serde_json::json!({"schema":1,"revision":0,"name":"Test","parts":{}}),
+    )
+    .unwrap();
+    let d = faber_build::evaluate(dir.path(), &baseline).unwrap();
+    let g = serde_json::to_value(&d.data.parts["body"].geometry).unwrap();
+    let f = g["features"].as_array().unwrap();
+    assert_eq!(f.len(), 11);
+    assert_eq!(f[1]["geometry"]["distance"], "height");
+    assert_eq!(
+        f[3]["geometry"]["sections"],
+        serde_json::json!(["rim", "cap"])
+    );
+    assert_eq!(
+        f[6]["geometry"]["keep"]["near"],
+        serde_json::json!([1., 2., 3.])
+    );
+}

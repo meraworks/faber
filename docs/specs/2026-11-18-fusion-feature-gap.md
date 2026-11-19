@@ -75,6 +75,20 @@ flange. The installed API exposes a separate bend line body in
 views follow the [Fusion sheet rule](https://help.autodesk.com/cloudhelp/ENU/Fusion-Sheet-Metal/files/SM-RULES-REF.htm)
 and the [Fusion flat pattern guide](https://help.autodesk.com/cloudhelp/ENU/Fusion-Sheet-Metal/files/GUID-121F6E58-0459-4552-85EF-319F44324AE6.htm).
 
+## Surface modelling
+
+Chunk 13 builds surfaces from profiles, curves and closed boundaries.
+A selected surface reports its area and open edges. A stitch has a length
+tolerance and reports the largest gap it closed. Trim can use a sketch,
+a plane or another surface. A surface can split a solid or replace one of
+its faces. Extension of a freeform surface needs a boundary that follows
+a constant surface parameter. Faber does not implement Untrim or Boundary Fill.
+
+The installed API headers define the patch boundary in `PatchFeatures.h`
+and the stitch tolerance in `StitchFeatureInput.h`. The public command
+guide shows the free edges and how tolerance affects closure.
+[Fusion stitch guide](https://help.autodesk.com/cloudhelp/ENU/Fusion-Patch/files/SFC-STITCH.htm)
+
 ## Method and evidence
 
 Target: deployment `39e8a3d5e919c70b05ef3ebfe9c6bfc8d9ee001e` under
@@ -150,8 +164,8 @@ Status: **have** = Faber has it, **part** = a reduced form, **gap** = absent.
 | Chamfer (equal) | chamfer | have |
 | Chamfer (two distances, distance and angle) | none | gap |
 | Shell, Draft, Combine, Split Body | shell, draft, booleans, split | have |
-| Split Face, Replace Face, Remove Faces | split with a plane or sketch, remove selected faces and heal the solid. Replace Face remains open. | part |
-| Scale | none | gap |
+| Split Face, Replace Face, Remove Faces | split a face with a plane or sketch, replace a face with a covering surface, or remove faces and heal the solid | have |
+| Scale | uniform scale or a separate factor on each axis, with a centre point | have |
 | Delete, Copy, Paste | remove part; no copy | part |
 | Physical material, appearance | colour; density in a query only | part |
 

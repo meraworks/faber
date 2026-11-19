@@ -1,3 +1,5 @@
+mod open_profile;
+pub(crate) mod surface_ops;
 use crate::construction;
 use crate::feature_cache;
 use crate::valid_id;
@@ -263,7 +265,7 @@ pub(crate) struct Cache(BTreeMap<String, Entry>);
 impl Cache {
     pub(crate) fn open_sketch(&self, id: &str) -> Option<&str> {
         match &self.0.get(id)?.value {
-            Built::OpenSketch(reason) => Some(reason),
+            Built::OpenSketch(profile) => Some(&profile.reason),
             _ => None,
         }
     }
@@ -309,7 +311,7 @@ impl Cache {
 #[derive(Clone)]
 enum Built {
     Shape(Shape),
-    OpenSketch(String),
+    OpenSketch(std::sync::Arc<open_profile::OpenProfile>),
     Plane(faber_model::Placement),
     Axis {
         origin: [f64; 3],
@@ -322,7 +324,7 @@ impl Built {
     fn same_input(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Shape(a), Self::Shape(b)) => a.same_instance(b),
-            (Self::OpenSketch(a), Self::OpenSketch(b)) => a == b,
+            (Self::OpenSketch(a), Self::OpenSketch(b)) => std::sync::Arc::ptr_eq(a, b),
             (Self::Plane(a), Self::Plane(b)) => a == b,
             (Self::Point(a), Self::Point(b)) => a == b,
             (
@@ -631,6 +633,28 @@ pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
 /// Names of the features that a feature reads. The order matches `dependencies`.
 pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
     let names: Vec<&String> = match geometry {
+        Geometry::SurfaceExtrude { profile, .. } => vec![profile],
+        Geometry::SurfaceRevolve { profile, axis, .. } => vec![profile, axis],
+        Geometry::SurfaceLoft { sections, .. } => sections.iter().collect(),
+        Geometry::SurfaceSweep { profile, path } => {
+            std::iter::once(profile).chain(path_names(path)).collect()
+        }
+        Geometry::Patch {
+            boundary,
+            tangent_to,
+        } => boundary
+            .iter()
+            .map(|item| match item {
+                faber_model::EdgeRef::Edge { feature, .. }
+                | faber_model::EdgeRef::Curve { feature } => feature,
+            })
+            .chain(tangent_to)
+            .collect(),
+        Geometry::Trim { surface, tool, .. } => vec![surface, tool],
+        Geometry::Extend { surface, .. } => vec![surface],
+        Geometry::Stitch { surfaces, .. } => surfaces.iter().collect(),
+        Geometry::SplitBody { body, tool, .. } => vec![body, tool],
+        Geometry::ReplaceFace { body, surface, .. } => vec![body, surface],
         Geometry::RemoveFaces { body, .. } | Geometry::MoveFaces { body, .. } => vec![body],
         Geometry::SplitFace { body, tool, .. } => vec![
             body,
@@ -700,6 +724,8 @@ pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
 /// The input solid of a feature that changes one solid. Creation features and references have none.
 pub(crate) fn primary_input<N>(geometry: &Geometry<N>) -> Option<&str> {
     match geometry {
+        Geometry::Trim { surface, .. } | Geometry::Extend { surface, .. } => Some(surface),
+        Geometry::SplitBody { body, .. } | Geometry::ReplaceFace { body, .. } => Some(body),
         Geometry::OffsetSketch { sketch, .. } => Some(sketch),
         Geometry::RemoveFaces { body, .. }
         | Geometry::MoveFaces { body, .. }
@@ -763,6 +789,10 @@ fn load_persisted(store: &dyn FeatureCache, key: &str, kernel: &dyn Kernel) -> O
     let bytes = store.get(key)?;
     let entry = feature_cache::decode(&bytes)?;
     let shape = kernel.decode_shape(entry.shape).ok()?;
+    let shape = match entry.gap {
+        Some(gap) => shape.with_stitch_gap(gap),
+        None => shape,
+    };
     if kernel.face_count(&shape).ok()? != entry.faces {
         return None;
     }
@@ -779,7 +809,7 @@ fn store_built(store: &dyn FeatureCache, key: &str, kernel: &dyn Kernel, shape: 
     let (Ok(bytes), Ok(faces)) = (kernel.encode_shape(shape), kernel.face_count(shape)) else {
         return;
     };
-    let blob = feature_cache::encode(faces, shape.face_origins(), &bytes);
+    let blob = feature_cache::encode(faces, shape.face_origins(), shape.stitch_gap(), &bytes);
     // A failed write only means that the next open builds this feature again.
     let _ = store.put(key, &blob);
 }
@@ -836,16 +866,17 @@ pub(crate) fn build(
         };
         let source = |name: &str| match previous(name)? {
             Built::Shape(shape) => Ok(shape),
-            Built::OpenSketch(reason) => Err(format!("Sketch {name}: {reason}")),
+            Built::OpenSketch(profile) => Err(format!("Sketch {name}: {}", profile.reason)),
             _ => Err(format!("Feature {name} is a reference, not a shape")),
         };
-        let dependencies = if matches!(
-            &feature.geometry,
-            Geometry::RemoveFaces { .. }
-                | Geometry::MoveFaces { .. }
-                | Geometry::SplitFace { .. }
-                | Geometry::Emboss { .. }
-        ) {
+        let dependencies = if surface_ops::is_operation(&feature.geometry)
+            || matches!(
+                &feature.geometry,
+                Geometry::RemoveFaces { .. }
+                    | Geometry::MoveFaces { .. }
+                    | Geometry::SplitFace { .. }
+                    | Geometry::Emboss { .. }
+            ) {
             references(&feature.geometry)
                 .into_iter()
                 .map(|id| previous(id).cloned())
@@ -1007,45 +1038,52 @@ pub(crate) fn build(
             shapes.insert(feature.id.clone(), value);
             continue;
         }
-        let (solution, contours) =
-            if let Geometry::SolvedSketch { plane, sketch } = &feature.geometry {
-                if !matches!(previous(plane)?, Built::Plane(_)) {
-                    return Err(named(
-                        feature,
-                        format!("Feature {plane} is not a reference plane"),
-                    ));
-                }
-                let solution = std::sync::Arc::new(
-                    crate::sketch_cache::get_or_solve(
-                        persist,
-                        key.as_deref(),
-                        sketch,
-                        crate::sketch::solve,
-                    )
-                    .map_err(|e| named(feature, e))?,
-                );
-                match faber_sketch::profile::contours(sketch, &solution)
-                    .map_err(|e| named(feature, e))?
-                {
-                    faber_sketch::profile::Contours::Closed(contours) => (Some(solution), contours),
-                    faber_sketch::profile::Contours::Open(reason) => {
-                        let value = Built::OpenSketch(reason);
-                        next.insert(
-                            feature.id.clone(),
-                            Entry {
-                                geometry: feature.geometry.clone(),
-                                dependencies,
-                                value: value.clone(),
-                                solution: Some(solution),
-                            },
-                        );
-                        shapes.insert(feature.id.clone(), value);
-                        continue;
-                    }
-                }
-            } else {
-                (None, Vec::new())
+        let (solution, contours) = if let Geometry::SolvedSketch { plane, sketch } =
+            &feature.geometry
+        {
+            let Built::Plane(frame) = previous(plane)? else {
+                return Err(named(
+                    feature,
+                    format!("Feature {plane} is not a reference plane"),
+                ));
             };
+            let solution = std::sync::Arc::new(
+                crate::sketch_cache::get_or_solve(
+                    persist,
+                    key.as_deref(),
+                    sketch,
+                    crate::sketch::solve,
+                )
+                .map_err(|e| named(feature, e))?,
+            );
+            match faber_sketch::profile::contours_and_wires(sketch, &solution)
+                .map_err(|e| named(feature, e))?
+            {
+                (faber_sketch::profile::Contours::Closed(contours), _) => {
+                    (Some(solution), contours)
+                }
+                (faber_sketch::profile::Contours::Open(reason), paths) => {
+                    let value = Built::OpenSketch(std::sync::Arc::new(open_profile::OpenProfile {
+                        reason,
+                        paths,
+                        plane: frame.clone(),
+                    }));
+                    next.insert(
+                        feature.id.clone(),
+                        Entry {
+                            geometry: feature.geometry.clone(),
+                            dependencies,
+                            value: value.clone(),
+                            solution: Some(solution),
+                        },
+                    );
+                    shapes.insert(feature.id.clone(), value);
+                    continue;
+                }
+            }
+        } else {
+            (None, Vec::new())
+        };
         if let Some(store) = persist
             && let Some(key) = &key
             && let Some(shape) = load_persisted(store, key, kernel)
@@ -1064,6 +1102,9 @@ pub(crate) fn build(
         }
         let build = || -> Result<Shape> {
             match &feature.geometry {
+                geometry if surface_ops::is_operation(geometry) => {
+                    surface_ops::build(kernel, geometry, features, &dependencies)
+                }
                 geometry @ (Geometry::Rib { body, plane, .. }
                 | Geometry::Web { body, plane, .. }
                 | Geometry::Boss { body, plane, .. }
@@ -1479,12 +1520,14 @@ pub(crate) fn build(
             .summary_properties(&shape)
             .map_err(|error| named(feature, error))?;
         let (sketch, curve) = match &feature.geometry {
+            g if surface_ops::creates_surface(g) => (true, false),
             Geometry::Sketch { .. }
             | Geometry::SketchOnPlane { .. }
             | Geometry::SolvedSketch { .. }
             | Geometry::OffsetSketch { .. } => (true, false),
             Geometry::Curve { .. } | Geometry::Helix { .. } => (false, true),
             Geometry::Transform { source: name, .. }
+            | Geometry::Scale { source: name, .. }
             | Geometry::PlaceAtPoint { source: name, .. } => {
                 let original = kernel
                     .summary_properties(source(name)?)
@@ -1552,7 +1595,7 @@ pub(crate) fn build(
             // The key is set only when the persistent cache is active.
             Ok((shape, keys.get(output).cloned()))
         }
-        Built::OpenSketch(reason) => Err(format!("Sketch {output}: {reason}")),
+        Built::OpenSketch(profile) => Err(format!("Sketch {output}: {}", profile.reason)),
         _ => Err("A reference cannot be the part output".into()),
     }
 }

@@ -77,6 +77,7 @@ impl Shell {
         let (eye, ray) = self.camera.ray(rect.aspect_ratio(), ndc);
         self.bodies
             .iter()
+            .map(|b| self.intermediate_body(b))
             .filter(|b| !self.hidden.contains(&b.id))
             .filter_map(|body| {
                 let pose = self.pick_pose(&body.id);
@@ -95,7 +96,7 @@ impl Shell {
             .map(|(body, triangle, t)| (body, triangle, eye + t * ray))
     }
 
-    fn edge_at(
+    pub(super) fn edge_at(
         &self,
         body: &Body,
         rect: egui::Rect,
@@ -130,6 +131,17 @@ impl Shell {
         rect: egui::Rect,
         pos: egui::Pos2,
     ) -> Option<(Pick, [f64; 3])> {
+        if self.picking_surface_edge() {
+            let body = self.surface_pick_body()?;
+            let hit = self.edge_at(body, rect, pos)?;
+            return Some((
+                Pick::Edge {
+                    part: body.id.clone(),
+                    edge: hit.edge,
+                },
+                hit.point,
+            ));
+        }
         if self.select_filter == SelectFilter::Body {
             return self
                 .pick_surface(rect, pos)
@@ -139,6 +151,7 @@ impl Shell {
             let nearest = self
                 .bodies
                 .iter()
+                .map(|b| self.intermediate_body(b))
                 .filter(|b| !self.hidden.contains(&b.id))
                 .filter_map(|b| self.edge_at(b, rect, pos).map(|hit| (&b.id, hit)))
                 .min_by(|a, b| {
@@ -393,13 +406,19 @@ impl Shell {
 
     pub(super) fn draw_pick_edges(&self, ui: &egui::Ui, rect: egui::Rect) {
         if self.select_filter != SelectFilter::Edge
+            && !self.picking_surface_edge()
             && !self.picks.iter().any(|p| matches!(p, Pick::Edge { .. }))
         {
             return;
         }
         let matrix = self.camera.matrix(rect.aspect_ratio());
         let painter = ui.painter().with_clip_rect(rect);
-        for body in self.bodies.iter().filter(|b| !self.hidden.contains(&b.id)) {
+        for body in self
+            .bodies
+            .iter()
+            .map(|b| self.intermediate_body(b))
+            .filter(|b| !self.hidden.contains(&b.id))
+        {
             let all = self.select_filter == SelectFilter::Edge
                 && self.hover_body.as_deref() == Some(&body.id);
             let selected = self
@@ -410,7 +429,10 @@ impl Shell {
                     _ => None,
                 })
                 .collect::<BTreeSet<_>>();
-            if !all && selected.is_empty() {
+            if !all
+                && selected.is_empty()
+                && !matches!(&self.hover_pick,Some(Pick::Edge{part,..}) if part==&body.id)
+            {
                 continue;
             }
             let transform = self.pick_pose(&body.id);

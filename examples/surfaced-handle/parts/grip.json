@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "name": "Hollow handle",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "foot",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "circle",
+              "centre": [
+                0.0,
+                0.0
+              ],
+              "radius": 10.0
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "waist",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "circle",
+              "centre": [
+                0.0,
+                0.0
+              ],
+              "radius": 13.0
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              30.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "crown",
+        "geometry": {
+          "op": "sketch",
+          "profile": {
+            "outer": {
+              "kind": "circle",
+              "centre": [
+                0.0,
+                0.0
+              ],
+              "radius": 16.0
+            },
+            "holes": []
+          },
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              40.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "lower_skin",
+        "geometry": {
+          "op": "surface_loft",
+          "sections": [
+            "foot",
+            "waist"
+          ],
+          "ruled": true
+        }
+      },
+      {
+        "id": "upper_skin",
+        "geometry": {
+          "op": "surface_loft",
+          "sections": [
+            "waist",
+            "crown"
+          ],
+          "ruled": true
+        }
+      },
+      {
+        "id": "bottom",
+        "geometry": {
+          "op": "patch",
+          "boundary": [
+            {
+              "kind": "curve",
+              "feature": "foot"
+            }
+          ],
+          "tangent_to": []
+        }
+      },
+      {
+        "id": "top",
+        "geometry": {
+          "op": "patch",
+          "boundary": [
+            {
+              "kind": "curve",
+              "feature": "crown"
+            }
+          ],
+          "tangent_to": []
+        }
+      },
+      {
+        "id": "closed",
+        "geometry": {
+          "op": "stitch",
+          "surfaces": [
+            "lower_skin",
+            "upper_skin",
+            "bottom",
+            "top"
+          ],
+          "as_solid": true
+        }
+      },
+      {
+        "id": "hollow",
+        "geometry": {
+          "op": "shell",
+          "source": "closed",
+          "faces": {
+            "created_by": null,
+            "normal": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "near_centre": null,
+            "in_box": null,
+            "area": null,
+            "tolerance": 0.001,
+            "expect": 1
+          },
+          "thickness": "wall"
+        }
+      }
+    ],
+    "output": "hollow"
+  },
+  "colour": [
+    112,
+    163,
+    178
+  ],
+  "group": "",
+  "note": ""
+}

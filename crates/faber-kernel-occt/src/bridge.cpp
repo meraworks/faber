@@ -688,6 +688,16 @@ extern "C" int faber_sweep_shape(const void* section_input,const void* path_inpu
     return protect(error,capacity,[&]{
         const auto& section=static_cast<const FaberShape*>(section_input)->value;
         const auto& path=static_cast<const FaberShape*>(path_input)->value;
+        if(section.ShapeType()==TopAbs_WIRE && path.ShapeType()==TopAbs_WIRE) {
+            BRepOffsetAPI_MakePipeShell operation(TopoDS::Wire(path));
+            operation.SetMode(frenet!=0);
+            operation.SetTransitionMode(BRepBuilderAPI_RightCorner);
+            operation.Add(TopoDS::Wire(section),false,false);
+            operation.Build();
+            if(!operation.IsDone()) throw std::runtime_error("Cannot sweep the profile wire.");
+            publish(operation.Shape(),result);
+            return;
+        }
         if(section.ShapeType()!=TopAbs_FACE || path.ShapeType()!=TopAbs_WIRE) throw std::runtime_error("Sweep needs a sketch and a curve path");
         const TopoDS_Face face=TopoDS::Face(section);const TopoDS_Wire spine=TopoDS::Wire(path);
         BRepTools_WireExplorer first(spine);if(!first.More()) throw std::runtime_error("Sweep path has no edges");
@@ -725,7 +735,7 @@ extern "C" int faber_sketch_face(const void* const* wires,size_t count,void** re
 extern "C" int faber_extrude_shape(const void* input,const double* vector,void** result,char* error,size_t capacity) noexcept {
     return protect(error,capacity,[&]{
         const auto& shape=static_cast<const FaberShape*>(input)->value;
-        if(shape.ShapeType()!=TopAbs_FACE) throw std::runtime_error("Extrusion source must be a sketch face");
+        if(shape.ShapeType()!=TopAbs_FACE && shape.ShapeType()!=TopAbs_WIRE) throw std::runtime_error("Extrusion source must be a sketch face or a profile wire.");
         BRepPrimAPI_MakePrism operation(shape,gp_Vec(vector[0],vector[1],vector[2]),true);
         if(!operation.IsDone()) throw std::runtime_error("Cannot extrude sketch");
         publish(operation.Shape(),result);
@@ -747,7 +757,7 @@ extern "C" int faber_curved(int kind,const double* dimensions,void** result,char
 extern "C" int faber_revolve_shape(const void* input,const double* origin,const double* direction,double angle,void** result,char* error,size_t capacity) noexcept {
     return protect(error,capacity,[&]{
         const auto& shape=static_cast<const FaberShape*>(input)->value;
-        if(shape.ShapeType()!=TopAbs_FACE) throw std::runtime_error("Revolve source must be a sketch face");
+        if(shape.ShapeType()!=TopAbs_FACE && shape.ShapeType()!=TopAbs_WIRE) throw std::runtime_error("Revolve needs a sketch face or a wire.");
         const gp_Ax1 axis(gp_Pnt(origin[0],origin[1],origin[2]),gp_Dir(direction[0],direction[1],direction[2]));
         BRepPrimAPI_MakeRevol operation(shape,axis,angle,true);
         if(!operation.IsDone()) throw std::runtime_error("Cannot revolve sketch");
@@ -759,8 +769,14 @@ extern "C" int faber_revolve_shape(const void* input,const double* origin,const 
 extern "C" int faber_loft_shapes(const void* const* inputs,size_t count,int ruled,void** result,char* error,size_t capacity) noexcept {
     return protect(error,capacity,[&]{
         std::vector<std::vector<TopoDS_Wire>> sections;
+        const bool wire_mode=count && static_cast<const FaberShape*>(inputs[0])->value.ShapeType()==TopAbs_WIRE;
         for(size_t i=0;i<count;++i) {
             const auto& shape=static_cast<const FaberShape*>(inputs[i])->value;
+            if(wire_mode) {
+                if(shape.ShapeType()!=TopAbs_WIRE) throw std::runtime_error("All surface loft sections must be wires.");
+                sections.push_back({TopoDS::Wire(shape)});
+                continue;
+            }
             if(shape.ShapeType()!=TopAbs_FACE) throw std::runtime_error("Loft source must be a sketch face");
             const TopoDS_Wire outer=BRepTools::OuterWire(TopoDS::Face(shape));
             std::vector<TopoDS_Wire> wires{outer};
@@ -771,7 +787,7 @@ extern "C" int faber_loft_shapes(const void* const* inputs,size_t count,int rule
             sections.push_back(wires);
         }
         auto make=[&](size_t ring) {
-            BRepOffsetAPI_ThruSections operation(true,ruled!=0,1e-6);operation.CheckCompatibility(true);
+            BRepOffsetAPI_ThruSections operation(!wire_mode,ruled!=0,1e-6);operation.CheckCompatibility(true);
             for(const auto& section:sections) operation.AddWire(section[ring]);
             operation.Build();if(!operation.IsDone()) throw std::runtime_error("Cannot loft sketches");
             return operation.Shape();
@@ -1457,3 +1473,6 @@ extern "C" int faber_thread_count() noexcept {
 }
 
 #include "face_edit_bridge.inc"
+#include "surface_join_bridge.inc"
+#include "surface_cut_bridge.inc"
+#include "surface_profile_bridge.inc"

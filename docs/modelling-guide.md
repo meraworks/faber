@@ -1452,3 +1452,40 @@ tolerance. Convert text and interpolating
 splines to supported outlines first. The sheet recipe supports straight
 flanges. Hems, jogs, lofted flanges and holes across bends are outside
 its scope.
+
+## Surfaces
+
+Select a part and open **Surface tools**. **Surface extrude** pulls the
+outline of a sketch or curve along a direction. **Surface revolve** turns
+the outline about a reference axis. **Surface loft** connects the profiles
+in list order. Use **Move up** to change that order. **Surface sweep**
+moves a profile along a curve or helix. Distances use millimetres and
+angles use degrees. Numeric fields accept parameter expressions.
+
+**Patch** fills a closed set of curves or selected edges. Add tangent
+supports where the patch must meet a face smoothly. **Trim surface**
+splits a surface with another surface, a plane or a sketch. Enter a
+point near the piece to keep, in part coordinates. **Extend surface**
+lengthens the selected boundary edge. Use **Pick surface edge** to
+select that edge in the model.
+
+Click a surface in **Features** to see both sides. Orange lines mark its
+open edges. The inspector shows its area and the open edge count.
+**Show solid** restores the finished part and keeps the camera position.
+**Edit surface** opens its recipe. In a source-controlled part, edit
+the recipe in `design.jsonnet`. An instance shows the surfaces of its
+source in its own position.
+
+An intermediate surface has area and no volume. Its creation keeps the
+previous solid output. **Thicken surface** gives an open surface a wall
+thickness. **Stitch** joins surfaces along their edges. Select **as solid**
+when they enclose a volume. The default sewing tolerance is 0.001 mm.
+A larger value can close a measured gap. Inspect the largest closed gap
+in the stitch feature information. An open shell cannot be a solid output.
+**Split with surface** cuts a solid with a crossing surface.
+**Replace face** replaces one selected face. The replacement surface
+must cover the outline of that face.
+
+The [surfaced handle](../examples/surfaced-handle/design.jsonnet) uses
+two lofted skins and two end patches. The stitch makes a closed solid.
+A shell feature opens the bottom and sets the wall thickness.

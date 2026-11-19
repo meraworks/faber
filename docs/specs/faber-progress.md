@@ -1722,3 +1722,37 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   passed with warnings denied. The installed viewer opened all 25 examples.
   In the 232-body assembly, section drag frames took 5.78 ms at the median
   and 12.85 ms at the maximum. Returning to the same cut gave identical pixels.
+
+## Chunk 13. Surface modelling
+
+- Profiles and curves can make a surface by extrusion, revolution, loft or
+  sweep. A patch fills a closed boundary. Stitch joins faces and reports the
+  largest gap closed, including after a project is opened again.
+- A 0.01 mm seam stayed open at 0.001 mm tolerance and closed at 0.02 mm.
+  A six-face shell enclosed 4000 mm³ and took a 2 mm edge fillet. A cone
+  test covered eleven signed angles from -360 to +360 degrees. An independent
+  reader found one valid solid of 3665.191429 mm³ in the exported frustum.
+- A rotated sketch trimmed a panel. Moving a cap continued its sloping
+  neighbour. An invalid replacement kept the saved revision and the solid.
+- A cut along the whole shared side of two 10 by 10 mm panels kept either
+  100 mm² face. A tool that reached only half of the side did not cut.
+- Open constrained sketches retain line and circular arc geometry. Surface
+  operations follow the sketch plane and respond to changes in dimensions.
+- The viewer draws both sides of a surface. It marks its free edges and
+  picks the displayed edge after part placement. A held refresh kept the
+  same camera, controls and surface pixels for eight frames. An occurrence
+  of a generated design used its own component frame.
+- The sheet and surface tools share a row. A pointer test reopens a saved
+  scale feature above the status bar and changes its three factors. A
+  second test selects a reoriented path and a scaled sketch in the forms.
+- Reading a 232-body assembly took 1902.75 ms on the test PC. Building
+  the selected cylinder and its display mesh took 2.708 ms at the median
+  of 31 uncached reads and 4.945 ms at the maximum.
+- The handle example uses two lofted surfaces, two end patches, a stitch
+  and a shell. Its exported mesh has 6362 triangles. Each of its 9543 edges
+  meets two triangles with opposite winding.
+- All 1302 workspace tests passed, including 233 viewer tests. Four
+  timing benchmarks are separate from the normal test run. Clippy passed
+  with warnings denied. The installed viewer opened all 26 examples.
+  Section drag in the 232-body assembly took 5.95 ms at the median and
+  12.34 ms at the maximum. The same offset gave identical pixels.

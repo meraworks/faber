@@ -21,6 +21,7 @@ mod generated;
 mod history;
 mod hole;
 mod instances;
+pub mod surface_feature;
 pub use instances::{
     independent_part, instance_part, part_material, refuse_edit as refuse_instance_edit,
 };
@@ -1136,6 +1137,14 @@ impl Builder<'_> {
                 .kernel
                 .properties(&shape)
                 .map_err(|error| part_error(id, &part.geometry, error))?;
+            if properties.solids == 0
+                && let faber_model::Geometry::History { features, output } = &part.geometry
+                && history::surface_ops::is_surface_output(features, output)
+            {
+                return Err(format!(
+                    "The output of part {id} is a surface. Stitch or thicken it to make a solid."
+                ));
+            }
             if !properties.valid
                 || properties.solids == 0
                 || !properties.volume.is_finite()

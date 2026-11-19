@@ -13,6 +13,14 @@ pub mod vector;
 
 pub type Result<T> = std::result::Result<T, String>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShapeKind {
+    Solid,
+    Surface,
+    Curve,
+    Other,
+}
+
 pub trait AssetStore: Send + Sync {
     /// Return the content key without publishing the asset.
     fn key(&self, _source: &Path) -> Result<String> {
@@ -197,6 +205,13 @@ pub struct PathSamples {
 
 pub const SOLID_TRIANGLE_LIMIT: usize = 200_000;
 
+#[derive(Clone, Debug)]
+pub struct Stitched {
+    pub shape: Shape,
+    pub open_edges: u32,
+    pub largest_gap: f64,
+    pub solid: bool,
+}
 pub trait Kernel: Send + Sync {
     fn project_edges(
         &self,
@@ -250,14 +265,86 @@ pub trait Kernel: Send + Sync {
     fn remove_faces(&self, _shape: &Shape, _faces: &[u32]) -> Result<Shape> {
         Err("Face removal is not available.".into())
     }
+    fn trim_surface(&self, _surface: &Shape, _tool: &Shape, _keep_near: [f64; 3]) -> Result<Shape> {
+        Err("Surface trimming is not available.".into())
+    }
+    fn trim_with_plane(
+        &self,
+        _surface: &Shape,
+        _origin: [f64; 3],
+        _normal: [f64; 3],
+        _keep_near: [f64; 3],
+    ) -> Result<Shape> {
+        Err("Surface trimming is not available.".into())
+    }
+    fn trim_with_sketch(
+        &self,
+        _surface: &Shape,
+        _sketch_face: &Shape,
+        _normal: [f64; 3],
+        _keep_near: [f64; 3],
+    ) -> Result<Shape> {
+        Err("Surface trimming is not available.".into())
+    }
+    fn extend_surface(&self, _surface: &Shape, _edge: u32, _distance: f64) -> Result<Shape> {
+        Err("Surface extension is not available.".into())
+    }
+    fn split_by_surface(&self, _solid: &Shape, _tool: &Shape) -> Result<Vec<Shape>> {
+        Err("Surface splitting is not available.".into())
+    }
+    fn split_body_by_surface(
+        &self,
+        _solid: &Shape,
+        _tool: &Shape,
+        _keep: faber_model::SplitKeep,
+    ) -> Result<Shape> {
+        Err("Surface splitting is not available.".into())
+    }
+    fn replace_face(&self, _solid: &Shape, _face: u32, _surface: &Shape) -> Result<Shape> {
+        Err("Face replacement is not available.".into())
+    }
     fn move_faces(&self, _shape: &Shape, _faces: &[u32], _distance: f64) -> Result<Shape> {
         Err("Face movement is not available.".into())
     }
     fn split_face(&self, _shape: &Shape, _face: u32, _tool: &Shape) -> Result<Shape> {
         Err("Face splitting is not available.".into())
     }
+    fn edge_shape(&self, _shape: &Shape, _index: u32) -> Result<Shape> {
+        Err("Edge extraction is not available.".into())
+    }
+    fn patch(&self, _boundary: &[Shape], _support: &[Shape]) -> Result<Shape> {
+        Err("Surface filling is not available.".into())
+    }
+    fn stitch(&self, _surfaces: &[Shape], _tolerance: f64, _as_solid: bool) -> Result<Stitched> {
+        Err("Surface joining is not available.".into())
+    }
     fn face_shape(&self, _shape: &Shape, _index: u32) -> Result<Shape> {
         Err("Face extraction is not available".into())
+    }
+    /// Read the profile boundary wires. The outer wire comes first.
+    fn profile_wires(&self, _shape: &Shape) -> Result<Vec<Shape>> {
+        Err("Profile wires are not available.".into())
+    }
+    fn shape_kind(&self, shape: &Shape) -> Result<ShapeKind> {
+        let p = self.summary_properties(shape)?;
+        Ok(if p.solids > 0 {
+            ShapeKind::Solid
+        } else if p.faces > 0 {
+            ShapeKind::Surface
+        } else if p.edges > 0 {
+            ShapeKind::Curve
+        } else {
+            ShapeKind::Other
+        })
+    }
+    fn surface_area(&self, shape: &Shape) -> Result<f64> {
+        Ok(self.mass_properties(shape)?.area_mm2)
+    }
+    fn open_edge_indices(&self, _shape: &Shape) -> Result<Vec<u32>> {
+        Err("Open surface edges are not available.".into())
+    }
+    fn open_edges(&self, shape: &Shape) -> Result<u32> {
+        Ok(self.open_edge_indices(shape)?.len() as u32)
     }
     /// Wrap sketch X as arc length and sketch Y along the cylinder axis.
     fn wrap_on_cylinder(
@@ -504,7 +591,11 @@ pub trait FeatureCache: Send + Sync {
 pub type FaceOrigins = std::collections::BTreeMap<u32, std::collections::BTreeSet<String>>;
 
 #[derive(Clone)]
-pub struct Shape(Arc<dyn Any + Send + Sync>, Option<Arc<FaceOrigins>>);
+pub struct Shape(
+    Arc<dyn Any + Send + Sync>,
+    Option<Arc<FaceOrigins>>,
+    Option<f64>,
+);
 
 impl std::fmt::Debug for Shape {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -517,7 +608,7 @@ impl Shape {
         Arc::ptr_eq(&self.0, &other.0)
     }
     pub fn new<T: Any + Send + Sync>(value: T) -> Self {
-        Self(Arc::new(value), None)
+        Self(Arc::new(value), None, None)
     }
     pub fn get<T: Any>(&self) -> Option<&T> {
         self.0.downcast_ref()
@@ -528,6 +619,13 @@ impl Shape {
     }
     pub fn face_origins(&self) -> Option<&FaceOrigins> {
         self.1.as_deref()
+    }
+    pub fn with_stitch_gap(mut self, gap: f64) -> Self {
+        self.2 = Some(gap);
+        self
+    }
+    pub fn stitch_gap(&self) -> Option<f64> {
+        self.2
     }
 }
 
