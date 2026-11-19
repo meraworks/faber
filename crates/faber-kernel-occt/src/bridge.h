@@ -35,6 +35,10 @@ extern "C" void faber_mesh_data(
     const std::uint32_t** triangles, std::size_t* triangle_count, const double** normals) noexcept;
 
 extern "C" const std::uint32_t* faber_mesh_face_indices(const void* mesh) noexcept;
+extern "C" int faber_curved_mesh(const void* shape, double tolerance, void** result,
+    char* error, std::size_t capacity) noexcept;
+extern "C" void faber_mesh_curvatures(const void* mesh, const double** curvature, std::size_t* nodes,
+    const std::uint8_t** kinds, std::size_t* faces) noexcept;
 
 struct FaberEdgeLineData {
     void* owner;

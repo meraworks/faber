@@ -597,6 +597,20 @@ unsafe extern "C" {
         error: *mut c_char,
         capacity: usize,
     ) -> i32;
+    fn faber_curved_mesh(
+        input: *const c_void,
+        tolerance: f64,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
+    fn faber_mesh_curvatures(
+        input: *const c_void,
+        curvature: *mut *const [f64; 2],
+        nodes: *mut usize,
+        kinds: *mut *const u8,
+        faces: *mut usize,
+    );
     fn faber_mesh_data(
         input: *const c_void,
         vertices: *mut *const f64,
@@ -744,6 +758,115 @@ mod slot;
 pub struct OcctKernel;
 
 impl OcctKernel {
+    fn mesh_with_curvature(
+        shape: &Shape,
+        tolerance: f64,
+        curved: bool,
+    ) -> Result<faber_ports::CurvedMesh> {
+        positive(tolerance)?;
+        let shape = pointer(shape)?;
+        let _guard = gate();
+        let mut buffer = [0; 1024];
+        let mut raw = std::ptr::null_mut();
+        let make = if curved {
+            faber_curved_mesh
+        } else {
+            faber_mesh
+        };
+        error(
+            unsafe {
+                make(
+                    shape,
+                    tolerance,
+                    &mut raw,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                )
+            },
+            &buffer,
+        )?;
+        let raw = NonNull::new(raw).ok_or("Geometry operation returned no mesh")?;
+        struct Guard(NonNull<c_void>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                unsafe {
+                    faber_free_mesh(self.0.as_ptr());
+                }
+            }
+        }
+        let raw = Guard(raw);
+        let (mut vertices, mut triangles) = (std::ptr::null(), std::ptr::null());
+        let mut normals = std::ptr::null();
+        let (mut vertex_count, mut triangle_count) = (0, 0);
+        unsafe {
+            faber_mesh_data(
+                raw.0.as_ptr(),
+                &mut vertices,
+                &mut vertex_count,
+                &mut triangles,
+                &mut triangle_count,
+                &mut normals,
+            );
+        }
+        if vertex_count == 0 || triangle_count == 0 {
+            return Err("Shape has no mesh faces".into());
+        }
+        let points = unsafe { std::slice::from_raw_parts(vertices, vertex_count * 3) };
+        let indices = unsafe { std::slice::from_raw_parts(triangles, triangle_count * 3) };
+        let faces = unsafe { faber_mesh_face_indices(raw.0.as_ptr()) };
+        let mesh = Mesh {
+            normals: unsafe { std::slice::from_raw_parts(normals, vertex_count * 3) }
+                .as_chunks::<3>()
+                .0
+                .to_vec(),
+            vertices: points.as_chunks::<3>().0.to_vec(),
+            triangles: indices.as_chunks::<3>().0.to_vec(),
+        };
+        let faces = faber_ports::FaceMesh {
+            mesh,
+            face_of_triangle: unsafe { std::slice::from_raw_parts(faces, triangle_count) }.to_vec(),
+        };
+        let mut result = faber_ports::CurvedMesh {
+            faces,
+            curvature: Vec::new(),
+            kinds: Default::default(),
+        };
+        if curved {
+            let (mut curvature, mut kinds) = (std::ptr::null(), std::ptr::null());
+            let (mut nodes, mut count) = (0, 0);
+            unsafe {
+                faber_mesh_curvatures(
+                    raw.0.as_ptr(),
+                    &mut curvature,
+                    &mut nodes,
+                    &mut kinds,
+                    &mut count,
+                );
+            }
+            if nodes != vertex_count || count == 0 || count > u32::MAX as usize {
+                return Err("Surface samples do not match the face mesh.".into());
+            }
+            result.curvature = unsafe { std::slice::from_raw_parts(curvature, nodes) }.to_vec();
+            for (i, &kind) in unsafe { std::slice::from_raw_parts(kinds, count) }
+                .iter()
+                .enumerate()
+            {
+                use faber_ports::SurfaceKind;
+                let kind = match kind {
+                    0 => SurfaceKind::Plane,
+                    1 => SurfaceKind::Cylinder,
+                    2 => SurfaceKind::Sphere,
+                    3 => SurfaceKind::Cone,
+                    4 => SurfaceKind::Torus,
+                    5 => SurfaceKind::Freeform,
+                    _ => return Err("The face has an unknown surface type.".into()),
+                };
+                result.kinds.insert(i as u32 + 1, kind);
+            }
+        }
+        Ok(result)
+    }
+
     fn dress(&self, shape: &Shape, edges: &[u32], size: f64, chamfer: bool) -> Result<Shape> {
         positive(size)?;
         check_edges(edges)?;
@@ -2215,64 +2338,14 @@ impl Kernel for OcctKernel {
         Ok(lines)
     }
     fn tessellate_faces(&self, shape: &Shape, tolerance: f64) -> Result<faber_ports::FaceMesh> {
-        positive(tolerance)?;
-        let shape = pointer(shape)?;
-        let _guard = gate();
-        let mut buffer = [0; 1024];
-        let mut raw = std::ptr::null_mut();
-        error(
-            unsafe {
-                faber_mesh(
-                    shape,
-                    tolerance,
-                    &mut raw,
-                    buffer.as_mut_ptr(),
-                    buffer.len(),
-                )
-            },
-            &buffer,
-        )?;
-        let raw = NonNull::new(raw).ok_or("Geometry operation returned no mesh")?;
-        struct Guard(NonNull<c_void>);
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                unsafe {
-                    faber_free_mesh(self.0.as_ptr());
-                }
-            }
-        }
-        let raw = Guard(raw);
-        let (mut vertices, mut triangles) = (std::ptr::null(), std::ptr::null());
-        let mut normals = std::ptr::null();
-        let (mut vertex_count, mut triangle_count) = (0, 0);
-        unsafe {
-            faber_mesh_data(
-                raw.0.as_ptr(),
-                &mut vertices,
-                &mut vertex_count,
-                &mut triangles,
-                &mut triangle_count,
-                &mut normals,
-            );
-        }
-        if vertex_count == 0 || triangle_count == 0 {
-            return Err("Shape has no mesh faces".into());
-        }
-        let points = unsafe { std::slice::from_raw_parts(vertices, vertex_count * 3) };
-        let indices = unsafe { std::slice::from_raw_parts(triangles, triangle_count * 3) };
-        let faces = unsafe { faber_mesh_face_indices(raw.0.as_ptr()) };
-        let mesh = Mesh {
-            normals: unsafe { std::slice::from_raw_parts(normals, vertex_count * 3) }
-                .as_chunks::<3>()
-                .0
-                .to_vec(),
-            vertices: points.as_chunks::<3>().0.to_vec(),
-            triangles: indices.as_chunks::<3>().0.to_vec(),
-        };
-        Ok(faber_ports::FaceMesh {
-            mesh,
-            face_of_triangle: unsafe { std::slice::from_raw_parts(faces, triangle_count) }.to_vec(),
-        })
+        Ok(Self::mesh_with_curvature(shape, tolerance, false)?.faces)
+    }
+    fn tessellate_curvature(
+        &self,
+        shape: &Shape,
+        tolerance: f64,
+    ) -> Result<faber_ports::CurvedMesh> {
+        Self::mesh_with_curvature(shape, tolerance, true)
     }
     fn write_shape(&self, shape: &Shape, path: &Path) -> Result<()> {
         let parent = path

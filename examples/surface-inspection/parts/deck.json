@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "name": "Access bridge",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "post",
+        "geometry": {
+          "op": "box",
+          "size": [
+            12.0,
+            3.0,
+            8.0
+          ]
+        }
+      },
+      {
+        "id": "front",
+        "geometry": {
+          "op": "transform",
+          "source": "post",
+          "placement": {
+            "translation": [
+              7.0,
+              7.0,
+              14.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "back",
+        "geometry": {
+          "op": "transform",
+          "source": "post",
+          "placement": {
+            "translation": [
+              7.0,
+              32.0,
+              14.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "span",
+        "geometry": {
+          "op": "box",
+          "size": [
+            12.0,
+            28.0,
+            3.0
+          ]
+        }
+      },
+      {
+        "id": "span_at",
+        "geometry": {
+          "op": "transform",
+          "source": "span",
+          "placement": {
+            "translation": [
+              7.0,
+              7.0,
+              22.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "front_span",
+        "geometry": {
+          "op": "union",
+          "left": "front",
+          "right": "span_at"
+        }
+      },
+      {
+        "id": "bridge",
+        "geometry": {
+          "op": "union",
+          "left": "front_span",
+          "right": "back"
+        }
+      }
+    ],
+    "output": "bridge"
+  },
+  "colour": [
+    196,
+    147,
+    84
+  ],
+  "group": "",
+  "note": ""
+}

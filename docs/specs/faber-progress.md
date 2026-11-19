@@ -1592,3 +1592,33 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   volume was 29290.15 mm³, against 29292.68 mm³ for the exact solid.
 - The installed viewer rendered 21 example projects. Moving the assembly
   section from 285 to 305 mm and back restored the same viewport pixels.
+
+## Fusion parity 09: Surface analysis
+
+- Read curvature, draft and directional access for a selected part. Exact
+  sphere and cylinder tests include the poles and the inside of a bore.
+  An imported sphere mesh gave a radius within 5% of its nominal 10 mm.
+- The inspection block has a 1.5 mm counterbore floor radius and a 2 mm
+  external round. For a 3 mm tool the local radius check identifies the
+  counterbore floor. The shaded example can show the obstruction from
+  the bridge separately from the curvature of the block.
+- Rays on large planar faces use additional surface samples. On the
+  example, a bridge with a 336 mm² footprint gave a 343.78 mm² shadow.
+  The report includes the maximum sample edge. A ray does not model the
+  diameter of a tool or the shape of its holder.
+- Moving an assembly obstruction across a 225 mm² face changed its
+  accessible area to zero. Moving it back restored the previous area.
+  The map and the mass centre follow the displayed pose.
+- Reflected stripes change with the camera. A flat surface has no finite
+  radius in the legend. A repeated request reuses its colour map. A new
+  direction releases the previous map.
+- The Fusion reference describes directional visibility, a concave radius
+  check and view-dependent stripes. The installed SDK identifies the
+  selected direction and curvature map type. See the
+  [Autodesk analysis tools guide](https://help.autodesk.com/cloudhelp/ENU/Fusion-Model/files/SLD-INSPECT-TOOLS.htm).
+- All 1081 workspace tests passed. Workspace Clippy passed with warnings
+  denied. The release build and silent install passed. The installed
+  CLI rendered six inspection maps and preserved the revision and source
+  files. The maps used 74752 samples for the bridge access check.
+- The installed viewer rendered 22 examples. Returning to the same
+  section position in the 232-body assembly restored identical pixels.

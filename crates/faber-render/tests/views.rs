@@ -126,3 +126,65 @@ fn scene_background_is_light_and_bottom_face_is_lit() {
     let bottom = image.get_pixel(SIZE / 2, SIZE / 2);
     assert!(bottom[0] >= 185, "Bottom face is too dark: {bottom:?}");
 }
+
+fn zebra_frame(gpu: &faber_render::Gpu, size: u32, view: View) -> RgbaImage {
+    let bodies = [box_body([80., 48., 2.])];
+    let list = gpu
+        .upload(&bodies, &Default::default(), None, None)
+        .unwrap();
+    let target = gpu.target(size, size);
+    let mut camera = faber_scene::Camera::fit(&bodies);
+    camera.set_view(view);
+    gpu.draw(&target, &list, camera);
+    RgbaImage::from_raw(size, size, gpu.read(&target).unwrap()).unwrap()
+}
+
+#[test]
+fn zebra_differs_from_plain_shading() {
+    let mut gpu = faber_render::Gpu::headless().unwrap();
+    let plain = zebra_frame(&gpu, 320, View::Top);
+    gpu.zebra = Some(("box".into(), 12));
+    let stripes = zebra_frame(&gpu, 320, View::Top);
+    let angled = zebra_frame(&gpu, 320, View::Iso);
+    let mut black = 0;
+    let mut white = 0;
+    let mut changed = 0;
+    for x in 90..230 {
+        for y in 150..170 {
+            let p = stripes.get_pixel(x, y).0;
+            assert!(p[0].abs_diff(p[1]) < 4 && p[1].abs_diff(p[2]) < 4);
+            assert_ne!(p, plain.get_pixel(x, y).0);
+            black += usize::from(p[0] < 65);
+            white += usize::from(p[0] > 225);
+            changed += usize::from(p[0].abs_diff(angled.get_pixel(x, y)[0]) > 50);
+        }
+    }
+    assert!(
+        black > 500 && white > 500 && changed > 500,
+        "{black} dark, {white} light, {changed} on orbit"
+    );
+}
+
+#[test]
+fn zebra_on_a_flat_plate_has_straight_stripes() {
+    let mut gpu = faber_render::Gpu::headless().unwrap();
+    let mut counts = Vec::new();
+    for stripes in [8, 24] {
+        gpu.zebra = Some(("box".into(), stripes));
+        let image = zebra_frame(&gpu, 320, View::Top);
+        let transitions = |y| {
+            (91..230)
+                .filter(|&x| {
+                    (image.get_pixel(x, y)[0] > 128) != (image.get_pixel(x - 1, y)[0] > 128)
+                })
+                .count()
+        };
+        let centre = transitions(160);
+        assert!(centre > 1, "Only {centre} stripe edges");
+        for row in 153..168 {
+            assert_eq!(transitions(row), centre, "Stripe edges at row {row}");
+        }
+        counts.push(centre);
+    }
+    assert!(counts[1] >= 2 * counts[0], "{counts:?}");
+}

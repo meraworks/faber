@@ -1259,3 +1259,40 @@ To add the first face operation to an imported exact solid through
 `add_feature`, set `body` to `"source"`. The original imported solid
 becomes the first feature in its history. Later operations use the id
 of the previous solid feature.
+
+## Surface analysis
+
+Select a part and open **Analysis**. Choose **Curvature**, **Draft**,
+**Access** or **Zebra**. The map uses the selected part. You can orbit
+the model with the map on. **Centre of mass** adds a marker at the mass
+centre of the solid or closed mesh.
+
+- **Curvature** shows mean curvature in 1/mm, Gaussian curvature in
+  1/mm² or the smallest radius in mm. A plane has zero curvature and
+  no finite radius. On an exact solid the principal curvatures come
+  from its surfaces. Values from an imported mesh are estimates.
+- **Draft** uses the pull direction and the minimum angle. Positive and
+  negative faces have opposite pull directions. Yellow marks vertical
+  or low-draft areas. Red marks an undercut. An angle within 0.01° of
+  vertical counts as vertical. A single horizontal ring between opposed
+  drafted faces can give a parting height for a Z pull.
+- **Access** tests lines of sight along the selected directions. Set
+  **Include other parts** to test obstructions in the assembly. The
+  result gives reachable and hidden area in mm². Each ray starts at
+  a sample inside a surface triangle. Small features between samples
+  can be missed. This test does not model a tool shank or holder.
+- **Zebra** shows reflected black and white stripes. Orbit the view
+  and follow a stripe across adjacent faces to inspect continuity.
+
+The `curvature`, `draft_analysis` and `access_analysis` tools return
+measurements for a saved part. Set `detail: true` for the full face
+list. Set `render: {"path":"surface.png"}` to save its colour map.
+For curvature, set the render mode to `mean`, `gauss` or `min_radius`.
+The optional `tool_radius_mm` lists faces whose concave radius is too
+small for the tool. A local radius check does not test the tool path.
+The `resolution` input is the chord error in mm for exact faces.
+Directional reports also give the largest edge of the sampling mesh.
+
+In the [inspection block](../examples/surface-inspection/design.jsonnet),
+the radius at the counterbore floor is 1.5 mm and the outside round is
+2 mm. Compare access from +Z with and without the bridge.

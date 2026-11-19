@@ -162,10 +162,10 @@ Status: **have** = Faber has it, **part** = a reduced form, **gap** = absent.
 | Fusion | Faber | Status |
 | --- | --- | --- |
 | Measure, interference, section analysis | distance, interference, sections | have |
-| Centre of mass, physical properties | `mass_properties` (MCP) | part; no viewer panel |
-| Draft analysis | none | gap; overhang check for printing |
-| Curvature comb, zebra, curvature map, minimum radius | none | gap |
-| Accessibility analysis | none | gap |
+| Centre of mass, physical properties | `mass_properties`; viewer mass centre marker | have for a selected part |
+| Draft analysis | `draft_analysis`; viewer angle and undercut map | have |
+| Curvature comb, zebra, curvature map, minimum radius | `curvature`; viewer curvature map and reflected stripes | part; no edge curvature comb |
+| Accessibility analysis | `access_analysis`; viewer access map with assembly obstructions | have; sampled directions |
 
 ### Sketch
 

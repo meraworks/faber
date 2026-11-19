@@ -54,12 +54,15 @@ struct Uniform {
     hovered: [u32; 4],
     section_style: [f32; 4],
     stress_ramp: [[f32; 4]; 4],
+    zebra: [u32; 4],
 }
 
 pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub hatch: bool,
+    pub zebra: Option<(String, u32)>,
+    pub surface: Option<SurfacePaint>,
     pub hovered: Option<String>,
     pub cut_colour: Option<[u8; 3]>,
     uniform: wgpu::Buffer,
@@ -92,6 +95,67 @@ pub struct DrawList {
     ranges: std::collections::BTreeMap<String, [u32; 2]>,
 }
 
+/// Colours for one analysed part. Its triangles may differ from the display mesh.
+pub struct SurfacePaint {
+    part: String,
+    vertices: wgpu::Buffer,
+    marks: FaceMarks,
+    count: u32,
+}
+
+impl SurfacePaint {
+    pub fn new(
+        device: &wgpu::Device,
+        part: String,
+        mesh: &Mesh,
+        colours: &[[u8; 3]],
+    ) -> Result<Self> {
+        if colours.len() != mesh.vertices.len() || mesh.triangles.is_empty() {
+            return Err("Each surface vertex needs one colour.".into());
+        }
+        let mut vertices = Vec::with_capacity(mesh.triangles.len() * 3);
+        for &index in mesh.triangles.iter().flatten() {
+            let index = index as usize;
+            let point = mesh
+                .vertices
+                .get(index)
+                .ok_or("Invalid surface triangle.")?;
+            let srgb = colours[index].map(|v| f32::from(v) / 255.);
+            vertices.push(Vertex {
+                position: point.map(|v| v as f32),
+                normal: [0.; 3],
+                colour: srgb.map(|v| {
+                    if v <= 0.04045 {
+                        v / 12.92
+                    } else {
+                        ((v + 0.055) / 1.055).powf(2.4)
+                    }
+                }),
+                kind: -3.,
+            });
+        }
+        Ok(Self {
+            part,
+            marks: FaceMarks::new(device, vertices.len(), Default::default()),
+            count: vertices
+                .len()
+                .try_into()
+                .map_err(|_| "Too many surface vertices.")?,
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Surface analysis"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+        })
+    }
+
+    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, instance: u32) {
+        pass.set_vertex_buffer(0, self.vertices.slice(..));
+        pass.set_vertex_buffer(2, self.marks.buffer.slice(..));
+        pass.draw(0..self.count, instance..instance + 1);
+    }
+}
+
 struct SectionBindings<'a> {
     parts: &'a BTreeSet<String>,
     cut: &'a wgpu::BindGroup,
@@ -105,11 +169,22 @@ impl DrawList {
         hidden: &BTreeSet<String>,
         posed: bool,
         section: Option<SectionBindings<'_>>,
+        surface: Option<&SurfacePaint>,
     ) {
         pass.set_vertex_buffer(0, self.buffer.slice(..));
         pass.set_vertex_buffer(2, self.marks.buffer.slice(..));
         if !posed && hidden.is_empty() && section.is_none() {
-            pass.draw(0..self.count, 0..1);
+            if let Some(paint) = surface
+                && let Some(&[start, stop]) = self.ranges.get(&paint.part)
+            {
+                pass.draw(0..start, 0..1);
+                paint.draw(pass, 0);
+                pass.set_vertex_buffer(0, self.buffer.slice(..));
+                pass.set_vertex_buffer(2, self.marks.buffer.slice(..));
+                pass.draw(stop..self.count, 0..1);
+            } else {
+                pass.draw(0..self.count, 0..1);
+            }
             return;
         }
         let mut end = 0;
@@ -125,7 +200,13 @@ impl DrawList {
                     }
                 }
                 let instance = if posed { index as u32 } else { 0 };
-                pass.draw(start..stop, instance..instance + 1);
+                if let Some(paint) = surface.filter(|p| &p.part == id) {
+                    paint.draw(pass, instance);
+                    pass.set_vertex_buffer(0, self.buffer.slice(..));
+                    pass.set_vertex_buffer(2, self.marks.buffer.slice(..));
+                } else {
+                    pass.draw(start..stop, instance..instance + 1);
+                }
             }
         }
         if end < self.count {
@@ -211,6 +292,8 @@ impl Gpu {
             Self::surface_pipeline(&device, &pipeline_layout, include_str!("shader.wgsl"));
         Self {
             hatch: true,
+            zebra: None,
+            surface: None,
             hovered: None,
             cut_colour: None,
             device: device.clone(),
@@ -697,6 +780,10 @@ impl Gpu {
             .cut_colour
             .map_or([-1.; 3], |rgb| rgb.map(|c| (c as f32 / 255.).powf(2.2)));
         let u = Uniform {
+            zebra: self.zebra.as_ref().map_or([0; 4], |(part, count)| {
+                let [start, stop] = range(list, Some(part));
+                [start, stop, *count, 0]
+            }),
             stress_ramp: STRESS_RAMP.map(|c| {
                 [
                     f32::from(c[0]) / 255.,
@@ -768,11 +855,17 @@ impl Gpu {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind, &[]);
             pass.set_vertex_buffer(1, instances.as_ref().unwrap_or(&self.identity).slice(..));
-            list.draw_visible(&mut pass, hidden, instances.is_some(), scoped);
+            list.draw_visible(
+                &mut pass,
+                hidden,
+                instances.is_some(),
+                scoped,
+                self.surface.as_ref(),
+            );
             if let Some(cap) = caps {
                 pass.set_bind_group(0, &self.bind, &[]);
                 pass.set_vertex_buffer(1, self.identity.slice(..));
-                cap.draw_visible(&mut pass, hidden, false, None);
+                cap.draw_visible(&mut pass, hidden, false, None, None);
             }
         }
         self.queue.submit([encoder.finish()]);

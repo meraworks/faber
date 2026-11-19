@@ -97,6 +97,10 @@ pub fn save(
     let mut image =
         faber_render::stress_image(&shown, &ratios, width, height, faber_scene::View::Iso)?;
     legend(&mut image, max);
+    save_png(&image, path)
+}
+
+pub(crate) fn save_png(image: &RgbaImage, path: &Path) -> Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())

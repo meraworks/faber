@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "name": "Counterbored block",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "blank",
+        "geometry": {
+          "op": "box",
+          "size": [
+            60.0,
+            42.0,
+            14.0
+          ]
+        }
+      },
+      {
+        "id": "front_round",
+        "geometry": {
+          "op": "fillet",
+          "source": "blank",
+          "edges": {
+            "between": null,
+            "of_face": null,
+            "parallel": null,
+            "near_centre": [
+              30.0,
+              0.0,
+              14.0
+            ],
+            "in_box": null,
+            "length": null,
+            "radius": null,
+            "tolerance": 0.001,
+            "expect": 1
+          },
+          "radius": "outside_radius"
+        }
+      },
+      {
+        "id": "drill",
+        "geometry": {
+          "op": "cylinder",
+          "radius": 5.0,
+          "height": 16.0
+        }
+      },
+      {
+        "id": "drill_at",
+        "geometry": {
+          "op": "transform",
+          "source": "drill",
+          "placement": {
+            "translation": [
+              36.0,
+              21.0,
+              -1.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "through_bore",
+        "geometry": {
+          "op": "difference",
+          "left": "front_round",
+          "right": "drill_at"
+        }
+      },
+      {
+        "id": "counterbore",
+        "geometry": {
+          "op": "cylinder",
+          "radius": 11.0,
+          "height": 8.0
+        }
+      },
+      {
+        "id": "pocket_at",
+        "geometry": {
+          "op": "transform",
+          "source": "counterbore",
+          "placement": {
+            "translation": [
+              36.0,
+              21.0,
+              7.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "pocket",
+        "geometry": {
+          "op": "difference",
+          "left": "through_bore",
+          "right": "pocket_at"
+        }
+      },
+      {
+        "id": "floor_round",
+        "geometry": {
+          "op": "fillet",
+          "source": "pocket",
+          "edges": {
+            "between": null,
+            "of_face": null,
+            "parallel": null,
+            "near_centre": null,
+            "in_box": [
+              [
+                24.0,
+                9.0,
+                6.99
+              ],
+              [
+                48.0,
+                33.0,
+                7.01
+              ]
+            ],
+            "length": null,
+            "radius": 11.0,
+            "tolerance": 0.001,
+            "expect": 1
+          },
+          "radius": "inside_radius"
+        }
+      }
+    ],
+    "output": "floor_round"
+  },
+  "colour": [
+    89,
+    157,
+    164
+  ],
+  "group": "",
+  "note": ""
+}

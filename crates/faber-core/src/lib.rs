@@ -40,6 +40,7 @@ mod scale;
 mod section;
 mod select;
 pub mod study;
+pub mod surface;
 mod thread;
 
 pub use assets::refuse_link_edit;

@@ -1361,6 +1361,7 @@ name = "faber-core"
 version = "0.1.0"
 dependencies = [
  "faber-expr",
+ "faber-geometry",
  "faber-meshtools",
  "faber-model",
  "faber-ports",

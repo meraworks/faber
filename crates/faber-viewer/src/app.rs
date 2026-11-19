@@ -48,6 +48,7 @@ mod selection_tests;
 mod study;
 #[cfg(test)]
 mod suppress_tests;
+mod surface;
 mod view_cube;
 use crate::mark;
 use eframe::{egui, egui_wgpu};
@@ -256,6 +257,7 @@ pub struct Shell {
     mesh_tool: Option<mesh_tools::Panel>,
     printing: print_check::PrintPanel,
     study: study::StudyPanel,
+    surface: surface::SurfacePanel,
     window: WindowState,
     search: command_search::CommandSearch,
     marking: marking_menu::MarkingMenu,
@@ -406,6 +408,7 @@ impl Shell {
             mesh_tool: None,
             printing: Default::default(),
             study: Default::default(),
+            surface: Default::default(),
             recent_file: None,
             dialog: None,
             new_parameter: Default::default(),
@@ -498,6 +501,7 @@ impl Shell {
 
     fn view_controls(&mut self, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            self.surface_menu(ui);
             if ui
                 .selectable_label(self.section_on, "Section")
                 .on_hover_text("Section analysis (Shift+S)")
@@ -2485,7 +2489,7 @@ impl Shell {
             self.print_panel(ui);
             return;
         }
-        if self.study_panel(ui) || self.print_panel(ui) {
+        if self.surface_panel(ui) || self.study_panel(ui) || self.print_panel(ui) {
             return;
         }
         self.pick_inspector(ui);
@@ -3097,6 +3101,7 @@ impl Shell {
             self.target = Some(target);
             self.dirty = true;
         }
+        self.sync_surface_source();
         let study_paint = self.study.paint.as_ref().filter(|_| self.press.is_none());
         let wall_paint = self.printing.wall_paint().filter(|_| self.press.is_none());
         let show_selection = study_paint.is_none() && wall_paint.is_none();
@@ -3213,6 +3218,7 @@ impl Shell {
         if show_selection {
             self.draw_pick_edges(ui, rect);
         }
+        self.surface_marker(ui, rect);
         self.study_markers(ui, rect);
         self.print_marker(ui, rect);
         self.view_cube(ui, rect);
@@ -3324,6 +3330,7 @@ impl eframe::App for Shell {
         self.poll_dialog(&ctx);
         self.poll(&ctx);
         self.poll_study(&ctx);
+        self.poll_surface(&ctx);
         self.poll_print(&ctx);
         self.poll_mesh_panel();
         self.poll_press();
@@ -5359,3 +5366,5 @@ mod windows_tests;
 mod assembly_interaction_tests;
 #[cfg(test)]
 mod marking_menu_tests;
+#[cfg(test)]
+mod surface_tests;

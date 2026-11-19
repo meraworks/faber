@@ -122,6 +122,26 @@ pub struct FaceMesh {
     pub face_of_triangle: Vec<u32>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceKind {
+    Plane,
+    Cylinder,
+    Sphere,
+    Cone,
+    Torus,
+    Freeform,
+}
+
+#[derive(Clone, Debug)]
+pub struct CurvedMesh {
+    pub faces: FaceMesh,
+    /// Principal curvatures per vertex, in ascending order. Convex is positive.
+    pub curvature: Vec<[f64; 2]>,
+    /// Surface type at each topology face index. Indices start at one.
+    pub kinds: std::collections::BTreeMap<u32, SurfaceKind>,
+}
+
 pub const FACE_MESH_UNSUPPORTED: &str = "Face mesh is not supported";
 pub const EDGE_LINES_UNSUPPORTED: &str = "Edge lines are not supported";
 
@@ -431,6 +451,9 @@ pub trait Kernel: Send + Sync {
     }
     fn tessellate_faces(&self, _shape: &Shape, _tolerance: f64) -> Result<FaceMesh> {
         Err(FACE_MESH_UNSUPPORTED.into())
+    }
+    fn tessellate_curvature(&self, _shape: &Shape, _tolerance: f64) -> Result<CurvedMesh> {
+        Err("Surface curvature is not supported.".into())
     }
     fn tessellate_edges(&self, _shape: &Shape, _tolerance: f64) -> Result<EdgeLines> {
         Err(EDGE_LINES_UNSUPPORTED.into())

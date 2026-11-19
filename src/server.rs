@@ -2,6 +2,7 @@
 
 mod drawing_tools;
 mod mesh_tools;
+mod surface_tools;
 use crate::input::Checked;
 use crate::schema_tool;
 use base64::Engine;
@@ -19,6 +20,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use surface_tools::{AccessAnalysis, Curvature, DraftAnalysis};
 
 pub const GUIDE: &str = include_str!("../docs/modelling-guide.md");
 
@@ -1273,9 +1275,19 @@ fn result(value: Result<Value, String>) -> CallToolResult {
 
 impl Faber {
     pub fn new() -> Self {
+        let mut tool_router = Self::tool_router();
+        for route in tool_router.map.values_mut() {
+            // MCP uses this dialect when the input schema omits its declaration.
+            let schema = &mut route.attr.input_schema;
+            if schema.get("$schema").and_then(Value::as_str)
+                == Some("https://json-schema.org/draft/2020-12/schema")
+            {
+                Arc::make_mut(schema).remove("$schema");
+            }
+        }
         Self {
             project: Arc::new(Mutex::new(None)),
-            tool_router: Self::tool_router(),
+            tool_router,
         }
     }
 
@@ -1448,6 +1460,28 @@ impl Faber {
             }
         }
         response
+    }
+    #[tool(
+        description = "Measure surface curvature and concave tool clearance. Set detail for all faces."
+    )]
+    fn curvature(&self, Parameters(Checked(a)): Parameters<Checked<Curvature>>) -> CallToolResult {
+        self.with(|p| surface_tools::curvature(p, a))
+    }
+    #[tool(description = "Measure draft and undercuts along a pull direction.")]
+    fn draft_analysis(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<DraftAnalysis>>,
+    ) -> CallToolResult {
+        self.with(|p| surface_tools::draft(p, a))
+    }
+    #[tool(
+        description = "Measure visible surface area along tool directions. Set scene to include other parts."
+    )]
+    fn access_analysis(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<AccessAnalysis>>,
+    ) -> CallToolResult {
+        self.with(|p| surface_tools::access(p, a))
     }
     #[tool(description = "Inspect a mesh. Report defects and size in part coordinates.")]
     fn mesh_report(&self, Parameters(Checked(a)): Parameters<Checked<MeshRead>>) -> CallToolResult {

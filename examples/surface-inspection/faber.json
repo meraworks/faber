@@ -1,0 +1,9 @@
+{
+  "schema": 2,
+  "revision": 1,
+  "name": "Surface inspection block",
+  "params": {
+    "inside_radius": "1.5",
+    "outside_radius": "2"
+  }
+}

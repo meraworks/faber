@@ -141,6 +141,56 @@ fn instructions_are_short() {
 }
 
 #[test]
+fn surface_tools_report_areas_and_render_without_changing_the_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = Session::start();
+    open_project(&mut s, dir.path());
+    s.ok(
+        "put_part",
+        json!({"id":"block","part":{"name":"Block","colour":[32,90,110],
+        "geometry":{"op":"box","size":[20,10,5]}}}),
+    );
+    let before = faber_wiring::project_fingerprint(dir.path()).unwrap();
+    let png = dir.path().join("curvature.png");
+    let summary = s.ok(
+        "curvature",
+        json!({"part":"block","render":{"path":png,"mode":"gauss"}}),
+    );
+    assert!(summary.get("faces").is_none());
+    assert!(summary["min_convex_radius_mm"].is_null());
+    assert!(summary["min_concave_radius_mm"].is_null());
+    assert_eq!(&std::fs::read(&png).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
+    let detail = s.ok("curvature", json!({"part":"block","detail":true}));
+    assert_eq!(detail["faces"].as_array().unwrap().len(), 6);
+    let draft = s.ok(
+        "draft_analysis",
+        json!({"part":"block","pull":[0,0,1],"min_deg":2}),
+    );
+    assert!((draft["vertical_mm2"].as_f64().unwrap() - 300.).abs() < 1e-8);
+    let access = s.ok(
+        "access_analysis",
+        json!({"part":"block","directions":[[0,0,1]],"scene":true}),
+    );
+    assert!((access["reachable_mm2"].as_f64().unwrap() - 200.).abs() < 1e-8);
+    for report in [summary, draft, access] {
+        assert!(report["method"].is_string() && !report["resolution"].is_null());
+        assert!(!report["limits"].as_array().unwrap().is_empty());
+    }
+    assert!(
+        s.refused("draft_analysis", json!({"part":"block","pull":[0,0,0]}))
+            .contains("zero")
+    );
+    assert!(
+        s.refused("curvature", json!({"part":"block","resolution":0.000001}))
+            .contains("0.001")
+    );
+    assert_eq!(
+        faber_wiring::project_fingerprint(dir.path()).unwrap(),
+        before
+    );
+}
+
+#[test]
 fn schema_tool_gives_one_op() {
     let mut session = Session::start();
     let value = session.ok("schema", json!({"kind":"geometry","op":"pipe"}));

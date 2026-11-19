@@ -61,6 +61,7 @@
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepLProp_SLProps.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffset_MakeOffset.hxx>
@@ -116,6 +117,8 @@ struct FaberEdgeFace { uint32_t edge,face; };
 struct FaberMesh {
     std::vector<double> vertices, normals;
     std::vector<uint32_t> triangles, face_of_triangle;
+    std::vector<double> curvature;
+    std::vector<uint8_t> surface_kinds;
 };
 struct FaberProperties {
     double volume;
@@ -1196,7 +1199,77 @@ extern "C" int faber_fillet_variable(const void* input,const uint32_t* indices,s
     });
 }
 
-extern "C" int faber_mesh(const void* input,double tolerance,void** result,char* error,size_t capacity) noexcept {
+static uint8_t surface_kind(GeomAbs_SurfaceType type) {
+    switch (type) {
+        case GeomAbs_Plane: return 0;
+        case GeomAbs_Cylinder: return 1;
+        case GeomAbs_Sphere: return 2;
+        case GeomAbs_Cone: return 3;
+        case GeomAbs_Torus: return 4;
+        default: return 5;
+    }
+}
+
+// At a singular parameter, evaluate inside a triangle that uses this node.
+static bool sample_adjacent(BRepLProp_SLProps& props, const BRepAdaptor_Surface& surface,
+                            const Poly_Triangulation& triangles, int node) {
+    const auto uv = triangles.UVNode(node);
+    for (int t = 1; t <= triangles.NbTriangles(); ++t) {
+        int a, b, c;
+        triangles.Triangle(t).Get(a, b, c);
+        if (a != node && b != node && c != node) continue;
+        double du = 0., dv = 0.;
+        for (int index : {a, b, c}) {
+            const auto corner = triangles.UVNode(index);
+            const double u = corner.X() - uv.X(), v = corner.Y() - uv.Y();
+            du += surface.IsUPeriodic() ? std::remainder(u, surface.UPeriod()) : u;
+            dv += surface.IsVPeriodic() ? std::remainder(v, surface.VPeriod()) : v;
+        }
+        props.SetParameters(uv.X() + du / 3., uv.Y() + dv / 3.);
+        if (props.IsCurvatureDefined()) return true;
+    }
+    return false;
+}
+
+static void sample_curvature(FaberMesh& mesh, const TopoDS_Face& face, int index,
+                             const Poly_Triangulation& triangles) {
+    const BRepAdaptor_Surface surface(face);
+    const auto type = surface.GetType();
+    mesh.surface_kinds.push_back(surface_kind(type));
+    const double orientation = face.Orientation() == TopAbs_REVERSED ? -1. : 1.;
+    if (type == GeomAbs_Plane || type == GeomAbs_Cylinder || type == GeomAbs_Sphere) {
+        double low = 0., high = 0.;
+        if (type == GeomAbs_Cylinder) {
+            const auto cylinder = surface.Cylinder();
+            high = (cylinder.Direct() ? orientation : -orientation) / cylinder.Radius();
+        } else if (type == GeomAbs_Sphere) {
+            // The sphere has the same curvature at its parameter poles.
+            const auto sphere = surface.Sphere();
+            low = high = (sphere.Direct() ? orientation : -orientation) / sphere.Radius();
+        }
+        if (low > high) std::swap(low, high);
+        for (int i = 1; i <= triangles.NbNodes(); ++i) {
+            mesh.curvature.insert(mesh.curvature.end(), {low, high});
+        }
+        return;
+    }
+    if (!triangles.HasUVNodes()) throw std::runtime_error("The surface mesh has no UV nodes.");
+    BRepLProp_SLProps props(surface, 2, Precision::Confusion());
+    for (int i = 1; i <= triangles.NbNodes(); ++i) {
+        const auto uv = triangles.UVNode(i);
+        props.SetParameters(uv.X(), uv.Y());
+        if (!props.IsCurvatureDefined() && !sample_adjacent(props, surface, triangles, i))
+            throw std::runtime_error("Curvature is undefined on face " + std::to_string(index) + ".");
+        // The differential convention is negative on the outside of a sphere.
+        double low = -orientation * props.MinCurvature(), high = -orientation * props.MaxCurvature();
+        if (!std::isfinite(low) || !std::isfinite(high))
+            throw std::runtime_error("Curvature is not finite on face " + std::to_string(index) + ".");
+        if (low > high) std::swap(low, high);
+        mesh.curvature.insert(mesh.curvature.end(), {low, high});
+    }
+}
+
+static int make_mesh(const void* input,double tolerance,bool curved,void** result,char* error,size_t capacity) noexcept {
     return protect(error,capacity,[&]{
         const auto& shape=static_cast<const FaberShape*>(input)->value;
         BRepMesh_IncrementalMesh operation(shape,tolerance,false,0.1,false);
@@ -1208,6 +1281,7 @@ extern "C" int faber_mesh(const void* input,double tolerance,void** result,char*
             const TopoDS_Face face=TopoDS::Face(faces(f));TopLoc_Location location;
             const Handle(Poly_Triangulation) triangles=BRep_Tool::Triangulation(face,location);
             if(triangles.IsNull()) throw std::runtime_error("Face has no mesh");
+            if (curved) sample_curvature(*mesh, face, f, *triangles);
             BRepLib_ToolTriangulatedShape::ComputeNormals(face,triangles);
             const uint32_t base=static_cast<uint32_t>(mesh->vertices.size()/3);
             for(int i=1;i<=triangles->NbNodes();++i) {
@@ -1226,6 +1300,23 @@ extern "C" int faber_mesh(const void* input,double tolerance,void** result,char*
         }
         *result=mesh.release();
     });
+}
+
+extern "C" int faber_mesh(const void* input,double tolerance,void** result,char* error,size_t capacity) noexcept {
+    return make_mesh(input,tolerance,false,result,error,capacity);
+}
+
+extern "C" int faber_curved_mesh(const void* input,double tolerance,void** result,char* error,size_t capacity) noexcept {
+    return make_mesh(input,tolerance,true,result,error,capacity);
+}
+
+extern "C" void faber_mesh_curvatures(const void* input,const double** curvature,size_t* nodes,
+                                      const uint8_t** kinds,size_t* faces) noexcept {
+    const auto* mesh = static_cast<const FaberMesh*>(input);
+    *curvature = mesh->curvature.data();
+    *nodes = mesh->curvature.size() / 2;
+    *kinds = mesh->surface_kinds.data();
+    *faces = mesh->surface_kinds.size();
 }
 
 extern "C" void faber_mesh_data(const void* input,const double** vertices,size_t* vertex_count,const uint32_t** triangles,size_t* triangle_count,const double** normals) noexcept {

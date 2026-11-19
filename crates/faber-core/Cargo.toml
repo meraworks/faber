@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+faber-geometry = { path = "../faber-geometry" }
 faber-meshtools = { path = "../faber-meshtools" }
 faber-std = { path = "../faber-std" }
 faber-expr = { path = "../faber-expr" }

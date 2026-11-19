@@ -1,4 +1,4 @@
-struct Uniform { matrix:mat4x4<f32>, eye:vec4<f32>, plane:vec4<f32>, selected:vec4<u32>, hovered:vec4<u32>, section_style:vec4<f32>, stress_ramp:array<vec4<f32>,4> }
+struct Uniform { matrix:mat4x4<f32>, eye:vec4<f32>, plane:vec4<f32>, selected:vec4<u32>, hovered:vec4<u32>, section_style:vec4<f32>, stress_ramp:array<vec4<f32>,4>, zebra:vec4<u32> }
 @group(0) @binding(0) var<uniform> camera:Uniform;
 struct Input { @location(0) position:vec3<f32>, @location(1) normal:vec3<f32>, @location(2) colour:vec3<f32>, @location(3) kind:f32, @location(4) mx:vec4<f32>,@location(5) my:vec4<f32>,@location(6) mz:vec4<f32>,@location(7) mw:vec4<f32>, @location(8) face_mark:u32 }
 struct Output { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>, @location(1) normal:vec3<f32>, @location(2) colour:vec3<f32>, @location(3) kind:f32 }
@@ -8,6 +8,10 @@ struct Output { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>,
     let world=model*vec4(v.position,1.0);
     o.clip=camera.matrix*world;o.world=world.xyz;o.normal=(model*vec4(v.normal,0.0)).xyz;o.colour=v.colour;o.kind=v.kind;
     if v.kind < -0.5 {return o;}
+    if v.kind == 0.0 && index >= camera.zebra.x && index < camera.zebra.y {
+        o.kind = -2.0;
+        return o;
+    }
     // Keep the cut face visible where it meets a coplanar face.
     if v.kind>1.5 {o.clip.z-=0.0000003*o.clip.w;}
     let limits=select(camera.selected.xy,camera.selected.zw,v.kind>1.5);
@@ -31,6 +35,15 @@ struct Output { @builtin(position) clip:vec4<f32>, @location(0) world:vec3<f32>,
         return vec4(v.colour*shadow-vec3(0.06)*line*fade,1.0);
     }
     if v.kind<0.5 && dot(camera.plane,vec4(v.world,1.0))>0.00001 {discard;}
+    if v.kind < -2.5 {return vec4(v.colour, 1.0);}
+    if v.kind < -1.5 {
+        let ray = normalize(v.world - camera.eye.xyz);
+        let phase = dot(reflect(ray, normalize(v.normal)), vec3(1.0, 0.0, 0.0)) * f32(camera.zebra.z);
+        let edge = abs(fract(phase) - 0.5);
+        let half_pixel = clamp(fwidth(phase) * 0.5, 0.001, 0.24);
+        let stripe = smoothstep(0.25 - half_pixel, 0.25 + half_pixel, edge);
+        return vec4(vec3(mix(0.008, 0.96, stripe)), 1.0);
+    }
     if v.kind < -0.5 {
         let t=clamp(v.colour.x,0.0,1.0)*3.0;
         let i=min(u32(t),2u);
