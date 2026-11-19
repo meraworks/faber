@@ -1822,6 +1822,7 @@ impl Faber {
         use faber_model::study::{Fixture, FixtureKind, Study, StudyLoad};
         self.with(|p| {
             let study = Study {
+                kind: faber_model::study::StudyKind::Static,
                 part: a.part,
                 fixtures: vec![Fixture {
                     face: a.fixed,

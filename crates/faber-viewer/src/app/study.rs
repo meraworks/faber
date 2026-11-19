@@ -55,6 +55,7 @@ pub(super) struct StudyPanel {
 
 fn new_study(part: String) -> Study<Scalar> {
     Study {
+        kind: faber_model::study::StudyKind::Static,
         part,
         fixtures: vec![],
         loads: vec![],

@@ -61,6 +61,7 @@ pub fn resolve_study(study: &Study<Scalar>, values: &BTreeMap<String, f64>) -> R
         })
         .collect::<Result<_>>()?;
     Ok(Study {
+        kind: study.kind.map_numbers(&mut |s| number(s))?,
         part: study.part.clone(),
         material: study.material.clone(),
         resolution_mm,
