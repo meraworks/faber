@@ -79,7 +79,13 @@ fn main() {
         return;
     }
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let target = output.ancestors().nth(3).unwrap();
+    // OUT_DIR is <profile>/build/<package>-<hash>/out, or <profile>/build/<package>/<hash>/out
+    // with newer Cargo. The runtime goes in <profile>, next to the executables.
+    let target = output
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "build"))
+        .and_then(Path::parent)
+        .unwrap();
     for entry in fs::read_dir(sdk.join("win64/vc14/bin")).unwrap() {
         let source = entry.unwrap().path();
         if source.extension().is_some_and(|e| e == "dll") {
