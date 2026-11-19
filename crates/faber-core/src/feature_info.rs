@@ -15,6 +15,9 @@ pub struct FeatureInfo {
 /// What a feature gives in part coordinates.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Reading {
+    OpenSketch {
+        reason: String,
+    },
     /// A solid. A suppressed modifier gives the solid that it passes on.
     Solid {
         volume_mm3: f64,
@@ -80,6 +83,10 @@ impl Project {
             }
         } else if let Some((origin, direction)) = cache.and_then(|cache| cache.axis(feature)) {
             Reading::Axis { origin, direction }
+        } else if let Some(reason) = cache.and_then(|cache| cache.open_sketch(feature)) {
+            Reading::OpenSketch {
+                reason: reason.into(),
+            }
         } else if let Some(point) = cache.and_then(|cache| cache.point(feature)) {
             Reading::Point { point }
         } else {

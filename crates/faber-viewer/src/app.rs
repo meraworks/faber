@@ -1655,9 +1655,20 @@ impl Shell {
             ctx,
             &mut self.window,
             ToolWindow::Sketch,
-            egui::Window::new("Create sketch")
-                .default_width(640.)
-                .collapsible(false),
+            egui::Window::new(
+                if draft
+                    .constrained
+                    .as_ref()
+                    .is_some_and(|e| e.target.is_some())
+                {
+                    "Edit constrained sketch"
+                } else {
+                    "Create sketch"
+                },
+            )
+            .id(egui::Id::unique("sketch_editor"))
+            .default_width(640.)
+            .collapsible(false),
             ctx.content_rect(),
             |ui, _, can_apply| {
                 ui.add_enabled_ui(!self.saving, |ui| {
@@ -1672,12 +1683,45 @@ impl Shell {
                 }
             },
         );
-        self.window.dirty |= draft.points.len() != point_count;
+        self.window.dirty |= draft.points.len() != point_count
+            || draft.constrained.as_ref().is_some_and(|e| e.dirty);
         cancel |= event == WindowEvent::Cancel;
         create |= event == WindowEvent::Apply
             && self.pending.is_none()
             && self.pending_pick_action.is_none();
-        if create && self.pending.is_none() {
+        if create
+            && self.pending.is_none()
+            && let Some(editor) = &draft.constrained
+            && !editor.ready()
+        {
+            return;
+        }
+        if create
+            && self.pending.is_none()
+            && let Some(editor) = &draft.constrained
+            && let Some((part, id, plane)) = &editor.target
+        {
+            let root = self.root.clone();
+            let expected = draft.expected.clone();
+            let ctx = ctx.clone();
+            let strict = self.strict_edits;
+            let edit = faber_model::Edit::EditFeature {
+                part: part.clone(),
+                id: id.clone(),
+                geometry: faber_model::Geometry::SolvedSketch {
+                    plane: plane.clone(),
+                    sketch: editor.data.clone(),
+                },
+            };
+            let (tx, rx) = mpsc::channel();
+            self.pending = Some(rx);
+            self.saving = true;
+            self.window.saving = true;
+            std::thread::spawn(move || {
+                let _ = tx.send(crate::edit::sections(&root, &expected, vec![edit], strict));
+                ctx.request_repaint();
+            });
+        } else if create && self.pending.is_none() {
             match draft.part() {
                 Err(error) => self.window.error = Some(error),
                 Ok(part) => {
@@ -2375,6 +2419,7 @@ impl Shell {
                 heading.scroll_to_me(Some(egui::Align::Min));
             }
             let mut next_feature = None;
+            let mut next_sketch = None;
             let mut suppress: Option<(String, bool)> = None;
             egui::ScrollArea::vertical()
                 .id_salt("feature_list")
@@ -2403,14 +2448,21 @@ impl Shell {
                                 .clicked()
                                 && let Some(id) = &part_id
                             {
-                                match crate::feature_form::FeatureForm::new(
-                                    self.data.clone(),
-                                    id.clone(),
-                                    feature.id.clone(),
-                                    &feature.geometry,
+                                if matches!(
+                                    feature.geometry,
+                                    faber_model::Geometry::SolvedSketch { .. }
                                 ) {
-                                    Ok(form) => next_feature = Some(form),
-                                    Err(error) => self.error = Some(error),
+                                    next_sketch = Some((id.clone(), feature.id.clone()));
+                                } else {
+                                    match crate::feature_form::FeatureForm::new(
+                                        self.data.clone(),
+                                        id.clone(),
+                                        feature.id.clone(),
+                                        &feature.geometry,
+                                    ) {
+                                        Ok(form) => next_feature = Some(form),
+                                        Err(error) => self.error = Some(error),
+                                    }
                                 }
                             }
                             if ui
@@ -2437,6 +2489,9 @@ impl Shell {
                         });
                     }
                 });
+            if let Some((part, id)) = next_sketch {
+                self.open_solved_sketch(&part, &id);
+            }
             if let Some(form) = next_feature {
                 self.request_window(Draft::Feature(form));
             }
@@ -2480,6 +2535,77 @@ impl Shell {
         self.analysis_list(ui);
     }
 
+    fn open_solved_sketch(&mut self, part: &str, id: &str) {
+        match crate::sketch::SketchDraft::edit(self.data.clone(), part, id) {
+            Ok(draft) => self.request_window(Draft::Sketch(draft)),
+            Err(message) => self.error = Some(message),
+        }
+    }
+
+    fn edit_sketch_button(&mut self, ui: &mut egui::Ui) {
+        let Some(id) = self.selected.as_ref() else {
+            return;
+        };
+        let Some(part) = self.data.parts.get(id) else {
+            return;
+        };
+        let faber_model::Geometry::History { features, .. } = &part.geometry else {
+            return;
+        };
+        if faber_core::pick_selector::editable_part(id, part).is_err() {
+            return;
+        }
+        let profiles = crate::feature_form::sketch_ids(&part.geometry, "");
+        if let Some(source) = profiles.first()
+            && ui.button("Offset sketch").clicked()
+        {
+            let next = (1..)
+                .map(|n| format!("offset_sketch_{n}"))
+                .find(|name| features.iter().all(|f| &f.id != name))
+                .unwrap();
+            let geometry = faber_model::Geometry::OffsetSketch {
+                sketch: source.clone(),
+                distance: (-2.).into(),
+            };
+            match crate::feature_form::FeatureForm::new(
+                self.data.clone(),
+                id.clone(),
+                next,
+                &geometry,
+            ) {
+                Ok(mut form) => {
+                    form.create = true;
+                    self.request_window(Draft::Feature(form));
+                }
+                Err(error) => self.error = Some(error),
+            }
+            return;
+        }
+        let mut solved = features
+            .iter()
+            .filter(|f| matches!(f.geometry, faber_model::Geometry::SolvedSketch { .. }));
+        let Some(first) = solved.next() else {
+            return;
+        };
+        let open = if let Some(next) = solved.next() {
+            ui.menu_button("Edit sketch", |ui| {
+                for feature in [first, next].into_iter().chain(solved) {
+                    if ui.button(&feature.id).clicked() {
+                        ui.close();
+                        return Some(feature.id.clone());
+                    }
+                }
+                None
+            })
+            .inner
+            .flatten()
+        } else {
+            ui.button("Edit sketch").clicked().then(|| first.id.clone())
+        };
+        if let Some(feature) = open {
+            self.open_solved_sketch(&id.clone(), &feature);
+        }
+    }
     fn inspector(&mut self, ui: &mut egui::Ui) {
         if self.mesh_tool.is_some() {
             self.mesh_panel(ui);
@@ -2492,6 +2618,7 @@ impl Shell {
         if self.surface_panel(ui) || self.study_panel(ui) || self.print_panel(ui) {
             return;
         }
+        self.edit_sketch_button(ui);
         self.pick_inspector(ui);
         self.motion_controls(ui);
         ui.add_space(12.);
@@ -5364,6 +5491,8 @@ mod windows_tests;
 
 #[cfg(test)]
 mod assembly_interaction_tests;
+#[cfg(test)]
+mod constrained_sketch_tests;
 #[cfg(test)]
 mod marking_menu_tests;
 #[cfg(test)]

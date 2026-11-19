@@ -1,3 +1,5 @@
+mod constrained;
+mod constraints;
 use faber_model::{
     Feature, Geometry, Part, Placement, ProjectData, Scalar, SketchLoop, SketchProfile,
 };
@@ -20,6 +22,7 @@ pub enum Tool {
 
 pub struct SketchDraft {
     pub expected: ProjectData,
+    pub(crate) constrained: Option<Box<constrained::Editor>>,
     pub plane: Plane,
     face_plane: Option<(Placement, [f64; 3])>,
     pub tool: Tool,
@@ -163,17 +166,50 @@ impl SketchDraft {
     }
     pub fn ui(&mut self, ui: &mut eframe::egui::Ui, can_apply: bool) -> bool {
         use eframe::egui::{self, Color32, Stroke};
-        ui.horizontal(|ui| {
-            ui.label("Plane");
-            for (name, plane) in [("XY", Plane::Xy), ("XZ", Plane::Xz), ("YZ", Plane::Yz)] {
-                ui.selectable_value(&mut self.plane, plane, name);
+        if self.constrained.is_none() && ui.button("Constrained sketch").clicked() {
+            self.constrained = Some(Box::new(constrained::Editor::new(
+                Default::default(),
+                &self.expected.params,
+                None,
+            )));
+        }
+        let editing = self
+            .constrained
+            .as_ref()
+            .and_then(|e| e.target.as_ref())
+            .is_some();
+        if !editing {
+            ui.horizontal(|ui| {
+                ui.label("Plane");
+                for (name, plane) in [("XY", Plane::Xy), ("XZ", Plane::Xz), ("YZ", Plane::Yz)] {
+                    ui.selectable_value(&mut self.plane, plane, name);
+                }
+                if self.face_plane.is_some() {
+                    ui.selectable_value(&mut self.plane, Plane::Face, "Picked face");
+                } else {
+                    ui.label("Pick a planar face in the view.");
+                }
+            });
+        }
+        if let Some(editor) = &mut self.constrained {
+            if let Some((_, _, plane)) = &editor.target {
+                ui.label(format!("Sketch plane · {plane}"));
             }
-            if self.face_plane.is_some() {
-                ui.selectable_value(&mut self.plane, Plane::Face, "Picked face");
-            } else {
-                ui.label("Pick a planar face in the view.");
+            editor.ui(ui);
+            if !editing {
+                ui.horizontal(|ui| {
+                    let name = ui.label("Body name");
+                    ui.text_edit_singleline(&mut self.name).labelled_by(name.id);
+                    let label = ui.label("Extrusion distance");
+                    ui.add(egui::TextEdit::singleline(&mut self.height).desired_width(56.))
+                        .labelled_by(label.id);
+                    ui.label("mm");
+                });
             }
-        });
+            return ui
+                .add_enabled(can_apply && editor.ready(), egui::Button::new("Finish"))
+                .clicked();
+        }
         ui.horizontal(|ui| {
             for (name, tool) in [
                 ("Rectangle", Tool::Rectangle),
@@ -376,6 +412,7 @@ impl SketchDraft {
     pub fn new(expected: ProjectData) -> Self {
         Self {
             expected,
+            constrained: None,
             plane: Plane::Xy,
             face_plane: None,
             tool: Tool::Rectangle,
@@ -403,6 +440,94 @@ impl SketchDraft {
         if self.name.trim().is_empty() {
             return Err("Enter a body name".into());
         }
+        let solid_profile = if self.constrained.is_some() {
+            None
+        } else {
+            Some(self.typed_loop()?)
+        };
+        let mut placement = Placement::<Scalar>::default();
+        let h = Scalar::Expression(self.height.clone());
+        let vector = match self.plane {
+            Plane::Face => {
+                let (plane, normal) = self.face_plane.as_ref().ok_or("Pick a planar face.")?;
+                placement = plane.map_numbers(&mut |v| Ok(Scalar::Number(*v)))?;
+                normal.map(|n| {
+                    if n.abs() < 1e-12 {
+                        Scalar::Number(0.)
+                    } else if (n - 1.).abs() < 1e-12 {
+                        h.clone()
+                    } else {
+                        Scalar::Expression(format!("({}) * ({n})", self.height))
+                    }
+                })
+            }
+            Plane::Xy => [0.0.into(), 0.0.into(), h],
+            Plane::Xz => {
+                placement.rotation = [90.0.into(), 0.0.into(), 0.0.into()];
+                [
+                    0.0.into(),
+                    Scalar::Expression(format!("-({})", self.height)),
+                    0.0.into(),
+                ]
+            }
+            Plane::Yz => {
+                placement.rotation = [90.0.into(), 0.0.into(), 90.0.into()];
+                [h, 0.0.into(), 0.0.into()]
+            }
+        };
+        Ok(Part {
+            component: None,
+            material: None,
+            name: self.name.clone(),
+            colour: [151, 172, 176],
+            group: String::new(),
+            note: String::new(),
+            placement: Placement::default(),
+            geometry: Geometry::History {
+                features: {
+                    let mut features = Vec::new();
+                    let geometry = if let Some(editor) = &self.constrained {
+                        if !editor.ready() {
+                            return Err("Complete the sketch before you finish.".into());
+                        }
+                        features.push(Feature {
+                            id: "plane".into(),
+                            geometry: Geometry::Plane { placement },
+                            suppressed: false,
+                        });
+                        Geometry::SolvedSketch {
+                            plane: "plane".into(),
+                            sketch: editor.data.clone(),
+                        }
+                    } else {
+                        Geometry::Sketch {
+                            profile: SketchProfile {
+                                outer: solid_profile.ok_or("Draw a closed profile first.")?,
+                                holes: vec![],
+                            },
+                            placement,
+                        }
+                    };
+                    features.push(Feature {
+                        id: "sketch".into(),
+                        geometry,
+                        suppressed: false,
+                    });
+                    features.push(Feature {
+                        id: "extrude".into(),
+                        geometry: Geometry::ExtrudeSketch {
+                            source: "sketch".into(),
+                            vector,
+                        },
+                        suppressed: false,
+                    });
+                    features
+                },
+                output: "extrude".into(),
+            },
+        })
+    }
+    fn typed_loop(&self) -> Result<SketchLoop<Scalar>, String> {
         if self.points.len() < 2 {
             return Err("Draw a closed profile first".into());
         }
@@ -460,69 +585,30 @@ impl SketchDraft {
                 }
             }
         };
-        let mut placement = Placement::<Scalar>::default();
-        let h = Scalar::Expression(self.height.clone());
-        let vector = match self.plane {
-            Plane::Face => {
-                let (plane, normal) = self.face_plane.as_ref().ok_or("Pick a planar face.")?;
-                placement = plane.map_numbers(&mut |v| Ok(Scalar::Number(*v)))?;
-                normal.map(|n| {
-                    if n.abs() < 1e-12 {
-                        Scalar::Number(0.)
-                    } else if (n - 1.).abs() < 1e-12 {
-                        h.clone()
-                    } else {
-                        Scalar::Expression(format!("({}) * ({n})", self.height))
-                    }
-                })
-            }
-            Plane::Xy => [0.0.into(), 0.0.into(), h],
-            Plane::Xz => {
-                placement.rotation = [90.0.into(), 0.0.into(), 0.0.into()];
-                [
-                    0.0.into(),
-                    Scalar::Expression(format!("-({})", self.height)),
-                    0.0.into(),
-                ]
-            }
-            Plane::Yz => {
-                placement.rotation = [90.0.into(), 0.0.into(), 90.0.into()];
-                [h, 0.0.into(), 0.0.into()]
-            }
+        Ok(outer)
+    }
+
+    pub(crate) fn edit(expected: ProjectData, part: &str, feature: &str) -> Result<Self, String> {
+        let record = expected.parts.get(part).ok_or("Select a part.")?;
+        faber_core::pick_selector::editable_part(part, record)?;
+        let Geometry::History { features, .. } = &record.geometry else {
+            return Err("The part has no feature history.".into());
         };
-        Ok(Part {
-            component: None,
-            material: None,
-            name: self.name.clone(),
-            colour: [151, 172, 176],
-            group: String::new(),
-            note: String::new(),
-            placement: Placement::default(),
-            geometry: Geometry::History {
-                features: vec![
-                    Feature {
-                        id: "sketch".into(),
-                        geometry: Geometry::Sketch {
-                            profile: SketchProfile {
-                                outer,
-                                holes: vec![],
-                            },
-                            placement,
-                        },
-                        suppressed: false,
-                    },
-                    Feature {
-                        id: "extrude".into(),
-                        geometry: Geometry::ExtrudeSketch {
-                            source: "sketch".into(),
-                            vector,
-                        },
-                        suppressed: false,
-                    },
-                ],
-                output: "extrude".into(),
-            },
-        })
+        let item = features
+            .iter()
+            .find(|f| f.id == feature)
+            .ok_or("Select a sketch feature.")?;
+        let Geometry::SolvedSketch { plane, sketch } = &item.geometry else {
+            return Err("Select a constrained sketch.".into());
+        };
+        let editor = constrained::Editor::new(
+            sketch.clone(),
+            &expected.params,
+            Some((part.into(), feature.into(), plane.clone())),
+        );
+        let mut draft = Self::new(expected);
+        draft.constrained = Some(Box::new(editor));
+        Ok(draft)
     }
 }
 

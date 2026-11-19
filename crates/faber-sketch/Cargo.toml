@@ -1,0 +1,12 @@
+[package]
+name = "faber-sketch"
+edition = "2024"
+version = "0.1.0"
+
+[dependencies]
+faber-model = { path = "../faber-model" }
+serde.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

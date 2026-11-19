@@ -24,6 +24,23 @@ use surface_tools::{AccessAnalysis, Curvature, DraftAnalysis};
 
 pub const GUIDE: &str = include_str!("../docs/modelling-guide.md");
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SolveSketch {
+    #[schemars(with = "serde_json::Value")]
+    sketch: faber_sketch::Sketch<Scalar>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct EditSketch {
+    part: String,
+    feature: String,
+    #[schemars(with = "Vec<serde_json::Value>")]
+    ops: Vec<faber_sketch::SketchOp<Scalar>>,
+    expected_revision: Option<u64>,
+}
+
 /// Short start-up instructions for the client. The guide has the details.
 const INSTRUCTIONS: &str = "Faber builds editable solids. Units are millimetres and degrees. Z is up. Axes are right-handed.
 
@@ -893,10 +910,12 @@ fn part_summary(body: &Body) -> Value {
 
 /// The reply of a changing tool. It lists the changed parts. Verbose gives every part.
 fn changed_reply(before: &Before, project: &Project, verbose: bool) -> Value {
-    if verbose {
-        return report(&project.data, &project.bodies);
-    }
-    json!({"schema":1,"revision":project.data.revision,"changed":before.changed(project),"part_count":project.bodies.len()})
+    let value = if verbose {
+        report(&project.data, &project.bodies)
+    } else {
+        json!({"schema":1,"revision":project.data.revision,"changed":before.changed(project),"part_count":project.bodies.len()})
+    };
+    with_sketch_warnings(value, project)
 }
 
 fn check_revision(project: &Project, expected: Option<u64>) -> Result<(), String> {
@@ -1215,8 +1234,16 @@ pub fn report(data: &ProjectData, bodies: &[Body]) -> Value {
     report
 }
 
+fn with_sketch_warnings(mut value: Value, p: &Project) -> Value {
+    let warnings = p.sketch_warnings();
+    if !warnings.is_empty() {
+        value["sketch_warnings"] = json!(warnings);
+    }
+    value
+}
+
 pub fn project_status(root: &Path, p: &Project) -> Result<Value, String> {
-    let mut value = report(&p.data, &p.bodies);
+    let mut value = with_sketch_warnings(report(&p.data, &p.bodies), p);
     let links = faber_wiring::links::list(root, p)?;
     if !links.is_empty() {
         value["links"] = json!(links);
@@ -1239,7 +1266,7 @@ fn placed_reply(before: &Before, project: &Project, verbose: bool) -> Value {
 
 /// Add the resolved absolute project path to the open reply.
 fn open_reply(project: &Project, path: &Path) -> Value {
-    let mut value = report(&project.data, &project.bodies);
+    let mut value = with_sketch_warnings(report(&project.data, &project.bodies), project);
     value["path"] = json!(display_path(path));
     value["source"] = json!(project.source());
     with_source_error(value, project)
@@ -1857,6 +1884,44 @@ impl Faber {
         })
     }
 
+    #[tool(description = "Solve a sketch without saving. Dimensions can use project parameters.")]
+    fn solve_sketch(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<SolveSketch>>,
+    ) -> CallToolResult {
+        let sketch = {
+            let open = self.project.lock().unwrap_or_else(|p| p.into_inner());
+            faber_core::resolve_sketch(&a.sketch, open.as_ref().map(|o| &o.project))
+        };
+        result(
+            sketch
+                .and_then(|s| faber_sketch::solve(&s))
+                .map(|solution| {
+                    let mut value = json!(solution);
+                    value["method"] =
+                        json!("Planar constraints with damped least squares and rank analysis.");
+                    value["resolution"] = json!({"residual_mm":1e-9,"max_iterations":100});
+                    value["limits"] = json!([
+                        "The result describes the local solution from the supplied start positions."
+                    ]);
+                    value
+                }),
+        )
+    }
+
+    #[tool(description = "Edit a constrained sketch and rebuild the part as one revision.")]
+    fn edit_sketch(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<EditSketch>>,
+    ) -> CallToolResult {
+        self.with(|p| {
+            check_revision(p, a.expected_revision)?;
+            let before = Before::of(p);
+            p.edit_sketch(&a.part, &a.feature, &a.ops)?;
+            Ok(changed_reply(&before, p, false))
+        })
+    }
+
     #[tool(description = "Read part bounds, volume and triangle counts.")]
     fn status(&self) -> CallToolResult {
         self.with_folder(|root, p| project_status(root, p))
@@ -2194,6 +2259,7 @@ impl Faber {
                     reply["direction"] = json!(direction);
                 }
                 Reading::Suppressed => reply["suppressed"] = json!(true),
+                Reading::OpenSketch {reason}=>reply["open_profile"]=json!(reason),
                 Reading::Point { point } => reply["point"] = json!(point),
             }
             Ok(reply)

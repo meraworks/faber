@@ -1622,3 +1622,35 @@ Timing on a copy of `examples/trash-bin` (debug build, MCP driver,
   files. The maps used 74752 samples for the bridge access check.
 - The installed viewer rendered 22 examples. Returning to the same
   section position in the 232-body assembly restored identical pixels.
+
+## Fusion parity 10: Constrained sketches
+
+- Solve planar lines, circular arcs and circles with 22 constraint types.
+  Free points and radii can move. The result identifies redundant and
+  conflicting constraints. The installed Fusion SDK exposes coincidence,
+  tangency and fully constrained status. The viewer follows the colours in
+  the [Fusion sketch guide](https://help.autodesk.com/cloudhelp/ENU/Fusion-Sketch/files/SKT-FULLY-DEFINE-CONSTRAIN-SKETCH.htm).
+- A 40 by 20 mm sketch extruded by 10 mm gave 8000 mm³. Setting the
+  width to 50 mm gave 10000 mm³. A 2 mm inward offset on the original
+  sketch gave a 2240 mm³ rim. Inner holes grow when the outer loop shrinks.
+- Open sketches can be kept as work in progress. A feature that requires
+  a closed loop names the open ends and leaves the project files unchanged.
+  Closed regions retain circular edges. The tests include a material
+  island inside a hole and disjoint regions in an extrusion, revolve,
+  sweep and loft.
+- The viewer tests use pointer events to change a dimension, move a
+  free corner, remove a constraint, offset a profile and undo an edit.
+  An invalid expression keeps the last valid sketch visible.
+- On this PC, a drag in a 202-constraint sketch took 4.94 ms at the
+  median and 7.57 ms at the 95th percentile in the solver measurement.
+  Holding the pointer still kept the coordinates bit for bit.
+- All 1153 workspace tests passed, including 217 viewer tests. Clippy
+  passed with warnings denied. Fixing a point after a dimension change
+  now holds its displayed position. A point with one parameter-driven
+  coordinate keeps its expression when the other coordinate is dragged.
+- In the 232-body assembly, section drag frames took 5.62 ms at the
+  median and 14.76 ms at the maximum. The installed CLI rebuilt the
+  mounting plate at widths of 60 and 76 mm. Its volumes were 11683.65
+  and 15011.65 mm³.
+- The installed viewer rendered all 23 examples. Returning the section
+  to its previous offset in the 232-body assembly gave identical pixels.

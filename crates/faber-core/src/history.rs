@@ -261,6 +261,22 @@ mod tests {
 pub(crate) struct Cache(BTreeMap<String, Entry>);
 
 impl Cache {
+    pub(crate) fn open_sketch(&self, id: &str) -> Option<&str> {
+        match &self.0.get(id)?.value {
+            Built::OpenSketch(reason) => Some(reason),
+            _ => None,
+        }
+    }
+    pub(crate) fn sketch_warnings(&self) -> BTreeMap<String, usize> {
+        self.0
+            .iter()
+            .filter_map(|(name, entry)| {
+                let solution = entry.solution.as_ref()?;
+                (solution.status == faber_sketch::Status::Under)
+                    .then(|| (name.clone(), solution.dof))
+            })
+            .collect()
+    }
     pub(crate) fn shape(&self, id: &str) -> Option<&Shape> {
         self.0.get(id).and_then(|entry| match &entry.value {
             Built::Shape(shape) => Some(shape),
@@ -293,6 +309,7 @@ impl Cache {
 #[derive(Clone)]
 enum Built {
     Shape(Shape),
+    OpenSketch(String),
     Plane(faber_model::Placement),
     Axis {
         origin: [f64; 3],
@@ -305,6 +322,7 @@ impl Built {
     fn same_input(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Shape(a), Self::Shape(b)) => a.same_instance(b),
+            (Self::OpenSketch(a), Self::OpenSketch(b)) => a == b,
             (Self::Plane(a), Self::Plane(b)) => a == b,
             (Self::Point(a), Self::Point(b)) => a == b,
             (
@@ -463,6 +481,7 @@ fn reference(geometry: &Geometry) -> Result<Option<Built>> {
 
 #[derive(Clone)]
 struct Entry {
+    solution: Option<std::sync::Arc<faber_sketch::Solution>>,
     geometry: Geometry,
     dependencies: Vec<Built>,
     value: Built,
@@ -670,6 +689,7 @@ pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
 /// The input solid of a feature that changes one solid. Creation features and references have none.
 pub(crate) fn primary_input<N>(geometry: &Geometry<N>) -> Option<&str> {
     match geometry {
+        Geometry::OffsetSketch { sketch, .. } => Some(sketch),
         Geometry::RemoveFaces { body, .. }
         | Geometry::MoveFaces { body, .. }
         | Geometry::SplitFace { body, .. }
@@ -805,6 +825,7 @@ pub(crate) fn build(
         };
         let source = |name: &str| match previous(name)? {
             Built::Shape(shape) => Ok(shape),
+            Built::OpenSketch(reason) => Err(format!("Sketch {name}: {reason}")),
             _ => Err(format!("Feature {name} is a reference, not a shape")),
         };
         let dependencies = if matches!(
@@ -818,7 +839,9 @@ pub(crate) fn build(
                 .into_iter()
                 .map(|id| previous(id).cloned())
                 .collect::<Result<Vec<_>>>()?
-        } else if let Geometry::SketchOnPlane { plane, .. } = &feature.geometry {
+        } else if let Geometry::SketchOnPlane { plane, .. } | Geometry::SolvedSketch { plane, .. } =
+            &feature.geometry
+        {
             vec![previous(plane)?.clone()]
         } else if let Geometry::RevolveAround {
             source: name,
@@ -882,7 +905,8 @@ pub(crate) fn build(
                     }
                     inputs
                 }
-                Geometry::Mirror { source: name, .. }
+                Geometry::OffsetSketch { sketch: name, .. }
+                | Geometry::Mirror { source: name, .. }
                 | Geometry::CircularPattern { source: name, .. }
                 | Geometry::LinearPattern { source: name, .. }
                 | Geometry::Transform { source: name, .. }
@@ -963,6 +987,7 @@ pub(crate) fn build(
             next.insert(
                 feature.id.clone(),
                 Entry {
+                    solution: None,
                     geometry: feature.geometry.clone(),
                     dependencies,
                     value: value.clone(),
@@ -971,6 +996,45 @@ pub(crate) fn build(
             shapes.insert(feature.id.clone(), value);
             continue;
         }
+        let (solution, contours) =
+            if let Geometry::SolvedSketch { plane, sketch } = &feature.geometry {
+                if !matches!(previous(plane)?, Built::Plane(_)) {
+                    return Err(named(
+                        feature,
+                        format!("Feature {plane} is not a reference plane"),
+                    ));
+                }
+                let solution = std::sync::Arc::new(
+                    crate::sketch_cache::get_or_solve(
+                        persist,
+                        key.as_deref(),
+                        sketch,
+                        crate::sketch::solve,
+                    )
+                    .map_err(|e| named(feature, e))?,
+                );
+                match faber_sketch::profile::contours(sketch, &solution)
+                    .map_err(|e| named(feature, e))?
+                {
+                    faber_sketch::profile::Contours::Closed(contours) => (Some(solution), contours),
+                    faber_sketch::profile::Contours::Open(reason) => {
+                        let value = Built::OpenSketch(reason);
+                        next.insert(
+                            feature.id.clone(),
+                            Entry {
+                                geometry: feature.geometry.clone(),
+                                dependencies,
+                                value: value.clone(),
+                                solution: Some(solution),
+                            },
+                        );
+                        shapes.insert(feature.id.clone(), value);
+                        continue;
+                    }
+                }
+            } else {
+                (None, Vec::new())
+            };
         if let Some(store) = persist
             && let Some(key) = &key
             && let Some(shape) = load_persisted(store, key, kernel)
@@ -978,6 +1042,7 @@ pub(crate) fn build(
             next.insert(
                 feature.id.clone(),
                 Entry {
+                    solution,
                     geometry: feature.geometry.clone(),
                     dependencies,
                     value: Built::Shape(shape.clone()),
@@ -1015,7 +1080,9 @@ pub(crate) fn build(
                     let Built::Axis { origin, direction } = previous(axis)? else {
                         return Err(format!("Feature {axis} is not a reference axis"));
                     };
-                    kernel.revolve_shape(source(name)?, *origin, *direction, *angle)
+                    crate::sketch_regions::each(kernel, source(name)?, |face| {
+                        kernel.revolve_shape(face, *origin, *direction, *angle)
+                    })
                 }
                 Geometry::PlaceAtPoint {
                     source: name,
@@ -1031,6 +1098,15 @@ pub(crate) fn build(
                             rotation: [0.; 3],
                         },
                     )
+                }
+                Geometry::SolvedSketch { plane, .. } => {
+                    let Built::Plane(frame) = previous(plane)? else {
+                        return Err(format!("Feature {plane} is not a reference plane"));
+                    };
+                    crate::sketch::face(kernel, &contours, frame)
+                }
+                Geometry::OffsetSketch { sketch, distance } => {
+                    crate::sketch::offset(kernel, source(sketch)?, *distance)
                 }
                 Geometry::SketchOnPlane {
                     plane,
@@ -1124,25 +1200,34 @@ pub(crate) fn build(
                     source: name,
                     path,
                     frenet,
-                } => kernel.sweep_shape(source(name)?, source(path)?, *frenet),
+                } => {
+                    let path = source(path)?;
+                    crate::sketch_regions::each(kernel, source(name)?, |face| {
+                        kernel.sweep_shape(face, path, *frenet)
+                    })
+                }
                 Geometry::RevolveSketch {
                     source: name,
                     origin,
                     axis,
                     angle,
-                } => kernel.revolve_shape(source(name)?, *origin, *axis, *angle),
+                } => crate::sketch_regions::each(kernel, source(name)?, |face| {
+                    kernel.revolve_shape(face, *origin, *axis, *angle)
+                }),
                 Geometry::LoftSketches { sources, ruled } => {
                     let sections = sources
                         .iter()
                         .map(|name| source(name).cloned())
                         .collect::<Result<Vec<_>>>()?;
-                    kernel.loft_shapes(&sections, *ruled)
+                    crate::sketch_regions::loft(kernel, &sections, *ruled)
                 }
                 Geometry::Sketch { profile, placement } => kernel.sketch(profile, placement),
                 Geometry::ExtrudeSketch {
                     source: name,
                     vector,
-                } => kernel.extrude_shape(source(name)?, *vector),
+                } => crate::sketch_regions::each(kernel, source(name)?, |face| {
+                    kernel.extrude_shape(face, *vector)
+                }),
                 Geometry::Emboss {
                     body,
                     face,
@@ -1378,7 +1463,10 @@ pub(crate) fn build(
             .summary_properties(&shape)
             .map_err(|error| named(feature, error))?;
         let (sketch, curve) = match &feature.geometry {
-            Geometry::Sketch { .. } | Geometry::SketchOnPlane { .. } => (true, false),
+            Geometry::Sketch { .. }
+            | Geometry::SketchOnPlane { .. }
+            | Geometry::SolvedSketch { .. }
+            | Geometry::OffsetSketch { .. } => (true, false),
             Geometry::Curve { .. } | Geometry::Helix { .. } => (false, true),
             Geometry::Transform { source: name, .. }
             | Geometry::PlaceAtPoint { source: name, .. } => {
@@ -1427,6 +1515,7 @@ pub(crate) fn build(
         next.insert(
             feature.id.clone(),
             Entry {
+                solution,
                 geometry: feature.geometry.clone(),
                 dependencies,
                 value: Built::Shape(shape.clone()),
@@ -1447,6 +1536,7 @@ pub(crate) fn build(
             // The key is set only when the persistent cache is active.
             Ok((shape, keys.get(output).cloned()))
         }
+        Built::OpenSketch(reason) => Err(format!("Sketch {output}: {reason}")),
         _ => Err("A reference cannot be the part output".into()),
     }
 }

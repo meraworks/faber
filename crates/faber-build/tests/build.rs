@@ -506,3 +506,47 @@ fn label_bottle_example_wraps_the_lettering_on_one_hollow_solid() {
             .any(|c| c.internal && (c.radius - 25.).abs() < 1e-5)
     );
 }
+
+#[test]
+fn solved_and_offset_sketch_helpers_keep_the_expression_and_references() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        r#"local f=import 'faber.libsonnet';
+{parts:{plate:f.part('Plate',[f.solved_sketch('outline','plane',{a:[0,0], b:[10,0]}, {l:{kind:'line',a:'a',b:'b'}}, [{kind:'length',line:'l',value:'width'}],['l']),f.offset_sketch('inset','outline',-2)],'inset')}}"#,
+    );
+    let baseline = serde_json::from_value(
+        serde_json::json!({"schema":1,"revision":1,"name":"Example","parts":{}}),
+    )
+    .unwrap();
+    let built = faber_build::evaluate(dir.path(), &baseline).unwrap();
+    let g = serde_json::to_value(&built.data.parts["plate"].geometry).unwrap();
+    assert_eq!(
+        g["features"][0]["geometry"]["sketch"]["constraints"][0]["value"],
+        "width"
+    );
+    assert_eq!(
+        g["features"][0]["geometry"]["sketch"]["construction"][0],
+        "l"
+    );
+    assert_eq!(g["features"][1]["geometry"]["distance"], -2.);
+}
+
+#[test]
+fn the_constrained_plate_rebuilds_its_step_when_its_width_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "design.jsonnet",
+        include_str!("../../../examples/constrained-plate/design.jsonnet"),
+    );
+    source().build(dir.path()).unwrap();
+    let mut data = faber_files::read(dir.path()).unwrap();
+    let original = faber_core::build(&data, &OcctKernel).unwrap().remove(0);
+    assert!((original.bounds[1][0] - original.bounds[0][0] - 60.).abs() < 1e-5);
+    data.params.insert("plate_width".into(), "70".into());
+    let wider = faber_core::build(&data, &OcctKernel).unwrap().remove(0);
+    assert!((wider.bounds[1][0] - wider.bounds[0][0] - 70.).abs() < 1e-5);
+    assert!((wider.volume - original.volume - (36. * 4. + 32. * 2.) * 10.).abs() < 1e-4);
+}

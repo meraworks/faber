@@ -50,6 +50,15 @@
   feature(id, op, fields)::
     { id: id, geometry: { op: op } + fields },
 
+  // A sketch with editable dimensions. Its coordinates lie in the named plane.
+  solved_sketch(id, plane, points, entities, constraints=[], construction=[])::
+    faber.feature(id, 'solved_sketch', {plane: plane, sketch: {
+      points: points, entities: entities, constraints: constraints, construction: construction,
+    }}),
+
+  offset_sketch(id, sketch, distance)::
+    faber.feature(id, 'offset_sketch', {sketch: sketch, distance: distance}),
+
   // A box at the origin with the corner at the origin. `size` is [x, y, z].
   box(id, size)::
     faber.feature(id, 'box', { size: size }),

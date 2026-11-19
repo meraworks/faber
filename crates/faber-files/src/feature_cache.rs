@@ -3,7 +3,7 @@
 use faber_ports::{FeatureCache, Result};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 #[cfg(test)]
@@ -146,7 +146,24 @@ impl FeatureCache for FileFeatureCache {
     }
 
     fn get(&self, key: &str) -> Option<Vec<u8>> {
-        let bytes = std::fs::read(self.path(key)?).ok()?;
+        self.get_bounded(key, usize::MAX - HEADER - 1)
+    }
+
+    fn get_bounded(&self, key: &str, max_bytes: usize) -> Option<Vec<u8>> {
+        let file = std::fs::File::open(self.path(key)?).ok()?;
+        let limit = max_bytes.saturating_add(HEADER);
+        let length = usize::try_from(file.metadata().ok()?.len()).ok()?;
+        if length > limit {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length).ok()?;
+        file.take((limit as u64).saturating_add(1))
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() > limit {
+            return None;
+        }
         if bytes.len() < HEADER || &bytes[..4] != MAGIC {
             return None;
         }

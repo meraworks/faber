@@ -228,6 +228,10 @@ pub trait Kernel: Send + Sync {
     fn inset_face(&self, _face: &Shape, _loop_index: u32, _distance: f64) -> Result<Shape> {
         Err("Face loop offsets are not available".into())
     }
+    /// Offset the full boundary of a planar face, including its holes.
+    fn offset_sketch_face(&self, _face: &Shape, _distance: f64) -> Result<Shape> {
+        Err("Sketch offsets are not available.".into())
+    }
     fn face_sources(&self, _shape: &Shape, _inputs: &[Shape]) -> Result<Option<Vec<FaceSource>>> {
         Ok(None)
     }
@@ -491,6 +495,9 @@ pub trait FeatureCache: Send + Sync {
     }
 
     fn get(&self, key: &str) -> Option<Vec<u8>>;
+    fn get_bounded(&self, key: &str, max_bytes: usize) -> Option<Vec<u8>> {
+        self.get(key).filter(|bytes| bytes.len() <= max_bytes)
+    }
     fn put(&self, key: &str, bytes: &[u8]) -> Result<()>;
 }
 

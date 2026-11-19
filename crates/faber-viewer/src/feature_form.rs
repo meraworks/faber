@@ -195,6 +195,9 @@ impl FeatureForm {
                 Geometry::Draft { .. } => {
                     "Select faces by normal. Origin and normal define the neutral plane in part coordinates. Positive angle removes material on the direction side. Angles use degrees."
                 }
+                Geometry::OffsetSketch { .. } => {
+                    "Select a source sketch. A negative distance shrinks the outer boundary."
+                }
                 Geometry::Offset { .. } => {
                     "Positive distance expands the solid with round joins. Negative distance contracts it. Zero distance is refused."
                 }

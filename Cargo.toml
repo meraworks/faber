@@ -39,6 +39,7 @@ version = "0.2.1"
 edition = "2024"
 
 [dependencies]
+faber-sketch = { path = "crates/faber-sketch" }
 faber-clash = { path = "crates/faber-clash" }
 faber-core = { path = "crates/faber-core" }
 faber-files = { path = "crates/faber-files" }

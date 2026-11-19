@@ -1296,3 +1296,56 @@ Directional reports also give the largest edge of the sampling mesh.
 In the [inspection block](../examples/surface-inspection/design.jsonnet),
 the radius at the counterbore floor is 1.5 mm and the outside round is
 2 mm. Compare access from +Z with and without the bridge.
+
+## Constrained sketches
+
+Choose **New sketch**, then **Constrained sketch**. Select a plane.
+Use **Line**, **Circle** or **Arc** and click the points in the canvas.
+An arc runs counter-clockwise from its start to its end. Click an existing
+point to share it with another entity. **Rectangle** adds four joined sides,
+horizontal and vertical constraints, two dimensions and one fixed corner.
+
+Choose **Select** and click the points or entities for a constraint.
+Open **Constraints** and select the constraint. For a symmetric pair,
+select the two points and their line of symmetry. **Construction** marks
+a selected entity as a reference. Construction entities do not form a profile.
+
+The status line gives the number of free degrees of freedom. Free points
+are blue. Fully constrained points are black. Drag a free point to move
+it within its constraints. Red geometry marks a conflict. The constraint
+list identifies the conflicting entries and has a removal button for each.
+
+Double-click a dimension in the canvas, or select its value in the list.
+Enter a number or a parameter expression such as `plate_width / 2`,
+then choose **Set dimension**. Lengths are in millimetres and angles are
+in degrees. Close all profile loops before you choose **Finish**.
+Finish saves the sketch and rebuilds the solid in one revision.
+Select the part and choose **Edit sketch** to change a saved sketch.
+Choose **Offset sketch** to create a derived profile. Select its source, enter
+the distance and choose **Apply feature**. The part keeps its solid output.
+
+In the [constrained mounting plate](../examples/constrained-plate/design.jsonnet),
+two holes keep their distance from the plate ends as its width changes.
+The upper step uses an offset sketch of the same profile. A negative offset
+shrinks the outer boundary and enlarges each hole. In Jsonnet, use
+`solved_sketch(id, plane, points, entities, constraints, construction)`
+and `offset_sketch(id, sketch, distance)`.
+
+Use `solve_sketch` to test a set of constraints without saving. Coordinates,
+radii and dimensions accept numbers and expressions such as `12 / 2`.
+Open a project to use its saved parameters, for example `width / 2`.
+The reply gives the solved points, free points and conflict indices. For a
+large conflicting sketch, `diagnosis_limit` gives the number of constraints
+checked when the conflict list can be incomplete.
+Use `edit_sketch` with a part, a feature, an array of operations and
+`expected_revision` to save a change. For example, this edit rounds
+corner `c` with a radius taken from a project parameter.
+
+```json
+{"part":"plate","feature":"outline","expected_revision":3,
+ "ops":[{"op":"fillet","corner":"c","radius":"corner_radius"}]}
+```
+
+Other edits include `chamfer`, `trim`, `extend`, `mirror` and `pattern`.
+The status report lists the degrees of freedom of each under-constrained
+sketch in `sketch_warnings`. Conflict indices start at zero.

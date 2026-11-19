@@ -1,0 +1,211 @@
+{
+  "schema": 1,
+  "name": "Stepped mounting plate",
+  "geometry": {
+    "op": "history",
+    "features": [
+      {
+        "id": "base_plane",
+        "geometry": {
+          "op": "plane",
+          "placement": {
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": "outline",
+        "geometry": {
+          "op": "solved_sketch",
+          "plane": "base_plane",
+          "sketch": {
+            "points": {
+              "a": [
+                0.0,
+                0.0
+              ],
+              "b": [
+                60.0,
+                0.0
+              ],
+              "c": [
+                60.0,
+                36.0
+              ],
+              "d": [
+                0.0,
+                36.0
+              ],
+              "left": [
+                10.0,
+                18.0
+              ],
+              "right": [
+                50.0,
+                18.0
+              ]
+            },
+            "entities": {
+              "bottom": {
+                "kind": "line",
+                "a": "a",
+                "b": "b"
+              },
+              "end": {
+                "kind": "line",
+                "a": "d",
+                "b": "a"
+              },
+              "left_hole": {
+                "kind": "circle",
+                "centre": "left",
+                "radius": 3.0
+              },
+              "right_hole": {
+                "kind": "circle",
+                "centre": "right",
+                "radius": 3.0
+              },
+              "side": {
+                "kind": "line",
+                "a": "b",
+                "b": "c"
+              },
+              "top": {
+                "kind": "line",
+                "a": "c",
+                "b": "d"
+              }
+            },
+            "constraints": [
+              {
+                "kind": "fix",
+                "point": "a"
+              },
+              {
+                "kind": "horizontal",
+                "line": "bottom"
+              },
+              {
+                "kind": "vertical",
+                "line": "side"
+              },
+              {
+                "kind": "horizontal",
+                "line": "top"
+              },
+              {
+                "kind": "vertical",
+                "line": "end"
+              },
+              {
+                "kind": "distance_x",
+                "a": "a",
+                "b": "b",
+                "value": "plate_width"
+              },
+              {
+                "kind": "distance_y",
+                "a": "a",
+                "b": "d",
+                "value": "plate_height"
+              },
+              {
+                "kind": "distance_x",
+                "a": "a",
+                "b": "left",
+                "value": "hole_margin"
+              },
+              {
+                "kind": "distance_y",
+                "a": "a",
+                "b": "left",
+                "value": "plate_height / 2"
+              },
+              {
+                "kind": "distance_x",
+                "a": "a",
+                "b": "right",
+                "value": "plate_width - hole_margin"
+              },
+              {
+                "kind": "distance_y",
+                "a": "a",
+                "b": "right",
+                "value": "plate_height / 2"
+              },
+              {
+                "kind": "radius",
+                "entity": "left_hole",
+                "value": "hole_radius"
+              },
+              {
+                "kind": "equal",
+                "a": "left_hole",
+                "b": "right_hole"
+              }
+            ],
+            "construction": []
+          }
+        }
+      },
+      {
+        "id": "base",
+        "geometry": {
+          "op": "extrude_sketch",
+          "source": "outline",
+          "vector": [
+            0.0,
+            0.0,
+            "base_height"
+          ]
+        }
+      },
+      {
+        "id": "shoulder_outline",
+        "geometry": {
+          "op": "offset_sketch",
+          "sketch": "outline",
+          "distance": "-inset"
+        }
+      },
+      {
+        "id": "shoulder",
+        "geometry": {
+          "op": "extrude_sketch",
+          "source": "shoulder_outline",
+          "vector": [
+            0.0,
+            0.0,
+            "base_height + 2"
+          ]
+        }
+      },
+      {
+        "id": "plate",
+        "geometry": {
+          "op": "union",
+          "left": "base",
+          "right": "shoulder"
+        }
+      }
+    ],
+    "output": "plate"
+  },
+  "colour": [
+    76,
+    143,
+    157
+  ],
+  "group": "",
+  "note": ""
+}

@@ -22,7 +22,10 @@ pub(crate) fn sketch_ids(geometry: &Geometry<Scalar>, edit: &str) -> Vec<String>
         .filter(|f| {
             matches!(
                 &f.geometry,
-                Geometry::Sketch { .. } | Geometry::SketchOnPlane { .. }
+                Geometry::Sketch { .. }
+                    | Geometry::SketchOnPlane { .. }
+                    | Geometry::SolvedSketch { .. }
+                    | Geometry::OffsetSketch { .. }
             )
         })
         .map(|f| f.id.clone())
@@ -51,7 +54,9 @@ pub(crate) fn split_tools(geometry: &Geometry<Scalar>, edit: &str) -> Vec<(Split
 pub(super) fn choice_field(op: Option<&str>, key: &str) -> bool {
     matches!(
         (op, key),
-        (Some("split_face"), "tool") | (Some("emboss"), "mode" | "sketch")
+        (Some("split_face"), "tool")
+            | (Some("emboss"), "mode" | "sketch")
+            | (Some("offset_sketch"), "sketch")
     )
 }
 
@@ -78,7 +83,7 @@ impl FeatureForm {
                         }
                     });
             }
-            Some("emboss") => {
+            Some("emboss" | "offset_sketch") => {
                 egui::ComboBox::from_label("Profile sketch")
                     .selected_text(self.value["sketch"].as_str().unwrap_or("Choose a sketch"))
                     .show_ui(ui, |ui| {
@@ -94,6 +99,9 @@ impl FeatureForm {
                             }
                         }
                     });
+                if self.value["op"] == "offset_sketch" {
+                    return Ok(());
+                }
                 ui.horizontal(|ui| {
                     for (name, mode) in [("Raise", "raise"), ("Engrave", "engrave")] {
                         if ui

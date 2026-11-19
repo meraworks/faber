@@ -237,6 +237,13 @@ unsafe extern "C" {
         error: *mut c_char,
         capacity: usize,
     ) -> i32;
+    fn faber_offset_sketch_face(
+        face: *const c_void,
+        distance: f64,
+        result: *mut *mut c_void,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> i32;
     fn faber_face_shape(
         input: *const c_void,
         index: u32,
@@ -1143,6 +1150,15 @@ impl Kernel for OcctKernel {
         let face = pointer(face)?;
         shape_call(|out, error, len| unsafe {
             faber_inset_face(face, index, distance, out, error, len)
+        })
+    }
+    fn offset_sketch_face(&self, face: &Shape, distance: f64) -> Result<Shape> {
+        if !distance.is_finite() || distance.abs() > 1e6 {
+            return Err("The loop offset exceeds the supported range".into());
+        }
+        let face = pointer(face)?;
+        shape_call(|out, error, len| unsafe {
+            faber_offset_sketch_face(face, distance, out, error, len)
         })
     }
     fn face_shape(&self, shape: &Shape, index: u32) -> Result<Shape> {

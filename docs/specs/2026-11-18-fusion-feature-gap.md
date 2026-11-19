@@ -172,9 +172,9 @@ Status: **have** = Faber has it, **part** = a reduced form, **gap** = absent.
 | Fusion | Faber | Status |
 | --- | --- | --- |
 | Lines, arcs, circles, rectangles, slots, polygons, splines | yes, as typed loops | have |
-| Geometric constraints and a solver | dimensions in loops only | gap |
+| Geometric constraints and a solver | 22 geometric and dimensional constraints, editable dimensions, free points and conflict indices | have for planar lines, arcs and circles |
 | Text | none | gap |
-| Offset, trim, extend, sketch fillet | none | gap |
+| Offset, trim, extend, sketch fillet | offset profile feature and sketch edit operations | have |
 
 ### Timeline and design
 

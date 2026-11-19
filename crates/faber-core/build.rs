@@ -8,9 +8,11 @@ use std::{
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=../faber-sketch/src");
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let mut files = Vec::new();
     collect(&root.join("src"), &mut files);
+    collect(&root.join("../faber-sketch/src"), &mut files);
     files.sort();
     let mut hash = Sha256::new();
     for file in files {

@@ -368,6 +368,69 @@ fn edit_schema_exposes_the_material_assignment() {
 }
 
 #[test]
+fn sketch_dry_run_resolves_expressions_without_saving() {
+    let mut session = Session::start();
+    let mut args = json!({"sketch":{"points":{"p":["2 + 3",0]},"entities":{"rim":{"kind":"circle","centre":"p","radius":"3 * 2"}},"constraints":[{"kind":"radius","entity":"rim","value":"12 / 2"}]}});
+    let solved = session.ok("solve_sketch", args.clone());
+    assert_eq!(solved["points"]["p"], json!([5., 0.]));
+    assert_eq!(solved["radii"]["rim"], 6.);
+    args["sketch"]["constraints"][0]["value"] = json!("width / 2");
+    assert!(
+        session
+            .refused("solve_sketch", args.clone())
+            .contains("Unknown parameter: width")
+    );
+    let dir = tempfile::tempdir().unwrap();
+    open_project(&mut session, dir.path());
+    session.ok("set_param", json!({"name":"width","expression":"24"}));
+    let manifest = dir.path().join("faber.json");
+    let bytes = std::fs::read(&manifest).unwrap();
+    let radius = session.ok("solve_sketch", args.clone())["radii"]["rim"]
+        .as_f64()
+        .unwrap();
+    assert!((radius - 12.).abs() < 1e-9);
+    args["sketch"]["constraints"][0]["value"] = json!("missing_width");
+    assert!(
+        session
+            .refused("solve_sketch", args)
+            .contains("Unknown parameter: missing_width")
+    );
+    assert_eq!(std::fs::read(&manifest).unwrap(), bytes);
+    assert_eq!(session.ok("status", json!({}))["revision"], 1);
+}
+
+#[test]
+fn solve_sketch_reports_free_points_and_edits_check_the_revision() {
+    let mut session = Session::start();
+    let sketch =
+        json!({"points":{"p":[0,0]},"entities":{"rim":{"kind":"circle","centre":"p","radius":5}}});
+    let report = session.ok("solve_sketch", json!({"sketch":sketch}));
+    assert_eq!(report["status"], "under");
+    assert_eq!(report["dof"], 3);
+    assert_eq!(report["free_points"], json!(["p"]));
+    let dir = tempfile::tempdir().unwrap();
+    open_project(&mut session, dir.path());
+    session.ok(
+        "put_part",
+        json!({"id":"plate","part":{"name":"Plate","colour":[80,100,150],
+        "geometry":{"op":"history","output":"pad","features":[
+        {"id":"work","geometry":{"op":"plane","placement":{}}},
+        {"id":"outline","geometry":{"op":"solved_sketch","plane":"work","sketch":sketch}},
+        {"id":"pad","geometry":{"op":"extrude_sketch","source":"outline","vector":[0,0,10]}}]}}}),
+    );
+    let args = json!({"part":"plate","feature":"outline","expected_revision":1,
+        "ops":[{"op":"add_constraint","constraint":{"kind":"radius","entity":"rim","value":7}}]});
+    let changed = session.ok("edit_sketch", args.clone());
+    assert_eq!(changed["revision"], 2);
+    assert_eq!(changed["sketch_warnings"]["plate"]["outline"], 2);
+    assert!(session.refused("edit_sketch", args).contains("revision"));
+    assert_eq!(
+        session.ok("status", json!({}))["sketch_warnings"]["plate"]["outline"],
+        2
+    );
+}
+
+#[test]
 fn press_pull_uses_the_picked_face_and_checks_the_revision() {
     let mut session = Session::start();
     let dir = tempfile::tempdir().unwrap();

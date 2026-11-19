@@ -310,22 +310,7 @@ static double surface_area(const TopoDS_Shape& shape) {
     return std::abs(p.Mass());
 }
 
-extern "C" int faber_inset_face(const void* input,uint32_t index,double distance,void** result,char* error,size_t capacity) noexcept {
-    return protect(error,capacity,[&] {
-        const TopoDS_Face face=TopoDS::Face(static_cast<const FaberShape*>(input)->value);
-        const BRepAdaptor_Surface surface(face);
-        if(surface.GetType()!=GeomAbs_Plane) throw std::runtime_error("Select a planar face for the rim");
-        TopoDS_Wire outer=BRepTools::OuterWire(face), selected=outer;
-        if(index>0) {
-            uint32_t count=0;
-            for(TopExp_Explorer it(face,TopAbs_WIRE);it.More();it.Next()) {
-                if(it.Current().IsSame(outer)) continue;
-                if(++count==index) selected=TopoDS::Wire(it.Current());
-            }
-            if(count<index) throw std::runtime_error("The selected face has no such inner loop");
-            if(count>1 && index==1) throw std::runtime_error("The face has more than one inner loop");
-        }
-        const gp_Pln plane=surface.Plane();
+static TopoDS_Face offset_loop(const gp_Pln& plane,const TopoDS_Wire& selected,double distance) {
         BRepBuilderAPI_MakeFace disk(plane,selected,true);
         if(!disk.IsDone()) throw std::runtime_error("Cannot make a face from the selected loop");
         TopoDS_Face output=disk.Face();
@@ -341,6 +326,49 @@ extern "C" int faber_inset_face(const void* input,uint32_t index,double distance
             if((surface_area(output)-surface_area(disk.Face()))*distance<=0.) {
                 throw std::runtime_error("The rim width does not give a valid offset loop");
             }
+        }
+        return output;
+}
+
+extern "C" int faber_inset_face(const void* input,uint32_t index,double distance,void** result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&] {
+        const TopoDS_Face face=TopoDS::Face(static_cast<const FaberShape*>(input)->value);
+        const BRepAdaptor_Surface surface(face);
+        if(surface.GetType()!=GeomAbs_Plane) throw std::runtime_error("Select a planar face for the rim");
+        TopoDS_Wire outer=BRepTools::OuterWire(face), selected=outer;
+        if(index>0) {
+            uint32_t count=0;
+            for(TopExp_Explorer it(face,TopAbs_WIRE);it.More();it.Next()) {
+                if(it.Current().IsSame(outer)) continue;
+                if(++count==index) selected=TopoDS::Wire(it.Current());
+            }
+            if(count<index) throw std::runtime_error("The selected face has no such inner loop");
+            if(count>1 && index==1) throw std::runtime_error("The face has more than one inner loop");
+        }
+        publish(offset_loop(surface.Plane(),selected,distance),result);
+    });
+}
+
+extern "C" int faber_offset_sketch_face(const void* input,double distance,void** result,char* error,size_t capacity) noexcept {
+    return protect(error,capacity,[&] {
+        const TopoDS_Face face=TopoDS::Face(static_cast<const FaberShape*>(input)->value);
+        BRepAdaptor_Surface surface(face);
+        if(surface.GetType()!=GeomAbs_Plane) throw std::runtime_error("Select a planar sketch.");
+        const auto outer=BRepTools::OuterWire(face);
+        auto output=offset_loop(surface.Plane(),outer,distance);
+        for(TopExp_Explorer it(face,TopAbs_WIRE);it.More();it.Next()) {
+            if(it.Current().IsSame(outer)) continue;
+            auto hole=offset_loop(surface.Plane(),TopoDS::Wire(it.Current().Reversed()),-distance);
+            BRepAlgoAPI_Cut cut(output,hole);
+            if(!cut.IsDone()) throw std::runtime_error("Cannot cut the offset hole.");
+            TopTools_IndexedMapOfShape faces;
+            TopExp::MapShapes(cut.Shape(),TopAbs_FACE,faces);
+            if(faces.Extent()!=1) throw std::runtime_error("The sketch offset splits or collapses the face.");
+            const auto next=TopoDS::Face(faces(1));
+            const double area=surface_area(hole);
+            if(std::abs(surface_area(output)-surface_area(next)-area)>std::max(1e-7,area*1e-8))
+                throw std::runtime_error("The offset hole crosses another boundary.");
+            output=next;
         }
         publish(output,result);
     });

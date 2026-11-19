@@ -39,6 +39,10 @@ mod read_cache;
 mod scale;
 mod section;
 mod select;
+mod sketch;
+mod sketch_cache;
+pub use sketch::resolve_sketch;
+mod sketch_regions;
 pub mod study;
 pub mod surface;
 mod thread;
@@ -1043,6 +1047,9 @@ impl Builder<'_> {
         locals: &mut BTreeMap<String, Arc<body_cache::LocalBody>>,
     ) -> Result<(Body, body_cache::Timing)> {
         check_part(id, part)?;
+        if !matches!(part.geometry, faber_model::Geometry::History { .. }) {
+            *cache = history::Cache::default();
+        }
         if part
             .placement
             .rotation

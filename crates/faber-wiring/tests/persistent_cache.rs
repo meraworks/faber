@@ -98,6 +98,46 @@ fn cache_files(root: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
+fn a_reopened_sketch_uses_its_solution_and_recovers_a_damaged_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let part = serde_json::json!({"name":"Plate","colour":[45,65,85],"geometry":{"op":"history","output":"pad","features":[
+        {"id":"xy","geometry":{"op":"plane","placement":{}}},
+        {"id":"circle","geometry":{"op":"solved_sketch","plane":"xy","sketch":{"points":{"a":[0,0]},
+        "entities":{"c":{"kind":"circle","centre":"a","radius":4}}}}},
+        {"id":"pad","geometry":{"op":"extrude_sketch","source":"circle","vector":[0,0,3]}}]}});
+    let data = serde_json::json!({"schema":1,"name":"Sketch cache","revision":0,"params":{},"parts":{"p":part}});
+    fs::write(dir.path().join("faber.json"), data.to_string()).unwrap();
+    let first = open(dir.path());
+    let original = first.project.bodies[0].volume;
+    assert_eq!(first.project.sketch_warnings()["p"]["circle"], 3);
+    drop(first);
+    let path = cache_files(dir.path())
+        .into_iter()
+        .find(|p| {
+            p.file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .ends_with("sketch1")
+        })
+        .expect("The solved sketch has a persistent solution");
+    let bytes = fs::read(&path).unwrap();
+    let second = open(dir.path());
+    assert_eq!(second.cache.puts.load(Ordering::Relaxed), 0);
+    assert_eq!(second.project.sketch_warnings()["p"]["circle"], 3);
+    drop(second);
+    fs::write(&path, b"damaged").unwrap();
+    let snapshot = faber_wiring::drawing::open_snapshot(dir.path()).unwrap();
+    assert_eq!(snapshot.sketch_warnings()["p"]["circle"], 3);
+    assert_eq!(fs::read(&path).unwrap(), b"damaged");
+    drop(snapshot);
+    let repaired = open(dir.path());
+    assert_eq!(repaired.project.bodies[0].volume, original);
+    assert_eq!(repaired.cache.puts.load(Ordering::Relaxed), 1);
+    assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
 fn second_open_reuses_persistent_features() {
     let dir = project_dir();
     let first = open(dir.path());

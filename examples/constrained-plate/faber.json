@@ -1,0 +1,13 @@
+{
+  "schema": 2,
+  "revision": 1,
+  "name": "Constrained mounting plate",
+  "params": {
+    "base_height": "4",
+    "hole_margin": "10",
+    "hole_radius": "3",
+    "inset": "2",
+    "plate_height": "36",
+    "plate_width": "60"
+  }
+}

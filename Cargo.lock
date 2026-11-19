@@ -1316,6 +1316,7 @@ dependencies = [
  "faber-model",
  "faber-ports",
  "faber-scene",
+ "faber-sketch",
  "faber-std",
  "faber-wiring",
  "image",
@@ -1365,6 +1366,7 @@ dependencies = [
  "faber-meshtools",
  "faber-model",
  "faber-ports",
+ "faber-sketch",
  "faber-std",
  "glam",
  "schemars",
@@ -1514,6 +1516,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "faber-sketch"
+version = "0.1.0"
+dependencies = [
+ "faber-model",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "faber-std"
 version = "0.1.0"
 dependencies = [
@@ -1534,6 +1546,7 @@ dependencies = [
  "faber-print",
  "faber-render",
  "faber-scene",
+ "faber-sketch",
  "faber-std",
  "faber-wiring",
  "glam",

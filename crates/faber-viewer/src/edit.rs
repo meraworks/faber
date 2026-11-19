@@ -44,6 +44,7 @@ pub fn append_feature(
     let output = if matches!(
         geometry,
         Geometry::Plane { .. }
+            | Geometry::OffsetSketch { .. }
             | Geometry::PlaneOnFace { .. }
             | Geometry::Axis { .. }
             | Geometry::Point { .. }

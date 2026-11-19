@@ -56,6 +56,8 @@ extern "C" int faber_linear_form(const void* body, const void* profile, const do
     double thickness, double offset, void** result, char* error, std::size_t capacity) noexcept;
 extern "C" int faber_inset_face(const void* face, std::uint32_t loop, double distance,
     void** result, char* error, std::size_t capacity) noexcept;
+extern "C" int faber_offset_sketch_face(const void* face, double distance,
+    void** result, char* error, std::size_t capacity) noexcept;
 
 extern "C" int faber_remove_faces(const void* shape, const std::uint32_t* faces, std::size_t count,
     void** result, char* error, std::size_t capacity) noexcept;
