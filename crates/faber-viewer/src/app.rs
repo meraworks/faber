@@ -29,6 +29,7 @@ mod forms_tests;
 mod keys;
 #[cfg(test)]
 mod keys_tests;
+mod link;
 mod machining;
 #[cfg(test)]
 mod machining_tests;
@@ -315,6 +316,7 @@ pub struct Shell {
     section_scope: BTreeSet<String>,
     section_pending: Option<mpsc::Receiver<(String, Result<Section, String>)>>,
     pub hidden: BTreeSet<String>,
+    link: link::Link,
     gpu: Gpu,
     target: Option<Target>,
     texture: Option<egui::TextureId>,
@@ -470,6 +472,7 @@ impl Shell {
             section_scope: BTreeSet::new(),
             section_pending: None,
             hidden: BTreeSet::new(),
+            link: Default::default(),
             gpu: Gpu::new(rs.device.clone(), rs.queue.clone()),
             target: None,
             texture: None,
@@ -525,15 +528,20 @@ impl Shell {
             .machining_camera()
             .or_else(|| self.exploded_camera())
             .unwrap_or_else(|| Camera::fit(&self.bodies));
-        self.camera.target = fitted.target;
-        self.camera.distance = fitted.distance;
+        self.set_frame(fitted.target, fitted.distance);
+    }
+
+    /// Moves the camera target and distance. Keeps the direction.
+    fn set_frame(&mut self, target: glam::Vec3, distance: f32) {
+        self.camera.target = target;
+        self.camera.distance = distance;
         if self.camera.lens.ortho_height.is_some() {
             let aspect = self
                 .target
                 .as_ref()
                 .map_or(1., |t| t.width as f32 / t.height as f32);
             self.camera.lens.ortho_height =
-                Some(2. * fitted.distance * 19_f32.to_radians().tan() / aspect.clamp(0.01, 1.));
+                Some(2. * distance * 19_f32.to_radians().tan() / aspect.clamp(0.01, 1.));
         }
         self.dirty = true;
     }
@@ -1969,6 +1977,7 @@ impl Shell {
                         self.close_form();
                         self.close_surface_feature();
                         self.marking = Default::default();
+                        self.reset_link();
                         self.project_loaded = true;
                         self.root = root;
                         self.design_source_name = sheet::source_name(&self.root);
@@ -2057,6 +2066,7 @@ impl Shell {
                 });
             }
         }
+        self.poll_link(ctx);
         ctx.request_repaint_after(Duration::from_millis(500));
     }
 
@@ -5671,6 +5681,8 @@ mod windows_tests;
 mod assembly_interaction_tests;
 #[cfg(test)]
 mod constrained_sketch_tests;
+#[cfg(test)]
+mod link_tests;
 #[cfg(test)]
 mod marking_menu_tests;
 #[cfg(test)]

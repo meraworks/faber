@@ -127,6 +127,12 @@ separates each part for inspection. The joint axes guide the moving parts.
 - `metric_fastener`: read metric pitch, clearance, tap-drill and head dimensions.
   This query does not create geometry. The viewer Hole form also has metric
   clearance and tap-drill presets.
+- `viewer`: change or read the display of a running viewer of the same project.
+  Actions are `hide`, `show`, `isolate`, `show_all`, `select`, `camera`,
+  `section` and `apply_view`. `camera` takes a `view` direction and frames the
+  listed `parts`. Call it with no action to read the hidden parts, the
+  selection and the faces or edges that the person picked. The tool never
+  changes the project. If no viewer shows the project, the reply says so.
 
 The project uses exact solids behind a geometry port. The current recipe
 tools support polygon extrusion with holes and pockets with a closed floor.
@@ -241,6 +247,12 @@ an open top. There are no robot parts or other mechanisms.
 
 Sections change the view only. Exports keep the full solid. The viewer
 loads file changes in a worker and keeps the current view if a load fails.
+
+The viewer shows each change that an MCP client saves, usually within half a
+second. The `viewer` tool also lets the client hide, isolate and select parts,
+turn the camera and show a section in the open viewer. The viewer and the
+server use two files in the `.faber` folder of the project for this link.
+These files are not project data and do not change the revision.
 
 ## Checks
 

@@ -11,6 +11,7 @@ faber-sheet = { path = "../faber-sheet" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 glam.workspace = true
 serde.workspace = true
+schemars.workspace = true
 faber-clash = { path = "../faber-clash" }
 parry3d-f64 = "0.31.1"
 faber-core = { path = "../faber-core" }

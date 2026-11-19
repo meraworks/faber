@@ -202,6 +202,19 @@ impl Shell {
         self.save_sections(ctx, edits);
     }
 
+    /// Applies a saved view by name, as the Apply button does.
+    pub(super) fn apply_named_view(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+    ) -> Result<(), String> {
+        if !self.data.views.contains_key(name) {
+            return Err(format!("View {name} was not found."));
+        }
+        self.views.active = name.to_owned();
+        self.apply_view(ctx)
+    }
+
     fn apply_view(&mut self, ctx: &egui::Context) -> Result<(), String> {
         let id = &self.views.active;
         let view = self.data.views.get(id).ok_or("Select a named view.")?;

@@ -1648,3 +1648,33 @@ below, the second request raises its top face by 4 mm.
 A source can use `form_box`, `form_cylinder`, `form_sphere` or
 `form_torus` to make a feature. Use `form_ops(feature, ops)` to apply cage
 edits to it. A source rebuild writes the resulting vertices and faces.
+
+## Viewer display
+
+Use the `viewer` tool to show your work in the viewer that the person has
+open. It changes only the display. It never changes the project or the
+revision.
+
+Send one action in each call:
+
+- `hide`, `show`, `isolate` with `parts`. `show_all` shows every part.
+- `select` with `parts`. An empty list clears the selection.
+- `camera` with an optional `view` (`iso`, `front`, `back`, `left`,
+  `right`, `top`, `bottom`) and optional `parts`. The camera frames the
+  listed parts, or all visible parts.
+- `section` with `name` set to a saved section id. Without `name`, the live
+  cut goes off.
+- `apply_view` with `name` set to a saved view.
+
+Call `viewer` with no action to read what the person sees: hidden parts,
+selected parts, the live section and the picked faces and edges. Use a
+picked face index with `topology` for this revision only.
+
+The reply has `viewer: false` when no viewer shows the project. Then the
+action is not applied later. A part, section or view that does not exist is
+refused before the viewer gets the action.
+
+```json
+{"action":"hide","parts":["roll"]}
+{"action":"camera","view":"front","parts":["clamp_left"]}
+```

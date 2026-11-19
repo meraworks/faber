@@ -871,3 +871,52 @@ fn quick_stress_replies_small_and_run_study_writes_the_picture() {
     );
     session.ok("remove_study", json!({"id":"bend","expected_revision":2}));
 }
+
+#[test]
+fn viewer_tool_sends_display_actions_to_a_running_viewer() {
+    use faber_wiring::viewer_link;
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::start();
+    session.ok(
+        "open",
+        json!({"path":dir.path(),"create":true,"name":"Link"}),
+    );
+    session.ok(
+        "put_part",
+        json!({"id":"roll","part":{"name":"Roll","colour":[200,200,200],"placement":{"translation":[0,0,0],"rotation":[0,0,0]},"geometry":{"op":"box","size":[10,10,10]}}}),
+    );
+    let error = session.refused("viewer", json!({"action":"hide","parts":["missing"]}));
+    assert!(error.contains("Part missing was not found."), "{error}");
+    let reply = session.ok("viewer", json!({"action":"show_all"}));
+    assert_eq!(reply["viewer"], false, "{reply}");
+
+    // A stand-in viewer applies each command and reports the hidden parts.
+    let root = dir.path().to_owned();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let running = stop.clone();
+    let viewer = std::thread::spawn(move || {
+        while !running.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(command) = viewer_link::read_command(&root) {
+                let mut state = viewer_link::read_state(&root).unwrap_or_default();
+                if command.seq > state.applied {
+                    for action in command.actions {
+                        if let viewer_link::ViewerAction::Hide { parts } = action {
+                            state.hidden.extend(parts);
+                        }
+                    }
+                    state.applied = command.seq;
+                    viewer_link::write_state(&root, &state).unwrap();
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+    let reply = session.ok("viewer", json!({"action":"hide","parts":["roll"]}));
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    viewer.join().unwrap();
+    assert_eq!(reply["viewer"], true, "{reply}");
+    assert_eq!(reply["hidden"], json!(["roll"]));
+    let state = session.ok("viewer", json!({}));
+    assert_eq!(state["hidden"], json!(["roll"]));
+    assert!(reply.to_string().len() < 400);
+}

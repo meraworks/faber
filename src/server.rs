@@ -8,6 +8,7 @@ use machining_tools::{Paths, ProgramFile, RemoveOperation, SetOperation, SetSetu
 use pictures::{AnimationFile, PictureFile, SaveView, ViewName};
 mod mesh_tools;
 mod surface_tools;
+mod viewer_tools;
 use crate::input::Checked;
 use crate::schema_tool;
 use base64::Engine;
@@ -2349,7 +2350,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Read world edges and faces, or part coordinates for a feature. Indices apply to this revision. Each list defaults to 50. Set limit to read more. Totals precede the cap. Filter by edge, face or kind. A skipped kind has a null total."
+        description = "Read world edges and faces, or part coordinates for a feature. Indices apply to this revision. Each list shows 50; set limit for more. Totals count all items. Filter by edge, face or kind."
     )]
     fn topology(&self, Parameters(Checked(args)): Parameters<Checked<Topology>>) -> CallToolResult {
         self.with(|p| {
@@ -2754,7 +2755,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Move a part so its bounding box lines up with a target part or with the origin. Translation only. Use mode min_to_max to stack a part on its target. Reply lists the changed parts with placement and bounds. The change is one undo step."
+        description = "Move a part so its bounding box lines up with a target part or the origin. Translation only. Mode min_to_max stacks a part on its target. One undo step."
     )]
     fn align_parts(
         &self,
@@ -2820,7 +2821,7 @@ impl Faber {
     }
 
     #[tool(
-        description = "Add or replace a saved section analysis. The plane can be a plane, a reference feature or a planar face. Set visible to false to hide it in views. A section never changes a solid. Each change makes one undo step."
+        description = "Add or replace a saved section analysis. The plane can be a plane, a reference feature or a planar face. Set visible to false to hide it in views. A section never changes a solid. One undo step."
     )]
     fn set_section(
         &self,
@@ -3050,6 +3051,15 @@ impl Faber {
         Parameters(Checked(args)): Parameters<Checked<AnimationFile>>,
     ) -> CallToolResult {
         self.with(|p| args.write(p))
+    }
+    #[tool(
+        description = "Change or read the running viewer display. It never changes the project."
+    )]
+    fn viewer(
+        &self,
+        Parameters(Checked(a)): Parameters<Checked<viewer_tools::ViewerCall>>,
+    ) -> CallToolResult {
+        self.with_folder(|root, p| a.run(root, p))
     }
     #[tool(
         description = "Render a preset or saved view to PNG. Styles are technical and studio. Use high quality for a traced picture."

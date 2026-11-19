@@ -12,6 +12,12 @@ fn files(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
         let path = item.unwrap().path();
         if path.is_dir() {
             found.extend(files(&path));
+        } else if path.file_name().is_some_and(|name| {
+            // The viewer link files are display state, not project data.
+            name == faber_wiring::viewer_link::STATE_FILE
+                || name == faber_wiring::viewer_link::COMMAND_FILE
+        }) {
+            continue;
         } else {
             found.insert(path.clone(), std::fs::read(path).unwrap());
         }

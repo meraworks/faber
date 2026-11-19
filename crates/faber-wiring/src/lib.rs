@@ -3,6 +3,7 @@
 pub mod animate;
 pub mod bom;
 pub mod configurations;
+pub mod viewer_link;
 pub mod views;
 pub use configurations::use_configuration;
 pub mod archive;
