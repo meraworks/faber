@@ -60,6 +60,7 @@ impl Kernel for NativeKernel {
             | Geometry::Stitch { .. }
             | Geometry::SplitBody { .. }
             | Geometry::ReplaceFace { .. }
+            | Geometry::Form { .. }
             | Geometry::SheetMetal { .. }
             | Geometry::SolvedSketch { .. }
             | Geometry::OffsetSketch { .. }

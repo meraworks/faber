@@ -596,6 +596,7 @@ pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
         Geometry::Stitch { .. } => "stitch",
         Geometry::SplitBody { .. } => "split_body",
         Geometry::ReplaceFace { .. } => "replace_face",
+        Geometry::Form { .. } => "form",
         Geometry::SheetMetal { .. } => "sheet_metal",
         Geometry::SolvedSketch { .. } => "solved_sketch",
         Geometry::OffsetSketch { .. } => "offset_sketch",

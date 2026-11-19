@@ -1,5 +1,7 @@
 //! Project recipes. Lengths are in millimetres and angles are in degrees.
 
+mod form;
+pub use form::{CageData, Crease, SymmetryPlane};
 mod material;
 mod plastic;
 mod printer;
@@ -443,6 +445,15 @@ pub enum Geometry<N = f64> {
         body: String,
         face: FaceSelector<N>,
         surface: String,
+    },
+    Form {
+        cage: CageData<N>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        levels: Option<u32>,
+        #[serde(default)]
+        as_solid: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        symmetry: Vec<SymmetryPlane>,
     },
     SheetMetal {
         rule: SheetRule<N>,
@@ -1643,6 +1654,17 @@ impl<N> Geometry<N> {
                 body: body.clone(),
                 face: face.map_numbers(map)?,
                 surface: surface.clone(),
+            },
+            Geometry::Form {
+                cage,
+                levels,
+                as_solid,
+                symmetry,
+            } => Geometry::Form {
+                cage: cage.map_numbers(map)?,
+                levels: *levels,
+                as_solid: *as_solid,
+                symmetry: symmetry.clone(),
             },
             Geometry::SheetMetal {
                 rule,
