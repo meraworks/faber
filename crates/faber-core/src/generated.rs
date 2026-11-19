@@ -290,6 +290,8 @@ impl Project {
                 Edit::UseConfiguration { .. } => true,
                 Edit::SetComponent { .. }
                 | Edit::RemoveComponent { .. }
+                | Edit::SetView { .. }
+                | Edit::RemoveView { .. }
                 | Edit::SetDrawing { .. }
                 | Edit::RemoveDrawing { .. }
                 | Edit::SetPrinter { .. }

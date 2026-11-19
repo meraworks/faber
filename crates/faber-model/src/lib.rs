@@ -16,6 +16,7 @@ pub mod drawing;
 pub mod machining;
 pub mod motion;
 pub mod study;
+pub mod view;
 pub use material::{MaterialClass, MaterialData};
 
 use schemars::JsonSchema;
@@ -29,6 +30,13 @@ use std::collections::BTreeMap;
     reason = "The batch stores each edit in a box."
 )]
 pub enum Edit {
+    SetView {
+        name: String,
+        view: view::NamedView,
+    },
+    RemoveView {
+        name: String,
+    },
     SetConfiguration {
         name: String,
         configuration: Configuration,
@@ -1317,6 +1325,8 @@ pub struct Part<N = f64> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectData {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub views: BTreeMap<String, view::NamedView>,
     #[serde(default, skip_serializing_if = "machining::Machining::is_empty")]
     pub machining: machining::Machining,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

@@ -371,6 +371,7 @@ fn open_with_store(
     } else if initialise {
         let (printer, machining) = faber_files::layout::read_manufacture(path)?;
         let data = ProjectData {
+            views: Default::default(),
             machining,
             printer,
             configurations: Default::default(),
@@ -481,6 +482,7 @@ pub fn create(path: &Path, name: String) -> Result<Project> {
         return Err("A project already exists in this folder".into());
     }
     let data = ProjectData {
+        views: Default::default(),
         machining: Default::default(),
         printer: None,
         configurations: Default::default(),

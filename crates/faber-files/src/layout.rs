@@ -117,6 +117,8 @@ struct AnalysisFile {
     studies: BTreeMap<String, faber_model::study::Study<Scalar>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     sections: BTreeMap<String, SectionAnalysis<Scalar>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    views: BTreeMap<String, faber_model::view::NamedView>,
 }
 
 /// Read the saved printer and machining definitions before first project creation.
@@ -195,10 +197,10 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         }
         None => Default::default(),
     };
-    let (sections, studies) = match read_optional::<AnalysisFile>(root, "analysis.json")? {
+    let (sections, studies, views) = match read_optional::<AnalysisFile>(root, "analysis.json")? {
         Some(file) => {
             check_schema(&file.schema, "analysis.json")?;
-            (file.sections, file.studies)
+            (file.sections, file.studies, file.views)
         }
         None => Default::default(),
     };
@@ -229,6 +231,7 @@ fn read_split(root: &Path, manifest_bytes: &[u8]) -> Result<ProjectData> {
         configuration_suppressions: manifest.configuration_suppressions,
 
         contacts,
+        views,
         sections,
     })
 }
@@ -296,12 +299,13 @@ pub fn write(root: &Path, data: &ProjectData) -> Result<Vec<PathBuf>> {
         };
         put(root, "assembly.json", &file, &mut changed)?;
     }
-    if data.sections.is_empty() && data.studies.is_empty() {
+    if data.sections.is_empty() && data.studies.is_empty() && data.views.is_empty() {
         remove(root.join("analysis.json"), &mut changed)?;
     } else {
         let file = AnalysisFile {
             schema: FILE_SCHEMA,
             sections: data.sections.clone(),
+            views: data.views.clone(),
             studies: data.studies.clone(),
         };
         put(root, "analysis.json", &file, &mut changed)?;

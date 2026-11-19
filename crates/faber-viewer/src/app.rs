@@ -379,6 +379,7 @@ impl Shell {
 
     pub fn welcome(cc: &eframe::CreationContext<'_>) -> Self {
         let data = ProjectData {
+            views: Default::default(),
             machining: Default::default(),
             printer: None,
             configurations: Default::default(),

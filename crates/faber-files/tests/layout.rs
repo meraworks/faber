@@ -611,3 +611,23 @@ fn components_and_part_membership_use_the_assembly_and_part_files() {
     layout::write(dir.path(), &restored).unwrap();
     assert_eq!(before, layout_bytes(dir.path()));
 }
+#[test]
+fn named_views_share_analysis_and_keep_the_original_bytes_when_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut data = fixture();
+    layout::write(dir.path(), &data).unwrap();
+    let original = fs::read(dir.path().join("analysis.json")).unwrap();
+    let view=serde_json::from_value(serde_json::json!({"camera":{"eye":[1,1,1],"target":[0,0,0],"up":[0,0,1],"fov_deg":45},"joints":{"arm":[20,3]}})).unwrap();
+    data.views.insert("assembled".into(), view);
+    layout::write(dir.path(), &data).unwrap();
+    assert_eq!(layout::read(dir.path()).unwrap(), data);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.path().join("analysis.json")).unwrap()).unwrap();
+    assert_eq!(saved["views"]["assembled"]["joints"]["arm"][0], 20.);
+    data.views.clear();
+    layout::write(dir.path(), &data).unwrap();
+    assert_eq!(
+        fs::read(dir.path().join("analysis.json")).unwrap(),
+        original
+    );
+}

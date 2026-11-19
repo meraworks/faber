@@ -811,6 +811,12 @@ pub fn valid_id(id: &str) -> bool {
 }
 
 fn validate_data(data: &ProjectData) -> Result<()> {
+    for (name, view) in &data.views {
+        if !valid_id(name) {
+            return Err(format!("Invalid view name: {name}"));
+        }
+        view.validate().map_err(|e| format!("View {name}: {e}"))?;
+    }
     machining::validate(data)?;
     configurations::validate(data)?;
     if data.schema != 1 {

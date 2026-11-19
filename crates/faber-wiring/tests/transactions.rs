@@ -45,6 +45,7 @@ fn part(height: f64) -> Part {
 #[test]
 fn build_before_save_and_keep_failed_changes_out() {
     let store = Arc::new(Store(Mutex::new(ProjectData {
+        views: Default::default(),
         machining: Default::default(),
         printer: None,
         configurations: Default::default(),
@@ -76,6 +77,7 @@ fn build_before_save_and_keep_failed_changes_out() {
 #[test]
 fn unsupported_schema_is_refused() {
     let store = Arc::new(Store(Mutex::new(ProjectData {
+        views: Default::default(),
         machining: Default::default(),
         printer: None,
         configurations: Default::default(),
@@ -100,6 +102,7 @@ fn unsupported_schema_is_refused() {
 #[test]
 fn part_ids_remain_safe_on_case_insensitive_file_systems() {
     let store = Arc::new(Store(Mutex::new(ProjectData {
+        views: Default::default(),
         machining: Default::default(),
         printer: None,
         configurations: Default::default(),
@@ -169,6 +172,7 @@ fn parameter_changes_rebuild_parts_and_failed_changes_leave_saved_data_intact() 
 #[test]
 fn parameter_edits_reuse_parts_with_unchanged_dimensions() {
     let store = Arc::new(Store(Mutex::new(ProjectData {
+        views: Default::default(),
         machining: Default::default(),
         printer: None,
         configurations: Default::default(),

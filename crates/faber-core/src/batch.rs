@@ -201,6 +201,18 @@ fn edit(data: &mut ProjectData, edit: Edit) -> Result<()> {
             data.contacts.retain(|_, c| c.a != id && c.b != id);
             crate::section::detach_part(data, &id)?;
         }
+        Edit::SetView { name, view } => {
+            if !crate::valid_id(&name) {
+                return Err(format!("Invalid view name: {name}"));
+            }
+            view.validate()?;
+            data.views.insert(name, view);
+        }
+        Edit::RemoveView { name } => {
+            data.views
+                .remove(&name)
+                .ok_or_else(|| format!("Unknown view: {name}"))?;
+        }
         Edit::SetDrawing { id, drawing } => {
             if !crate::valid_id(&id) {
                 return Err(format!("Invalid drawing id: {id}"));
