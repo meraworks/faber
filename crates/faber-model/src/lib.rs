@@ -3,9 +3,11 @@
 mod material;
 mod plastic;
 mod printer;
+mod solved_sketch;
 use plastic::map_lines;
 pub use plastic::{BossRibs, LipLoop, LipSide, RibSide};
 pub use printer::{Clearance, Printer};
+pub use solved_sketch::{SketchConstraint, SketchEntity, SolvedSketchData};
 pub mod drawing;
 pub mod motion;
 pub mod study;
@@ -375,6 +377,14 @@ pub enum Geometry<N = f64> {
     PlaceAtPoint {
         source: String,
         point: String,
+    },
+    SolvedSketch {
+        plane: String,
+        sketch: SolvedSketchData<N>,
+    },
+    OffsetSketch {
+        sketch: String,
+        distance: N,
     },
     SketchOnPlane {
         plane: String,
@@ -1478,6 +1488,14 @@ impl<N> Geometry<N> {
         map: &mut impl FnMut(&N) -> Result<T, String>,
     ) -> Result<Geometry<T>, String> {
         Ok(match self {
+            Geometry::SolvedSketch { plane, sketch } => Geometry::SolvedSketch {
+                plane: plane.clone(),
+                sketch: sketch.map_numbers(map)?,
+            },
+            Geometry::OffsetSketch { sketch, distance } => Geometry::OffsetSketch {
+                sketch: sketch.clone(),
+                distance: map(distance)?,
+            },
             Geometry::Rib {
                 body,
                 plane,

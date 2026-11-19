@@ -565,6 +565,8 @@ pub(crate) fn operation_kind<N>(geometry: &Geometry<N>) -> &'static str {
         Geometry::PointAtCentre { .. } => "point_at_centre",
         Geometry::RevolveAround { .. } => "revolve_around",
         Geometry::PlaceAtPoint { .. } => "place_at_point",
+        Geometry::SolvedSketch { .. } => "solved_sketch",
+        Geometry::OffsetSketch { .. } => "offset_sketch",
         Geometry::SketchOnPlane { .. } => "sketch_on_plane",
         Geometry::ExtrudeSketch { .. } => "extrude_sketch",
         Geometry::Shell { .. } => "shell",
@@ -613,7 +615,8 @@ pub(crate) fn references<N>(geometry: &Geometry<N>) -> Vec<&str> {
         | Geometry::Boss { body, plane, .. }
         | Geometry::SnapHook { body, plane, .. } => vec![body, plane],
         Geometry::Lip { body, .. } | Geometry::Groove { body, .. } => vec![body],
-        Geometry::SketchOnPlane { plane, .. } => vec![plane],
+        Geometry::SolvedSketch { plane, .. } | Geometry::SketchOnPlane { plane, .. } => vec![plane],
+        Geometry::OffsetSketch { sketch, .. } => vec![sketch],
         Geometry::PlaneAtAngle { axis, from, .. } => match from {
             AngleFrom::Plane(plane) => vec![axis, plane],
             _ => vec![axis],

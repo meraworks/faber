@@ -32,6 +32,8 @@ impl Kernel for NativeKernel {
             | Geometry::PointAtCentre { .. }
             | Geometry::RevolveAround { .. }
             | Geometry::PlaceAtPoint { .. }
+            | Geometry::SolvedSketch { .. }
+            | Geometry::OffsetSketch { .. }
             | Geometry::SketchOnPlane { .. }
             | Geometry::SweepSketch { .. } => Err("Operation needs a feature context".into()),
             Geometry::RevolveSketch { .. } | Geometry::LoftSketches { .. } => {
